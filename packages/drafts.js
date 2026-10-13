@@ -14,7 +14,14 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   const storage = await ctx.require("storage");
   let table = null; // the drafts table, once someone is logged in
-  const tableOf = async () => (table ??= (await space.account()) ? storage.table("drafts") : null);
+  // (The account read STRICTLY: a slow node's timeout is not "nobody logged in" — that would drop what was typed.
+  // `undefined`: not known yet.)
+  const tableOf = async () => {
+    if (table) return table;
+    const a = await ctx.optional("drafts: account", space.account.strict(), () => undefined);
+    if (a === undefined) return undefined;
+    return (table = a ? storage.table("drafts") : null);
+  };
 
   // A field's KEY: where it is (the route and what follows), the component it is in, and its own name — stable across
   // loads of the same page, never its content.
@@ -47,10 +54,15 @@ export async function start(ctx) {
   const owed = new Map(); // key → value (null: drop) not written yet
   const written = new Map(); // key → what the table holds (as this page knows it)
   let timer = null;
-  async function flush() {
+  // ONE AFTER ANOTHER: a flush asked while one waits on its write runs after it (audit 10-13: a second one saw nothing
+  // owed and said "saved" while the first's write was still on its way — and the page reloaded under it).
+  let flushing = Promise.resolve(true);
+  const flush = () => (flushing = flushing.then(flushOnce, flushOnce));
+  async function flushOnce() {
     clearTimeout(timer);
     if (!owed.size) return true;
     const t = await tableOf();
+    if (t === undefined) return false; // not known yet: kept, and the update waits
     if (!t) return (owed.clear(), true);
     let ok = true;
     for (const [k, v] of [...owed]) {

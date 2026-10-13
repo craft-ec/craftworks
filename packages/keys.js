@@ -431,9 +431,16 @@ export async function start(ctx) {
   async function repairAccount(say = () => {}) {
     const held = await ready();
     if (!held) throw new Error("this login holds no keys of the account's group here: log in where its keys are (the original login, its own PIN)");
+    // ONLY where the directory does NOT read: the original login of a forked account (the second group sealed the
+    // directory over — that group's logins read it). Where it reads, there is nothing to repair here, and a repair would
+    // make this login's group the account's over the other one.
+    const dir = await storage.directoryState();
+    if (dir.s !== "unreadable") throw new Error(dir.s === "present" ? "your account's directory reads here: nothing to repair on this login (run it on the login whose spaces are missing elsewhere: the original one)" : "your account's directory is not read yet here: try again in a moment");
     const st = mls.status();
     say(`this login's group: epoch ${st.epoch}, ${st.members.length} node(s)`);
-    const listed = await storage.repairDirectory();
+    // Every node of this group keeps its feeds listed (a node's key is in its credential: did ‖ owner ‖ node).
+    const nodes = st.members.map(m => (m.cred ? String(m.cred).slice(136, 200) : null)).filter(k => /^[0-9a-f]{64}$/.test(k ?? ""));
+    const listed = await storage.repairDirectory(nodes);
     say(`the directory made again: ${listed.length} row(s)`);
     const sealed = await storage.resealOwn();
     say(`${sealed.length} table(s) of this node sealed under epoch ${st.epoch}`);
@@ -456,8 +463,9 @@ export async function start(ctx) {
       const channel = await storage.table(CHANNEL);
       const reseal = hex => hexOf(mlsGlue.Mls.reseal_escrow(old, fresh, bytes(hex)));
       const rows = channel.rows().filter(x => x.key.startsWith("e/"));
-      // The walk starts from the first escrow AS IT WAS (sealed for the old words) — read before it is sealed again.
-      let e = 0;
+      // The walk starts from the first escrow AS IT WAS (sealed for the old words) — read before it is sealed again —
+      // at the channel's START (a repaired account: the epoch the walk of a words login begins at, `walk`).
+      let e = Math.max(0, Number(channel.rows().find(x => x.key === "start")?.value ?? 0) || 0);
       const first = rows.find(x => x.key === escrowKey(e))?.value;
       for (const row of rows) await channel.put(row.key, reseal(row.value));
       // And every epoch log's escrowed next secret, walking with the old words.

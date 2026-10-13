@@ -77,7 +77,7 @@ export async function mount(ctx, el) {
         .desk .app .new { position: absolute; top: 2px; left: calc(50% + 10px); margin: 0; }
         .desk .empty { grid-column: 1 / -1; color: var(--cw-muted); font-size: var(--cw-text-sm); text-align: center; }
       }</style>
-      <div class="desk"></div>`;
+      <div class="desk"></div><section class="space-pins" hidden></section>`;
     // THE DESK (`app-icons`: the same layout as a space's Home): the PERSONAL space's apps (those with a personal view;
     // a shared space's are on its own Home), each with its pill (what is new: `activity`) and its pin (`app:<route>`).
     let activity = null;
@@ -94,6 +94,28 @@ export async function mount(ctx, el) {
       pinKey: a => `app:${a.route}`,
     });
     addEventListener("craftworks:installed", async () => ((have = new Set((await installed.list()).map(a => a.route))), desk.redraw()), { signal: ctx.signal });
+    // PINNED IN A SPACE (the spaces' own Homes, which kept these pins — `app:/s/<space>/<route>` — went with the
+    // desktop; audit 10-13): each still opens that app in that space.
+    ctx.background("home: space pins", ctx.require("edge").then(async edge => {
+      const pins = await edge.pins();
+      const space = await ctx.require("space");
+      const box = el.querySelector(".space-pins");
+      const draw = async () => {
+        const list = [...(pins.refs?.("app:/s/") ?? [])].map(k => /^app:\/s\/([0-9a-f]{64})(\/[^/]+)/.exec(k)).filter(Boolean);
+        if (!list.length || !box) return void (box && (box.hidden = true));
+        const mine = await space.mine();
+        const a = document.createElement("ul");
+        for (const [, id, route] of list) {
+          const app = ctx.apps.find(x => x.route === route);
+          const sp = mine.find(x => x.id === id);
+          a.append(Object.assign(document.createElement("li"), {}).appendChild(Object.assign(document.createElement("a"), { href: `#/s/${id}${route}`, textContent: `${app?.icon ?? "📌"} ${app?.name ?? route.slice(1)} · ${sp ? space.shown(sp) : `a space #${id.slice(0, 6)}`}` })).parentNode);
+        }
+        box.replaceChildren(Object.assign(document.createElement("h3"), { textContent: "Pinned in your spaces" }), a);
+        box.hidden = false;
+      };
+      pins.onChange?.(draw);
+      await draw();
+    }));
     // What is new in each app: its badge, kept current.
     ctx.background("home: ctx.require", ctx.require("activity").then(a => {
       activity = a;

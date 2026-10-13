@@ -109,10 +109,12 @@ export async function start(ctx) {
   let running = null;
   let again = false;
   async function all() {
-    const mine = (await space.mine.strict()).filter(s => s.kind === "server");
+    const list = await space.mine.strict();
+    const mine = list.filter(s => s.kind === "server");
     const inside = new Set();
     for (const sp of [null, ...mine]) if (await pass(sp).catch(e => ctx.failed("file keys", e, `${label(sp)}: ${e.message ?? e}`)) !== false && sp) inside.add(sp.id);
-    await keepOwn(inside);
+    // "Left that space" only from a COMPLETE list: a partial one would move every file of a space not read yet.
+    if (list.complete !== false) await keepOwn(inside);
   }
   function kick() {
     triggers += 1;

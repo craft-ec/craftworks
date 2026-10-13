@@ -87,27 +87,34 @@ function mountDock(ctx, el) {
     );
   }
 
-  // THE APP VIEWER: the apps open (where each was), then every app installed.
-  async function viewer() {
-    document.querySelector(".cw-viewer")?.remove();
+  // THE APP VIEWER: the apps open (where each was), then every app installed. Drawn AT ONCE from the apps this page
+  // knows; the installed list filled in when it answers (audit 10-13: a slow node's read held the overlay for minutes,
+  // and each click stacked another). One at a time: opening it again closes the one before.
+  let closeViewer = null;
+  function viewer() {
+    closeViewer?.();
     const v = h("div", { className: "cw-viewer", role: "dialog", ariaLabel: "Apps" });
-    const close = () => (v.remove(), removeEventListener("keydown", onKey), removeEventListener("hashchange", close));
+    const close = () => (v.remove(), removeEventListener("keydown", onKey), removeEventListener("hashchange", close), closeViewer === close && (closeViewer = null));
     const onKey = e => e.key === "Escape" && close();
     addEventListener("keydown", onKey);
     // (A choice moves the page — the loader takes `#` links before this overlay sees the click: closed on the move.)
     addEventListener("hashchange", close);
+    closeViewer = close;
     v.onclick = e => (e.target === v || e.target.closest("a")) && close();
     const openList = [...open.entries()].reverse().map(([route, o]) => [appOf(route), o]).filter(([a]) => a);
-    const all = installed ? await ctx.optional("footer: installed.list", installed.list(), () => ctx.apps ?? []) : (ctx.apps ?? []);
+    const grid = h("div", { className: "all" });
+    const fill = all => grid.replaceChildren(...[...all].sort((x, y) => x.name.localeCompare(y.name)).map(a => h("a", { href: open.get(a.route)?.hash ?? `#${a.route}` }, h("span", { textContent: a.icon ?? "▫️" }), h("span", { textContent: a.name }))));
+    fill(ctx.apps ?? []);
     v.append(
       h("h3", { textContent: "OPEN" }),
       openList.length
         ? h("div", { className: "open" }, ...openList.map(([a, o]) => h("a", { href: o.hash, className: `card ${a.route === ctx.route ? "here" : ""}` }, h("span", { className: "ic", textContent: a.icon ?? "▫️" }), h("b", { textContent: a.name }), h("small", { textContent: placeOf(o.hash) }))))
         : h("p", { className: "none", textContent: "No app open yet." }),
       h("h3", { textContent: "ALL APPS" }),
-      h("div", { className: "all" }, ...[...all].sort((x, y) => x.name.localeCompare(y.name)).map(a => h("a", { href: open.get(a.route)?.hash ?? `#${a.route}` }, h("span", { textContent: a.icon ?? "▫️" }), h("span", { textContent: a.name })))),
+      grid,
     );
     document.body.append(v);
+    if (installed) ctx.optional("footer: installed.list", installed.list(), () => null).then(all => all?.length && v.isConnected && fill(all));
   }
 
   addEventListener("craftworks:route", () => (note(), draw()));

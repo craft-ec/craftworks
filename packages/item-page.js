@@ -173,27 +173,32 @@ export async function start(ctx) {
   async function withBundles(ref, o = {}) {
     const page = await show(ref, o);
     if (o.outside || o.discover || !page?.classList?.contains("cw-page")) return page;
+    // The page returned AT ONCE; the picker put in when its reads answer (audit 10-13: a slow node held every item page
+    // behind them).
+    ctx.background("item page: bundles", offerBundles(ref, o, page));
+    return page;
+  }
+  async function offerBundles(ref, o, page) {
     try {
       const space = await ctx.require("space");
-      if (!(await space.me.strict())) return page;
+      if (!(await space.me.strict())) return;
       const it = o.item ?? (await items.get(ref));
-      if (!it || kinds.isBundle?.(it.kind)) return page;
+      if (!it || kinds.isBundle?.(it.kind)) return;
       const bundles = await ctx.require("bundles");
       const sid = items.spaceIdOf?.(ref);
       const sp = sid ? await space.find(sid, { wait: 3000 }) : null;
       // (Your own bundles only: only its author changes a bundle.)
       const meId = await space.me.strict();
       const all = [...(await bundles.of(null)), ...(sp ? await bundles.of(sp) : [])].filter(b => b.item?.by === meId);
-      if (!all.length) return page;
+      if (!all.length) return;
       const sel = document.createElement("select");
       sel.ariaLabel = "Add to a bundle";
       sel.append(Object.assign(document.createElement("option"), { value: "", textContent: "Add to a bundle…" }), ...all.map(b => Object.assign(document.createElement("option"), { value: b.ref, textContent: `${b.title}${b.members.includes(ref) ? " ✓" : ""}` })));
       sel.onchange = () => sel.value && bundles.add(sel.value, ref).then(() => (sel.selectedOptions[0].textContent += " ✓", (sel.value = "")), e => alert(ctx.say(e)));
-      page.prepend(sel);
+      if (page.isConnected) page.prepend(sel);
     } catch (e) {
       ctx.failed("item page", e, "add to a bundle not offered");
     }
-    return page;
   }
   return { show: withBundles };
 }

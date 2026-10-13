@@ -145,6 +145,9 @@ export async function run(boot) {
   ctx.log = (step, detail = {}) => boot.log(step, detail);
   ctx.failed = (step, e, what = "") => {
     boot.log(step, { what: what || String(e?.message ?? e) });
+    // (Slow, not yet, absent, logged out … are said in the trace, not reported one by one: the visit's waits count them
+    // — the same rule as a handled failure's; audit 10-13: a slow node reported every "not decided yet".)
+    if (QUIET_SKIP.has(faultNow?.classify(e).kind)) return;
     met(step, e, "failed", what ? { doing: String(what).slice(0, 120) } : {});
   };
   // WHAT A HANDLED FAILURE REPORTS: anything but absent / not yet / logged out / cancelled / an expected refusal, by its
@@ -443,7 +446,14 @@ export async function run(boot) {
     } catch {}
   };
   const shellAddress = () => location.hash && shell({ type: "hash", hash: location.hash });
-  async function show(at) {
+  // A SHOW IN FLIGHT (a slow node's first load takes a minute): a re-show (keys arriving, `showAgain`) waits for it —
+  // two shows at once mounted the page twice (audit 10-13).
+  let inShow = 0;
+  function show(at) {
+    inShow += 1;
+    return showNow(at).finally(() => (inShow -= 1));
+  }
+  async function showNow(at) {
     const inSpace = at.match(/^\/s\/([0-9a-f]{64})(\/.*)?$/) ?? at.match(/^\/(discover)(\/.*)?$/);
     ctx.space = inSpace ? inSpace[1] : null;
     const full = inSpace ? (inSpace[2] && inSpace[2] !== "/" ? inSpace[2] : "/space") : at;
@@ -491,6 +501,8 @@ export async function run(boot) {
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
     watchPage(rec, t0);
     retries = 0; // (a page shown: the next failure gets its tries again)
+    // …and a failure said before it (a try that failed) gone: the page is here now.
+    if (status.className === "bad") (status.className = ""), (status.hidden = true);
   }
 
   // SAVING, said in ONE place (FOUNDATION.md §3): "Saving…" while any write is on its way, "Not saved" with why when
@@ -684,7 +696,11 @@ export async function run(boot) {
           (editable(document.activeElement) ||
             [...document.querySelectorAll("textarea, input[type=text], input:not([type])")].some(x => x.value && !x.closest("header, [role=search]") && x.type !== "search")));
       let done = false;
-      const go = async () => {
+      // ONE AT A TIME (the 2 s poll, a route change and hiding all call it): a second call while the first flush still
+      // waited on its write saw nothing owed and reloaded under it (audit 10-13).
+      let going = null;
+      const go = () => (going ??= goOnce().finally(() => (going = null)));
+      const goOnce = async () => {
         if (done) return;
         // Everything typed written first; a draft not saved holds the update until it is.
         if (drafted && !(await require("drafts").then(d => d.flush(), () => false))) return;
@@ -732,8 +748,15 @@ export async function run(boot) {
     const again = () => !told && check().catch(() => {});
     // The node connection came back after a loss: what the page followed was on the old one — loaded again, the same
     // careful way (nothing lost).
+    // At most ONCE in 10 minutes (remembered across the reload): a node whose connection keeps dropping — a slow one,
+    // a flapping link — reloaded the page at every return, a loop (audit 10-13). Within that, only the manifest looked at.
     addEventListener("craftworks:node-back", () => {
+      if (Date.now() - (tabState().back ?? 0) < 10 * 60000) {
+        ctx.log("newest", { what: "the node is back: reloaded for that less than 10 minutes ago — only the version checked" });
+        return void check().catch(() => {});
+      }
       ctx.log("newest", { what: "the node is back: loading the page again when nothing would be lost" });
+      tabSet("back", Date.now());
       told = false;
       newer();
     });
@@ -747,6 +770,7 @@ export async function run(boot) {
   const showAgain = why => {
     clearTimeout(again);
     again = setTimeout(() => {
+      if (inShow) return showAgain(why);
       ctx.log("page", { what: `shown again: ${why}` });
       filled.header = filled.side = filled.footer = null;
       show(route()).catch(fail);
@@ -755,15 +779,27 @@ export async function run(boot) {
   // Tables opened before their key was held (a words login: its keys arrived after the page opened) — every capability
   // built on them (roles, spaces, names) RESUMED: the page saved (drafts) and loaded again where the person is. An
   // unreadable table that opens now changes in place (no resume).
+  // WHAT A TAB REMEMBERS across its reloads (its frame's name: storage is refused here): when it last resumed, when it
+  // last reloaded for a node that came back. `cw:{json}` (an older `cw-resumed:<ms>` read as such).
+  const tabState = () => {
+    const n = String(window.name ?? "");
+    if (n.startsWith("cw-resumed:")) return { resumed: Number(n.slice(11)) || 0 };
+    try {
+      return n.startsWith("cw:") ? JSON.parse(n.slice(3)) ?? {} : {};
+    } catch {
+      return {};
+    }
+  };
+  const tabSet = (k, v) => (window.name = `cw:${JSON.stringify({ ...tabState(), [k]: v })}`);
   addEventListener("craftworks:reopen", async () => {
     // ONLY after a login made on this page (recovery words, a PIN, a registration), and ONCE per tab — remembered across
     // the reload in the frame's name (its storage is refused here). A visit never reloads: on a slow node every load
     // opens tables before its keys are held, and a resume there reloaded every load, forever (live v385, 10-13).
     const auth = loaded.has("auth") ? await require("auth").catch(() => null) : null;
     if (!auth?.loggedInHere?.()) return showAgain("tables opened again with their keys");
-    if (/^cw-resumed:/.test(window.name)) return showAgain("tables opened again (resumed once already: shown again instead)");
+    if (tabState().resumed) return showAgain("tables opened again (resumed once already: shown again instead)");
     if (loaded.has("drafts") && !(await require("drafts").then(d => d.flush(), () => false))) return showAgain("tables opened again (a draft not saved: no resume)");
-    window.name = `cw-resumed:${Date.now()}`;
+    tabSet("resumed", Date.now());
     ctx.log("page", { what: "resumed: tables opened before their key was held, opened again with it" });
     location.reload();
   });

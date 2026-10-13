@@ -53,6 +53,12 @@ export async function start(ctx) {
             ws = await open();
             watch(ws);
             ctx.log("connected", { what: `${url} (again)` });
+            // What was asked on the lost socket, asked AGAIN on this one (its answer would never come on the old one —
+            // each question waited out its whole deadline, audit 10-13). A get, a put of a signed state, an update:
+            // each the same again.
+            let again = 0;
+            for (const w of waiters) for (const f of w.frames ?? []) (ws.send(f), (again += 1));
+            if (again) ctx.log("connected", { what: `${again} frame(s) asked on the lost connection sent again` });
             dispatchEvent(new CustomEvent("craftworks:node-back"));
             return ws;
           } catch {}
@@ -106,7 +112,7 @@ export async function start(ctx) {
       .map(([what, x]) => ({ what, ...x, total: Math.round(x.total), max: Math.round(x.max) }));
   const ask = (frames, match, what, ms = WAIT.ask, signal = null) =>
     new Promise((resolve, reject) => {
-      const w = { match, what, at: performance.now(), resolve: v => (clearTimeout(t), note(what, performance.now() - w.at), resolve(v)) };
+      const w = { match, what, frames, at: performance.now(), resolve: v => (clearTimeout(t), note(what, performance.now() - w.at), resolve(v)) };
       // Timed out: no longer waited for — taken off the list (left on it, it would match a late answer meant for
       // another, and count as in flight for ever: `idle` would never come).
       const t = setTimeout(() => {

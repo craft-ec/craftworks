@@ -188,7 +188,10 @@ export async function start(ctx) {
         continue;
       }
       if (now - (o.last ?? 0) < resendWait(o.tries)) continue;
-      const sp = (await space.mine.strict()).find(s => s.id === spId);
+      const list = await space.mine.strict();
+      const sp = list.find(s => s.id === spId);
+      // "No longer this account's" only from a COMPLETE list (a slow node's partial one dropped kept welcomes, audit 10-13).
+      if (!sp && list.complete === false) continue;
       const newest = used.rows().find(x => x.key === `newest:${spId}|${did}`)?.value ?? null;
       const superseded = !!newest && newest !== o.was && newest !== tag;
       if (!sp || superseded || now - (o.first ?? now) > WAIT.giveUp) {
@@ -1338,7 +1341,8 @@ export async function start(ctx) {
       name: `${space.shown(sp)} · ${who.startsWith("role:") ? (r.roles().find(x => `role:${x.id}` === who)?.name ?? "a role") : who.startsWith("list:") ? "chosen people" : who}`,
       // Its capabilities: the space's (whatever kind is kept for this audience).
       setup: async (_, gr) => {
-        for (const cap of r.enabled()) await gr.enable(cap, true);
+        // (The always-on ones are on already: enabling them throws — every new audience group failed, audit 10-13.)
+        for (const cap of r.enabled().filter(c => !r.base().includes(c))) await gr.enable(cap, true);
       },
     });
     await keepReaders(sp).catch(e => ctx.failed("audiences", e, `${space.shown(sp)}: ${e.message}`));

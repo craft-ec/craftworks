@@ -107,8 +107,15 @@ export async function start(ctx) {
     };
     // A WRITE (make, edit, remove, copy) only on the person's own gesture: this page's user activation — a click or a key
     // inside the frame activates its ancestors too, so the app cannot fake it.
+    // A GESTURE'S CREDIT: a call that arrived while the person had just clicked or typed (`clicked`, below) leaves ONE
+    // write for the next 2 minutes — a click that saves after a slow read (a slow node: 30-60 s) is still the person's
+    // (audit 10-13: the 5 s activation had run out). Used by the write; a second write needs another gesture.
+    let credit = 0;
+    const clicked = () => navigator.userActivation?.isActive && (credit = Date.now());
     const gesture = what => {
-      if (!navigator.userActivation?.isActive) throw Object.assign(new Error(`${what}: only when you click or type in the app`), { kind: "refused" });
+      if (navigator.userActivation?.isActive) return void (credit = 0);
+      if (credit && Date.now() - credit < 120000) return void (credit = 0);
+      throw Object.assign(new Error(`${what}: only when you click or type in the app`), { kind: "refused" });
     };
     // What an app may set on an item: its own fields — never a level, a gate or write rules (the system's).
     const META_DENY = new Set(["level", "gate", "write", "editions", "members"]);
@@ -192,6 +199,7 @@ export async function start(ctx) {
       if (!frame.isConnected) return (removeEventListener("message", onMessage), removeEventListener("craftworks:route", onRoute));
       if (e.source !== frame.contentWindow) return;
       const m = e.data ?? {};
+      clicked();
       if (typeof m.id === "number" && budget-- <= 0) return frame.contentWindow?.postMessage({ id: m.id, ok: false, error: "too many calls", kind: "refused" }, "*");
       if (m.event === "height") return void (frame.style.height = `${Math.max(120, Math.min(Number(m.h) || 0, 20000))}px`);
       const { id, op, args = [] } = m;

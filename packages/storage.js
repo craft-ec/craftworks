@@ -1576,17 +1576,25 @@ export async function start(ctx) {
   // THE DIRECTORY made again, from what is known without reading it: this node (its feeds), the card, every public
   // table the card lists (they are found by name: not listed would read as never made), the directory's own row.
   // Upkeep's marks in that row start again (each is a "done already" a page re-checks).
-  async function repairDirectory() {
+  async function repairDirectory(groupNodes = []) {
     const sp = await space.account.strict();
     const d = await directory();
     const card = await cardOf(sp.shared);
     const at = Date.now();
     const names = new Set([CARD, ...PUBLIC, ...card.rows().filter(r => r.value).map(r => r.key)]);
-    const rows = [[CATALOG, JSON.stringify({ at })], [`node:${sp.self}`, JSON.stringify({ at, b: 1 })], ...[...names].map(n => [n, JSON.stringify({ at, b: 1 })])];
+    // EVERY node of the group (`groupNodes`, from its credentials) and this one: each one's feeds listed.
+    const nodes = new Set([sp.self, ...groupNodes]);
+    const rows = [[CATALOG, JSON.stringify({ at })], ...[...nodes].map(k => [`node:${k}`, JSON.stringify({ at, b: 1 })]), ...[...names].map(n => [n, JSON.stringify({ at, b: 1 })])];
     await d.replaceWith(rows);
     directoryOpen = null;
     directoryTail = null;
     return rows.map(([k]) => k);
+  }
+  // The directory's read STATE here (`unreadable`: sealed with a key this login does not hold — a forked account's
+  // original login; `keys.repairAccount` runs only there).
+  async function directoryState() {
+    const d = await directory();
+    return (await d.decided?.()) ?? d.state ?? { s: "unknown" };
   }
   // …and EVERY table this node writes, opened: rows under an older key sealed over, a tree under another built again,
   // all under the group's CURRENT epoch (a node joining with the words from that epoch reads them). Waited for.
@@ -1623,5 +1631,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, resealOwn, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

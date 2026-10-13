@@ -201,7 +201,10 @@ export async function start(ctx) {
     const r = t.rows().find(x => x.key.startsWith("f/") && (v => v && !v.error && v.gens && v.whole === v.gens && v.claimed !== m)(read(x)));
     if (!r) return;
     const v = read(r);
-    const row = (await files.rows.strict(v.space ? (await space.mine.strict()).find(s => s.id === v.space) ?? null : null)).find(x => x.id === v.file);
+    const list = await space.mine.strict();
+    // (A space not in a list still being read: not "claimed" on a guess — asked again on a later tick.)
+    if (v.space && list.complete === false && !list.some(s => s.id === v.space)) return;
+    const row = (await files.rows.strict(v.space ? list.find(s => s.id === v.space) ?? null : null)).find(x => x.id === v.file);
     if (row?.root) await claim(row.root);
     await t.put(r.key, JSON.stringify({ ...v, claimed: m }));
   }

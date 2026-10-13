@@ -65,9 +65,23 @@ export async function mount(ctx, el) {
         fail(err);
       }
     };
+    // REQUESTED: the spaces asked to join, each with where it stands (the spaces panel's list, which went with it —
+    // audit 10-13). Read after the rest: the page never waits on it.
+    const requested = h("div", { hidden: true });
+    const STATUS = { asked: "asked · waiting for a member who may invite", "let-in": "let in · opening the welcome", code: "asked by a code · waiting" };
+    ctx.optional("spaces: waiting", conversation.waiting(), () => []).then(async ws => {
+      if (!ws?.length || !requested.isConnected) return;
+      const person = await ctx.require("person");
+      requested.hidden = false;
+      requested.replaceChildren(
+        h("h3", { textContent: "Requested" }),
+        h("ul", {}, ...ws.map(w => h("li", {}, h("button", { type: "button", className: "cw-flat", title: w.id ?? w.code, textContent: w.name ?? (w.code ? `code ${w.code}` : `a space #${String(w.id).slice(0, 6)}`), onclick: e => w.desc && person.openSpace(e.currentTarget, w.desc) }), h("small", { textContent: STATUS[w.status] ?? w.status ?? "" })))),
+      );
+    });
     root.replaceChildren(
       h("h2", { textContent: "Your spaces" }),
       mine.length ? h("ul", {}, ...mine.map(s => h("li", {}, h("a", { href: `#/spaces/${s.id}`, textContent: space.shown(s) }), h("a", { href: `#/s/${s.id}`, textContent: "Open" })))) : h("p", { textContent: "You are in no shared space yet." }),
+      requested,
       h("h3", { textContent: "Make one" }),
       make,
       h("h3", { textContent: "Join one" }),
