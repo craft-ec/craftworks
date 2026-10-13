@@ -149,8 +149,13 @@ not on private deals.
 ## 1c. Editions and copies of an item (owner 10-10)
 
 An ITEM has EDITIONS ("Gold", "Silver"); an edition has COPIES — item > editions > copies. Built 10-10. A COLLECTION
-is an item too (a set: an album, "Pixel Cats"), whose own editions sell the whole set; which items belong to it is the
-items' metadata in Craftworks. The token holds no collection (owner 10-10: dropped — a chain needs one only because
+is an item too — a BUNDLE (kind `bundle`, its members of any kind in `meta.members`: an album, a course, "Pixel Cats")
+— whose own editions sell the whole set. **Buying a copy of a bundle GRANTS ITS MEMBERS** (owner 2026-10-13): its gated
+members are sealed in the bundle's HOLDERS GROUP (as a level's items are in its level group, rewards §5a — a public
+teaser where each would be); whoever holds a copy asks in, signing with the owner key the copy is held by, and any
+member — or the identity delegate with no page open — lets them in once the chain shows that key holding a copy; a
+holder who sells it lapses out (taken out, newer content re-keyed), as a lapsed level does. To build with the token
+(it reads copies' chains): not before the token is stable. The token holds no collection (owner 10-10: dropped — a chain needs one only because
 its items have no identity of their own; here an item is first-class, its author proven by its feed).
 
 - **An edition is a definition.** It carries everything an edition has — its own ROYALTY (so every app already pays
