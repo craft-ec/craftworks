@@ -83,7 +83,7 @@ test("a job runs only while its needs hold; paused (once) with why, resumed when
   await new Promise(r => setTimeout(r, 30));
   assert.equal(runs, n, "stopped: never run again");
   const moves = healths.filter(h => h.k === "lifecycle-job").map(h => h.to);
-  assert.deepEqual(moves, ["IDLE>PAUSED", "PAUSED>IDLE", "IDLE>STOPPED"], "each run is quiet; pausing, resuming and stopping are reported");
+  assert.deepEqual(moves, ["IDLE>STOPPED"], "runs, pauses and resumes are quiet (the visit's snapshot has them); a stop is reported");
 });
 
 test("become moves only on a change", async () => {

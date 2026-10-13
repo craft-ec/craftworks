@@ -133,7 +133,7 @@ export async function start(ctx) {
         followed: () => people.list("modlist"),
         onChange: f => changed.push(f),
       };
-    })());
+    })().catch(e => ((listsOpen = null), Promise.reject(e))));
   }
 
   return { of, lists };

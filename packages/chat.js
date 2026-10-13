@@ -349,7 +349,8 @@ export async function mount(ctx, el) {
       return personal();
     }
     shownConv = null;
-    const s = ctx.space && (await space.mine()).find(x => x.id === ctx.space && x.kind === "server");
+    const f = ctx.space ? await space.find(ctx.space) : null;
+    const s = f?.kind === "server" ? f : null;
     if (!s) return;
     const cid = ctx.sub || null;
     if (server?.id !== s.id) return openServer(s, cid);

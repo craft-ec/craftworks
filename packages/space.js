@@ -105,8 +105,11 @@ export async function start(ctx) {
     const t = await (await ctx.require("storage")).table(SPACES);
     // DECIDED before it is read as the list (R5): a page opened straight at a space found nothing in a list shown before
     // its answer, and never looked again (10-13: a space's chat by a direct link showed no channel).
-    await t.decided?.();
-    return t
+    const st = await t.decided?.();
+    // COMPLETE only when every device's list was read (R5): an incomplete list is never the answer "not in it".
+    const complete = !st || st.s === "present" || st.s === "absent";
+    return Object.assign(
+      t
       .rows()
       .map(r => {
         try {
@@ -116,7 +119,25 @@ export async function start(ctx) {
         }
       })
       .filter(Boolean)
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.name.localeCompare(b.name)),
+      { complete },
+    );
+  }
+  // ONE SPACE of this person's, by id — and "not one of theirs" (null) only once their list is COMPLETE: while a device's
+  // list is still being read (a recovery: its keys just arrived), it waits for the list to change, up to `wait` ms
+  // (10-13: a recovered device's space Home said "Not listed" while the other device's list was still arriving).
+  async function find(id, { wait = 60000 } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+      const l = await mine();
+      const sp = l.find(s => s.id === id);
+      if (sp || l.complete || Date.now() - t0 >= wait) return sp ?? null;
+      const t = await (await ctx.require("storage")).table(SPACES);
+      await new Promise(r => {
+        const timer = setTimeout(r, Math.min(5000, wait));
+        t.onChange(() => (clearTimeout(timer), r()));
+      });
+    }
   }
 
   // A space someone else made, JOINED here: listed in the account (its group is `keys`').
@@ -185,5 +206,5 @@ export async function start(ctx) {
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
   const isGroup = sp => !!(sp?.circle || sp?.group);
-  return { isGroup, account, me, loginNeeded, tables, mine, create, record, describe, tableOf, channel, board, owner, leave, forget, shown };
+  return { isGroup, account, me, loginNeeded, tables, mine, find, create, record, describe, tableOf, channel, board, owner, leave, forget, shown };
 }

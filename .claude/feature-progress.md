@@ -2449,3 +2449,12 @@ Build order (FOUNDATION §7):
       hidden — exactly the 3 with 0 acts AND no public description (two independent checks agree); the 5 that open
       shown. People listings already dropped unopenable cards. Also fixed: "@layer …" text shown to people in three
       places (contact's post count, account's block line, the delete confirm) — left by an earlier stylesheet edit.
+
+## After the foundation (owner 10-13: work through 2–5 before releasing the new structure)
+- [x] 2. Leftovers — Discover lists only spaces that open (727f78f).
+- [x] 3. From the telemetry (fx): R4 one layer up — the loader no longer keeps a package whose load/start failed, and
+      `edge` (pins, labels, people, prefs) and `moderation` lists no longer keep a failed table open (a label-menu that
+      failed as a recovery's keys arrived failed Board and Chat until a reload: `lifecycle-app OPENING>FAILED`,
+      `sealed label-menu`). `space.find(id)`: "not one of yours" only once the list is COMPLETE (space Home and Chat; a
+      recovered device's Home said "Not listed" while the other device's list arrived). Job pause/resume quiet (×25 guest
+      noise). Verified v664: two words recoveries complete, Board and Chat on the recovered device, no fault reports.

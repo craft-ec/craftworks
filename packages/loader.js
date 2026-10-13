@@ -160,7 +160,10 @@ export async function run(boot) {
     if (!loaded.has(name)) {
       askedBy.set(name, working.at(-1) ?? null);
       // (A service that needs an account, asked before login, is not a failure: its fault's kind says so.)
-      loaded.set(name, load(name).catch(e => (name !== "fault" && met(name, e, "package-failed"), Promise.reject(e))));
+      // R4 (FOUNDATION.md §2): a package that did not load or start is NOT kept as failed — asked for again, it loads
+      // again (10-13: a service whose table did not open yet failed every page that used it until a reload).
+      const p = load(name).catch(e => (name !== "fault" && met(name, e, "package-failed"), loaded.get(name) === p && loaded.delete(name), Promise.reject(e)));
+      loaded.set(name, p);
     }
     return loaded.get(name);
   }

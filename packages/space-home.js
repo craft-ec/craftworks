@@ -67,7 +67,9 @@ export async function mount(ctx, el) {
   async function draw() {
     // (#/discover alone: Discover is each app's tab in your personal space — your Home.)
     if (ctx.space === "discover") return location.replace("#/");
-    const sp = ctx.space && (await space.mine()).find(s => s.id === ctx.space && s.kind === "server");
+    // (Found once the list is complete — never "not in it" while a device's list is still arriving.)
+    const found = ctx.space ? await space.find(ctx.space) : null;
+    const sp = found?.kind === "server" ? found : null;
     if (!sp) return outside();
     // Its roles as known (`roles.of` brought the group current when it opened the space; its acts keep it so): drawn
     // at once, never after another round of the group's log and every member's card.

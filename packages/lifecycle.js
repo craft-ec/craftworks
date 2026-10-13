@@ -87,10 +87,11 @@ export async function start(ctx) {
       },
     },
     // A BACKGROUND JOB (upkeep, sync, the usage flush, keeping): runs every `every` ms only while what it NEEDS holds;
-    // PAUSED (said, with why) while it does not. Each run is not reported — only pausing and resuming are.
+    // PAUSED (with why) while it does not. Its moves are QUIET (10-13: every guest page reported upkeep paused, "nobody
+    // is logged in" — ×25 of noise): where each job stands rides in the visit's snapshot; only a stop is reported.
     job: {
       initial: "IDLE",
-      quiet: ["run", "done"],
+      quiet: ["run", "done", "pause", "resume"],
       events: {
         run: { from: ["IDLE"], to: "RUNNING" },
         done: { from: ["RUNNING"], to: "IDLE" },

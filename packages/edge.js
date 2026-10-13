@@ -23,7 +23,8 @@ export async function start(ctx) {
 
   let pinsOpen = null;
   function pins() {
-    return (pinsOpen ??= storage.table("pins").then(t => {
+    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
+    return (pinsOpen ??= storage.table("pins").catch(e => ((pinsOpen = null), Promise.reject(e))).then(t => {
       const has = ref => t.rows().some(r => r.key === ref);
       const refs = prefix => t.rows().map(r => r.key).filter(k => !k.startsWith("pref:") && (!prefix || k.startsWith(prefix)));
       const set = (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref));
@@ -33,7 +34,8 @@ export async function start(ctx) {
 
   let labelsOpen = null;
   function labels() {
-    return (labelsOpen ??= storage.table("tags").then(t => {
+    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
+    return (labelsOpen ??= storage.table("tags").catch(e => ((labelsOpen = null), Promise.reject(e))).then(t => {
       const parse = v => {
         try {
           return JSON.parse(v) ?? {};
@@ -96,7 +98,8 @@ export async function start(ctx) {
   // they hold from someone (`circles`).
   const RELATIONS = new Set(["follow", "follower", "friend", "asked", "answered", "hide", "block", "modlist", "cred-friends", "cred-followers", "credin-friends", "credin-followers"]);
   function people() {
-    return (peopleOpen ??= storage.table("people").then(t => {
+    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
+    return (peopleOpen ??= storage.table("people").catch(e => ((peopleOpen = null), Promise.reject(e))).then(t => {
       const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);
       // When a link was made (ms; 0: none).
       const at = (rel, did) => {
@@ -142,7 +145,8 @@ export async function start(ctx) {
 
   let prefsOpen = null;
   function prefs() {
-    return (prefsOpen ??= storage.table("pins").then(t => {
+    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
+    return (prefsOpen ??= storage.table("pins").catch(e => ((prefsOpen = null), Promise.reject(e))).then(t => {
       const get = name => {
         const r = t.rows().find(x => x.key === `pref:${name}`);
         try {
