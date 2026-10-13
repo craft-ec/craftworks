@@ -42,7 +42,7 @@ export async function start(ctx) {
         await r.act({ act: "policy", path: "", action: "post", who: "admins" });
       },
     });
-    await sync().catch(() => {});
+    await sync().catch(ctx.quiet(() => {}));
     return sp;
   }
 
@@ -69,14 +69,14 @@ export async function start(ctx) {
   // A follower COUNTS by this person's rule (`roles.followable`: anyone · friends · nobody — `mayWrite`, the check a
   // comment passes, its credential cited): asked every pass, so a rule made narrower drops who no longer meets it.
   async function takeFollows(people) {
-    const items = await index.inbox().catch(() => []);
+    const items = await index.inbox().catch(ctx.quiet(() => []));
     const mine = await roles.followable((await space.me()));
     const last = new Map();
     for (const it of items) if ((it.kind === "follow" || it.kind === "unfollow") && it.from && (last.get(it.from)?.at ?? 0) <= (it.at ?? 0)) last.set(it.from, it);
     for (const [did, it] of last) {
       const on = it.kind === "follow" ? roles.mayWrite({ action: "follow", item: mine, writer: did, cred: it.cred ?? null }) : false;
       if (on === null) continue; // its credential not read yet: the next pass
-      if (people.is("follower", did) !== on) await people.set("follower", did, on, it.at ?? Date.now()).catch(() => {});
+      if (people.is("follower", did) !== on) await people.set("follower", did, on, it.at ?? Date.now()).catch(ctx.quiet(() => {}));
     }
   }
 
@@ -95,13 +95,13 @@ export async function start(ctx) {
     for (const did of people.list(rel)) {
       if (want.has(did)) continue;
       const token = people.about(rel, did)?.token;
-      if (token) await (await credTable(me.id, token)).remove("for").catch(() => {});
+      if (token) await (await credTable(me.id, token)).remove("for").catch(ctx.quiet(() => {}));
       await people.set(rel, did, false);
     }
   }
   // HELD: the credentials others handed this person (the newest of each).
   async function takeCreds(people) {
-    for (const it of await index.inbox().catch(() => [])) {
+    for (const it of await index.inbox().catch(ctx.quiet(() => []))) {
       if (it.kind !== "cred" || !it.from || !AUDIENCES[it.circle] || !/^[0-9a-f]{32}$/.test(it.token ?? "")) continue;
       const rel = `credin-${it.circle}`;
       if (people.about(rel, it.from)?.token !== it.token && (people.at(rel, it.from) || 0) <= (it.at || 0)) await people.set(rel, it.from, true, it.at || Date.now(), { token: it.token });

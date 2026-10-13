@@ -69,7 +69,7 @@ export async function start(ctx) {
         return c;
       },
       async meta() {
-        const m = await doc.getMetadata().catch(() => null);
+        const m = await doc.getMetadata().catch(ctx.quiet(() => null));
         return { title: m?.info?.Title || "", author: m?.info?.Author || "" };
       },
       close: () => task.destroy(),
@@ -188,7 +188,7 @@ export async function start(ctx) {
     if (!format) throw new Error(`${file.name}: not a book read here (a PDF, an EPUB or a CBZ)`);
     onProgress({ stage: "reading", p: 0 });
     const book = await open(file, format);
-    const [preview, tags] = await Promise.all([cover(book), book.meta().catch(() => ({}))]);
+    const [preview, tags] = await Promise.all([cover(book), book.meta().catch(ctx.quiet(() => ({})))]);
     const pages = book.pages ?? null;
     book.close();
     const typed = new File([file], file.name, { type: TYPES[format] });

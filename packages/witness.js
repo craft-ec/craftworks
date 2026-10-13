@@ -46,7 +46,7 @@ export async function start(ctx) {
     busy = true;
     lastPass = h;
     try {
-      const me = await auth.check().catch(() => null);
+      const me = await auth.check().catch(ctx.quiet(() => null));
       if (!me) return;
       const tokens = await ctx.require("tokens");
       if (!tokens.on) return;
@@ -102,7 +102,7 @@ export async function start(ctx) {
       const se = Math.floor((h - statement.settle) / EPOCH);
       for (let e = Math.max(0, se - 1); e <= se; e++) {
         if (h < Core.statement_lot_height(e)) continue;
-        const root = await statement.root(e).catch(() => null);
+        const root = await statement.root(e).catch(ctx.quiet(() => null));
         const k = `statement ${e} ${root}`;
         if (!root || done.get(k) === "signed" || done.get(k) === "not seated") continue;
         const v = await run(() => core.witness_statement(tokens.code, tokens.beacon, tokens.idlogCode, lot.pool, lot.bag, lot.beacon, e, root, bytes(me.member))).catch(x => ({ refused: x.message ?? String(x) }));
@@ -129,7 +129,7 @@ export async function start(ctx) {
   let mandated = false;
   beaconSvc.onHeight(async () => {
     if (mandated) return;
-    const me = await auth.check().catch(() => null);
+    const me = await auth.check().catch(ctx.quiet(() => null));
     const tokens = me ? await ctx.require("tokens") : null;
     if (!tokens?.on) return;
     mandated = true;

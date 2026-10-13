@@ -57,7 +57,7 @@ export async function start(ctx) {
 
   // `outside`: the public description of the space it is in, when this person is not (a value, or a function that
   // finds it).
-  const outsideOf = o => Promise.resolve(typeof o === "function" ? o() : o).catch(() => null);
+  const outsideOf = o => Promise.resolve(typeof o === "function" ? o() : o).catch(ctx.quiet(() => null));
   // VOTES: ▲ score ▼ — changed here at once, then written; disabled where this person may not vote.
   // `post`: where its votes are kept (a comment's: its post's); `may`: already known (a thread's), else asked.
   function votes(it, { outside = null, row = false, post = it.ref, may = null } = {}) {
@@ -75,7 +75,7 @@ export async function start(ctx) {
       n.textContent = String(it.score);
       up.ariaPressed = String(next === 1);
       down.ariaPressed = String(next === -1);
-      await items.vote(it.ref, next, post, { outside: await outsideOf(outside) }).catch(() => {});
+      await items.vote(it.ref, next, post, { outside: await outsideOf(outside) }).catch(ctx.quiet(() => {}));
     };
     up.onclick = cast(1);
     down.onclick = cast(-1);
@@ -195,7 +195,7 @@ export async function start(ctx) {
       const on = !isSaved(it.ref);
       bump(it, "save", on);
       b.textContent = draw(on);
-      await setSaved(it.ref, on).catch(() => {});
+      await setSaved(it.ref, on).catch(ctx.quiet(() => {}));
     };
     return b;
   }
@@ -233,7 +233,7 @@ export async function start(ctx) {
           btn(`↗ Share${n("share")}`, e =>
             // (`link`: the lens it is read in shares ITS page — Blog an article, not the post's Board page; owner 10-11.)
             navigator.clipboard.writeText(link?.() ?? items.linkOf(it.ref, it.kind)).then(() => {
-              if (!it.signaled?.share) bump(it, "share", true), items.signal(it.ref, "share", true).catch(() => {});
+              if (!it.signaled?.share) bump(it, "share", true), items.signal(it.ref, "share", true).catch(ctx.quiet(() => {}));
               e.target.textContent = `Link copied${n("share")}`;
             }, fail),
           ),

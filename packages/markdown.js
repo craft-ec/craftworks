@@ -250,7 +250,7 @@ export async function start(ctx) {
     const a = Object.assign(document.createElement("a"), { href: "#", textContent: text || ref.name || "file" });
     a.onclick = async e => {
       e.preventDefault();
-      const u = await urlOf(key, ref).catch(() => null);
+      const u = await urlOf(key, ref).catch(ctx.quiet(() => null));
       if (!u) return;
       const d = Object.assign(document.createElement("a"), { href: u, download: ref.name || "file" });
       document.body.append(d);

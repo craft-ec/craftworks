@@ -118,7 +118,7 @@ export async function mount(ctx, el) {
     try {
       // At once: its roles, moderation and channels (each opens what it reads; the keys come with the tables).
       const chsP = conversation.channels(s);
-      chsP.catch(() => {});
+      chsP.catch(ctx.quiet(() => {}));
       [rs, mod] = await Promise.all([roles.of(s), moderation.of(s)]);
       if (server !== s) return;
       menu();
@@ -241,7 +241,7 @@ export async function mount(ctx, el) {
     channel = c;
     showOpen(true);
     // Its readers in the side panel (a channel kept to a role shows that role's people).
-    if (server) drawMembers(server).catch(() => {});
+    if (server) drawMembers(server).catch(ctx.quiet(() => {}));
     // A RESTRICTED channel (who may read: a role, admins…): its messages are its GROUP's (`groups`) — open to its
     // readers, locked to everyone else here.
     const g = c.item?.meta?.group;
@@ -397,7 +397,7 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
   const joins = await ctx.require("join-button");
   const cards = [];
   for (const d of await posts.publicSpaces()) {
-    const r = await roles.ofPublic(d).catch(() => null);
+    const r = await roles.ofPublic(d).catch(ctx.quiet(() => null));
     if (!r || r.policy("", "join") !== "anyone" || !r.apps().includes("chat")) continue;
     const n = r.members().length;
     // Join, Requested (while a member lets you in), Open: the one join control.

@@ -61,7 +61,7 @@ export async function mount(ctx, el) {
 
   // ONE ITEM read where it is: a space this person is in, or from outside (a person's).
   async function getItem(ref) {
-    const it = await items.get(ref).catch(() => null);
+    const it = await items.get(ref).catch(ctx.quiet(() => null));
     return it && ["poll", "proposal"].includes(it.kind) ? it : null;
   }
 
@@ -342,10 +342,10 @@ export async function mount(ctx, el) {
       return;
     }
     // YOURS (and those for your followers or friends: your circles' places), or a PERSON's.
-    let polls = await at.read({ kinds: ["poll"] }).catch(() => []);
+    let polls = await at.read({ kinds: ["poll"] }).catch(ctx.quiet(() => []));
     if (at.who === "mine" && !at.saved) {
       const circles = (await space.mine()).filter(s => s.circle && s.governance?.owner === me);
-      if (circles.length) polls = [...polls, ...(await items.inPlaces({ spaces: circles }, "poll", { withVotes: false }).catch(() => []))];
+      if (circles.length) polls = [...polls, ...(await items.inPlaces({ spaces: circles }, "poll", { withVotes: false }).catch(ctx.quiet(() => [])))];
     }
     const seen = new Set();
     polls = polls.filter(p => p.kind === "poll" && !seen.has(p.ref) && seen.add(p.ref)).sort((a, b) => b.at - a.at);
@@ -354,12 +354,12 @@ export async function mount(ctx, el) {
     if (at.who === "mine" && !at.saved) {
       const withVote = [];
       for (const sp of (await space.mine()).filter(s => !s.circle)) {
-        const r = await roles.of(sp).catch(() => null);
+        const r = await roles.of(sp).catch(ctx.quiet(() => null));
         if (r && (await r.settled.then(() => true, () => false)) && r.apps().includes("vote")) withVote.push(sp);
       }
       const cards = [];
       for (const sp of withVote) {
-        const S = await V.inSpace(sp).catch(() => null);
+        const S = await V.inSpace(sp).catch(ctx.quiet(() => null));
         if (!S) continue;
         await learnNames([...S.delegations().values()].filter(Boolean));
         cards.push(...(await proposalCards(S, at, { openOnly: true })));

@@ -193,7 +193,7 @@ export async function start(ctx) {
     const n = pr.members().length;
     const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
     // Its MAIL, where its owner turned it on: written to from here, member or not.
-    const mailable = await conversation.mail.accepts(desc.id).catch(() => false);
+    const mailable = await conversation.mail.accepts(desc.id).catch(ctx.quiet(() => false));
     // HIDE (private, everywhere) and FLAG (public: your list, Discover) the whole space — as a post and an author.
     const lists = await moderation.lists();
     const hideFlag = () =>
@@ -220,14 +220,14 @@ export async function start(ctx) {
   async function mentionable(q = "", { extra = [] } = {}) {
     const me = await space.me();
     const dids = new Set(extra);
-    const mine = await space.mine().catch(() => []);
+    const mine = await space.mine().catch(ctx.quiet(() => []));
     for (const s of mine) if (s.kind === "direct" && s.with) dids.add(s.with);
     const here = mine.find(s => s.id === ctx.space && s.kind === "server");
-    if (here) for (const d of await conversation.members(here).catch(() => [])) dids.add(d);
-    const people = await edge.people().catch(() => null);
+    if (here) for (const d of await conversation.members(here).catch(ctx.quiet(() => []))) dids.add(d);
+    const people = await edge.people().catch(ctx.quiet(() => null));
     for (const rel of ["friend", "follow"]) for (const d of people?.list(rel) ?? []) if (String(d).startsWith("did:craftec:")) dids.add(d);
     dids.delete(me);
-    const all = await Promise.all([...dids].map(async did => ({ did, shown: directory.shown(did, await directory.handle(did).catch(() => null)) })));
+    const all = await Promise.all([...dids].map(async did => ({ did, shown: directory.shown(did, await directory.handle(did).catch(ctx.quiet(() => null))) })));
     q = String(q).toLowerCase();
     return all.filter(p => p.shown.toLowerCase().includes(q)).sort((a, b) => a.shown.toLowerCase().startsWith(q) === b.shown.toLowerCase().startsWith(q) ? a.shown.localeCompare(b.shown) : a.shown.toLowerCase().startsWith(q) ? -1 : 1);
   }
@@ -237,12 +237,12 @@ export async function start(ctx) {
     const short = String(typed ?? "").split("#")[1] ?? "";
     const byStart = async () => {
       const me = await space.me();
-      const all = [...(await mentionable("").catch(() => [])).map(p => p.did), me].filter(d => d && d.replace(/^did:craftec:/, "").startsWith(short));
+      const all = [...(await mentionable("").catch(ctx.quiet(() => []))).map(p => p.did), me].filter(d => d && d.replace(/^did:craftec:/, "").startsWith(short));
       return all.length === 1 ? all[0] : null;
     };
-    const who = did ?? (await conversation.person(typed).catch(() => null)) ?? (short ? await byStart() : null);
+    const who = did ?? (await conversation.person(typed).catch(ctx.quiet(() => null))) ?? (short ? await byStart() : null);
     if (!who) return;
-    const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space) ?? null;
+    const sp = (await space.mine().catch(ctx.quiet(() => []))).find(s => s.id === ctx.space) ?? null;
     return open(anchor, who, { space: sp });
   }
   return { open, openSpace, close, mentionable, openMention };

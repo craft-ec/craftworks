@@ -103,7 +103,7 @@ export async function start(ctx) {
   async function card(did, { fresh = false } = {}) {
     const t = await publicOf(did, CARD);
     await t?.answer?.();
-    if (fresh) await t?.reread?.().catch(() => {});
+    if (fresh) await t?.reread?.().catch(ctx.quiet(() => {}));
     if (!t || t.absent) return null;
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
   }
@@ -168,7 +168,7 @@ export async function start(ctx) {
     const st = await (await ctx.require("keys")).ready().catch(() => null);
     const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
     // And into the account's DEVICES contract (a grow-only set: the union is kept) — where readers count them.
-    const me = await auth.check().catch(() => null);
+    const me = await auth.check().catch(ctx.quiet(() => null));
     const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).then(() => true, e => (ctx.failed("card", e, `the account's devices: ${e.message}`), false)) : false;
     // Said on the card once the contract is put: what readers check before looking it up.
     if (put && !read(t).hasDevices) await t.put("devices", "1");
@@ -219,7 +219,7 @@ export async function start(ctx) {
   const BADGE = { pro: " ⭐ PRO", vip: " 💎 VIP" };
   const nameEl = (did, tag = "span", props = {}) => {
     const e = Object.assign(document.createElement(tag), props, { textContent: shown(did, knownHandles.get(did)) });
-    Promise.all([name(did), levelOf(did).catch(() => null)]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? "")), () => {});
+    Promise.all([name(did), levelOf(did).catch(ctx.quiet(() => null))]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? "")), () => {});
     return e;
   };
 
@@ -247,7 +247,7 @@ export async function start(ctx) {
             for (const f of deviceWatch.get(did)) f(did);
           }),
         )
-        .catch(() => {});
+        .catch(ctx.quiet(() => {}));
     }
     deviceWatch.get(did).push(fn);
   }

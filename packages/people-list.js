@@ -42,7 +42,7 @@ export async function start(ctx) {
     let open = true;
     const row = (did, ...extra) => el("li", { title: did }, directory.nameEl(did, "span", { className: "n", onclick: e => person.open(e.currentTarget, did) }), ...extra);
     async function draw() {
-      const asking = await conversation.friendRequests().catch(() => []);
+      const asking = await conversation.friendRequests().catch(ctx.quiet(() => []));
       const all = [...new Set([...asking, ...SECTIONS.flatMap(([rel]) => people.list(rel))])].filter(d => d.startsWith("did:"));
       if (!open) return;
       const parts = [];

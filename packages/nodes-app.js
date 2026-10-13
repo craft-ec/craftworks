@@ -65,19 +65,19 @@ export async function mount(ctx, el) {
     // claims are accepted yet), naming one node's key.
     const seat = {};
     for (const x of [c, c + 1]) {
-      const v = await tokens.run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, tokens.lot.bag, tokens.lot.beacon, x)).catch(() => []);
+      const v = await tokens.run(() => core.stakers(tokens.code, tokens.beacon, tokens.idlogCode, tokens.lot.bag, tokens.lot.beacon, x)).catch(ctx.quiet(() => []));
       const mine = (v ?? []).find(k => k.owner === did);
       if (mine) seat[x] = mine;
     }
     // ACCOUNT: the last two epochs' statement lines.
     const acct = [];
     for (const x of [e - 1, e - 2].filter(y => y >= 0)) {
-      const p = await statement.paid(x, did).catch(() => null);
+      const p = await statement.paid(x, did).catch(ctx.quiet(() => null));
       acct.push([cell(String(x), "num"), p && p.keeper !== "0" ? cell("✓", "ok") : cell("✗", "no"), cell(p ? craft(p.keeper) : "0", "num"), cell(p ? craft(p.witness) : "0", "num")]);
     }
     const seats = [c, c + 1].map(x => (seat[x] ? `claims epoch ${x}: node ${seat[x].key.slice(0, 8)}… · ${craft(seat[x].amount)} staked` : `claims epoch ${x}: none`)).join(" · ");
     // NODES: each node's standing record (its key names it).
-    const list = (await membership.nodes().catch(() => null)) ?? [{ index: 0, key: me.member, me: true }];
+    const list = (await membership.nodes().catch(ctx.quiet(() => null))) ?? [{ index: 0, key: me.member, me: true }];
     const limits = await (await ctx.require("keep")).limits(list.map(n => n.key)).catch(() => ({}));
     const rows = [];
     for (const n of list) {

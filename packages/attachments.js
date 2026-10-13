@@ -128,7 +128,7 @@ export async function start(ctx) {
       const drawList = async () => {
         const sp = all.find(s => s.id === choose.value) ?? null;
         listEl.replaceChildren(h("li", { textContent: "Loading…" }));
-        const rows = (await drive.list(sp).catch(() => [])).filter(r => !media || !!kinds.mediaOf(r.ref));
+        const rows = (await drive.list(sp).catch(ctx.quiet(() => []))).filter(r => !media || !!kinds.mediaOf(r.ref));
         listEl.replaceChildren(
           ...(rows.length
             ? rows.map(r => {

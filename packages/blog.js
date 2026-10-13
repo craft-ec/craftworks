@@ -139,7 +139,7 @@ export async function mount(ctx, el) {
   // AN ARTICLE whole.
   async function article(ref) {
     root.replaceChildren(theme.loading("Opening the article…"));
-    const outside = await items.outsideOf(ref).catch(() => null);
+    const outside = await items.outsideOf(ref).catch(ctx.quiet(() => null));
     const it = await items.get(ref, { outside });
     if (!it) return root.replaceChildren(h("p", { className: "none", textContent: "This article is not there (removed, or not found yet)." }));
     // GATED (adult content not chosen, a level's item): the one item page decides what shows.
@@ -262,7 +262,7 @@ export async function mount(ctx, el) {
       const said = h("span", { className: "said" });
       const publish = h("button", { type: "button", className: "cw-btn primary", textContent: b.review ? "Send again" : "Publish now" });
       const go = theme.action(publish, () => press.publish(d).then(x => (x.review ? draw() : (location.hash = `${b.place ? `#/s/${b.place}/blog` : "#/blog"}/p/${x.ref}`)), e => ((said.textContent = ctx.say(e)), Promise.reject(e))), { busy: "Publishing…", done: "Done ✓" });
-      publish.onclick = () => go().catch(() => {});
+      publish.onclick = () => go().catch(ctx.quiet(() => {}));
       const del = h("button", { type: "button", className: "cw-btn", textContent: "Delete" });
       del.onclick = () => (del.dataset.armed === "1" ? items.remove(d.ref).then(() => draw(), e => (said.textContent = ctx.say(e))) : ((del.dataset.armed = "1"), (del.textContent = "Confirm: delete")));
       const where = b.place ? `for ${spaces.get(b.place) ? space.shown(spaces.get(b.place)) : "a space you left"}` : "for your blog";
@@ -332,7 +332,7 @@ export async function mount(ctx, el) {
           throw e;
         }
       }, words);
-      btn.onclick = () => act().catch(() => {});
+      btn.onclick = () => act().catch(ctx.quiet(() => {}));
     };
     if (editRef) {
       run(publish, async () => {
@@ -385,7 +385,7 @@ export async function mount(ctx, el) {
     drawn = whereCap.key();
     const s = at.sub;
     const mine = at.who === "mine";
-    const editor = at.space ? await press.mayEdit(at.space).catch(() => false) : false;
+    const editor = at.space ? await press.mayEdit(at.space).catch(ctx.quiet(() => false)) : false;
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Articles", href: base(), on: !s }] : []),

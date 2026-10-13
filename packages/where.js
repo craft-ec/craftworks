@@ -29,9 +29,9 @@ export async function start(ctx) {
 
   // A SAVED item, read where it is (a space's this person is not in: from outside, by its public description).
   async function getSaved(ref) {
-    const outside = await items.outsideOf(ref).catch(() => null);
+    const outside = await items.outsideOf(ref).catch(ctx.quiet(() => null));
     if (String(ref).startsWith("space:") && !outside && !(await items.boardOf(ref.slice(6, ref.indexOf("/"))))) return null;
-    return items.get(ref, { outside }).catch(() => null);
+    return items.get(ref, { outside }).catch(ctx.quiet(() => null));
   }
 
   async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {
@@ -42,7 +42,7 @@ export async function start(ctx) {
     // app — its public description, its public acts' rules (the app on, its kind's `read` policy "anyone"); else said.
     let sp = mineSp;
     if (ctx.space && !discover && !sp) {
-      const desc = await items.publicSpace(ctx.space).catch(() => null);
+      const desc = await items.publicSpace(ctx.space).catch(ctx.quiet(() => null));
       const pr = desc ? await roles.ofPublic(desc) : null;
       if (pr) await pr.settled;
       const domain = (await ctx.require("kinds")).policyDomain(kind);

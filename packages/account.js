@@ -115,7 +115,7 @@ export async function mount(ctx, el) {
                       return;
                     }
                     const me = await auth.check();
-                    if (!(await auth.identity.wordsOpen(me.didBytes, entropy).catch(() => false))) {
+                    if (!(await auth.identity.wordsOpen(me.didBytes, entropy).catch(ctx.quiet(() => false)))) {
                       entropy.fill(0);
                       said.textContent = "Those are not this account's current recovery words.";
                       return;
@@ -155,7 +155,7 @@ export async function mount(ctx, el) {
         const [log, st, escrowed] = await Promise.all([
           auth.identity.keyLogInfo(s.didBytes),
           keys.ready(),
-          keys.escrowed().catch(() => null),
+          keys.escrowed().catch(ctx.quiet(() => null)),
         ]);
         const facts = [
           log ? `Recovery words changed ${log.changes} time${log.changes === 1 ? "" : "s"} (your key log has ${log.events} event${log.events === 1 ? "" : "s"}).` : "Your key log is not on the network yet.",
@@ -195,7 +195,7 @@ export async function mount(ctx, el) {
         return tr;
       };
       let last = new Map();
-      const draw = () => Promise.all([storage.describe(), keep.status().catch(() => []), storage.describeSpaces().catch(() => [])]).then(
+      const draw = () => Promise.all([storage.describe(), keep.status().catch(ctx.quiet(() => [])), storage.describeSpaces().catch(ctx.quiet(() => []))]).then(
         ([list, kept, spaces]) => {
           last = new Map();
           for (const k of kept) if (k.name && (!last.has(k.name) || last.get(k.name).at < k.at)) last.set(k.name, k);
@@ -335,7 +335,7 @@ export async function mount(ctx, el) {
             return;
           }
           said.textContent = "Checking your words…";
-          const ok = await auth.identity.wordsOpen(s.didBytes, old).catch(() => false);
+          const ok = await auth.identity.wordsOpen(s.didBytes, old).catch(ctx.quiet(() => false));
           if (!ok) {
             old.fill(0);
             old = null;
@@ -410,7 +410,7 @@ export async function mount(ctx, el) {
       const recovery = await ctx.require("recovery");
       const recSaid = pass.querySelector(".said");
       const recState = async () => {
-        const on = await recovery.has().catch(() => false);
+        const on = await recovery.has().catch(ctx.quiet(() => false));
         pass.querySelector(".state").textContent = on ? "A recovery passphrase is set." : "No recovery passphrase yet.";
         pass.querySelector(".clear").hidden = !on;
       };

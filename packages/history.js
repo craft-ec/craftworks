@@ -28,7 +28,7 @@ export async function start(ctx) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  const name = async did => (did ? directory.shown(did, await directory.handle(did).catch(() => null)) : "someone");
+  const name = async did => (did ? directory.shown(did, await directory.handle(did).catch(ctx.quiet(() => null))) : "someone");
   const when = t => (t ? new Date(t).toLocaleString() : "");
   const stamp = it => it?.edited || it?.at || 0;
 

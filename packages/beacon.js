@@ -59,7 +59,7 @@ self.onmessage = async e => {
   // READ it (`node.read`): its state (bytes), or null (not there yet).
   async function read() {
     core.take_got(id);
-    return (await node.read(idBytes, "reading the beacon").catch(() => false)) ? core.take_got(id) : null;
+    return (await node.read(idBytes, "reading the beacon").catch(ctx.quiet(() => false))) ? core.take_got(id) : null;
   }
   const heightOf = st => (st ? glue.CraftworksCore.beacon_state_height(st) : null);
 
@@ -83,7 +83,7 @@ self.onmessage = async e => {
     const next = await step(again ?? new Uint8Array(0), crypto.getRandomValues(new Uint8Array(32)));
     if (!next.length) return;
     for (const p of core.beacon_puts(code, params, next)) {
-      const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "extending the beacon", 60000).catch(() => null);
+      const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "extending the beacon", 60000).catch(ctx.quiet(() => null));
       if (said?.kind !== "put") break;
     }
     state.extended += 1;

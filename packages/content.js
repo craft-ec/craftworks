@@ -185,7 +185,7 @@ export async function start(ctx) {
         const p = await t.page({ lo: oldest, limit: 100000 });
         for (const row of await withReactions(p.rows)) loaded.set(row.key, row);
       })()
-        .catch(() => {})
+        .catch(ctx.quiet(() => {}))
         .finally(() => (refreshing = null)));
     // An extra source changed (an outsider wrote): drawn again.
     extra?.onChange(() => changed.forEach(f => f()));
@@ -281,7 +281,7 @@ export async function start(ctx) {
       mayAbout: async (id, action) => {
         const it = list().find(x => x.id === id);
         if (!(governed && app) || !it) return true;
-        const cred = await R.credToCite(it, action, r).catch(() => false);
+        const cred = await R.credToCite(it, action, r).catch(ctx.quiet(() => false));
         return cred !== false && R.mayWrite({ action, item: it, writer: me, cred, r }) !== false;
       },
       mayEdit,

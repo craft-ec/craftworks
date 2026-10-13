@@ -13,7 +13,7 @@
 export async function start(ctx) {
   const [space, conversation, roles] = await Promise.all(["space", "conversation", "roles"].map(n => ctx.require(n)));
   const keyOf = sp => (sp.circle ? `circle:${sp.circle}` : (sp.group ?? null));
-  const mine = async () => (await space.mine().catch(() => [])).filter(s => keyOf(s));
+  const mine = async () => (await space.mine().catch(ctx.quiet(() => []))).filter(s => keyOf(s));
   const find = async key => (await mine()).find(s => keyOf(s) === key) ?? null;
   const making = new Map();
   async function of(key, { name, setup = null } = {}) {

@@ -175,7 +175,7 @@ export async function mount(ctx, el) {
 
   // PAGES LISTED from many wikis (your Saved; Discover's public ones), each a link into its own wiki.
   async function pages(at, title, none) {
-    const list = (await at.read().catch(() => [])).filter(p => p.kind === "wiki");
+    const list = (await at.read().catch(ctx.quiet(() => []))).filter(p => p.kind === "wiki");
     root.replaceChildren(
       h("h2", { textContent: title }),
       list.length ? h("ul", {}, ...list.map(p => h("li", {}, h("a", { href: items.pageOf(p.ref, p.kind), textContent: p.title || "Untitled" }), at.discover ? h("span", { className: "s" }, " · ", directory.nameEl(p.by)) : null))) : h("p", { className: "none", textContent: none }),
@@ -198,7 +198,7 @@ export async function mount(ctx, el) {
         throw e;
       }
     }, { busy: "Saving…", done: "Saved ✓" });
-    btn.onclick = () => run().catch(() => {});
+    btn.onclick = () => run().catch(ctx.quiet(() => {}));
     const no = h("button", { type: "button", className: "cw-btn", textContent: "Cancel", onclick: () => ((editing = false), cancel()) });
     return h("div", { className: "editing box" }, ...extra, ed.el, h("div", { className: "tools" }, btn, no, msg));
   }
@@ -510,7 +510,7 @@ export async function mount(ctx, el) {
     soon = setTimeout(async () => {
       const was = current;
       if (!was || editing) return;
-      const now = await was.wiki.pages().catch(() => null);
+      const now = await was.wiki.pages().catch(ctx.quiet(() => null));
       if (now && current === was && !editing && sigOf(now) !== was.sig) draw();
     }, 1500);
   });

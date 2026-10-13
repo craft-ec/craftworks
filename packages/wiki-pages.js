@@ -442,7 +442,7 @@ export async function start(ctx) {
       const isRef = /^(space:|did:)/.test(String(keyOrRef));
       const p = isRef ? all.find(x => x.refs.includes(keyOrRef)) : all.find(x => x.key === normTitle(keyOrRef));
       if (!p) return null;
-      const more = (await Promise.all(p.refs.map(ref => items.attached(ref, SECTION).catch(() => [])))).flat();
+      const more = (await Promise.all(p.refs.map(ref => items.attached(ref, SECTION).catch(ctx.quiet(() => []))))).flat();
       const list = [...(await held).list.filter(x => x.kind === SECTION), ...more];
       const seen = new Set();
       return shapePage(p, list.filter(x => !seen.has(x.ref) && seen.add(x.ref)));
@@ -477,7 +477,7 @@ export async function start(ctx) {
       if (!mayEdit()) throw new Error(owner ? "only its owner writes in this wiki" : "this space's rules do not let you write pages");
       const key = normTitle(title);
       if ((await pages()).some(x => x.key === key)) throw new Error(`there is a page “${cleanTitle(title)}” here already`);
-      const aud = audience ?? (sp && !circle ? ((await items.publicIn(sp, KIND).catch(() => false)) ? "public" : "members") : "private");
+      const aud = audience ?? (sp && !circle ? ((await items.publicIn(sp, KIND).catch(ctx.quiet(() => false))) ? "public" : "members") : "private");
       const ref = await items.submit({ board: sp && !circle ? sp.id : (circle?.id ?? null), title: cleanTitle(title), body: "", kind: KIND, audience: circle ? "members" : aud, meta: { key, ...(lineage ? { lineage } : {}) }, write });
       const p = { ref, refs: [ref], key, title: cleanTitle(title), versions: [], sections: [] };
       await apply(p, sections ?? planWhole([], text), { suggest: false });

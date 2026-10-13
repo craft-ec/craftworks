@@ -160,7 +160,7 @@ export async function start(ctx) {
     const key = (await ctx.require("blocks")).address(Core.bag_id(bagCode, address));
     if (!watchers.has(key)) watchers.set(key, []);
     watchers.get(key).push(fn);
-    await read(address, `the bag of ${ref}`, { follow: true }).catch(() => {});
+    await read(address, `the bag of ${ref}`, { follow: true }).catch(ctx.quiet(() => {}));
   }
 
   // A SPACE's SEALED bag (`name`): at an address the space's id gives, each item sealed with the space's newest EPOCH
@@ -257,7 +257,7 @@ export async function start(ctx) {
       .require("support-config")
       .then(b => JSON.parse(dec.decode(b)).support)
       .then(h => (/^[0-9a-f]{64}$/.test(h ?? "") ? bytes(h) : null))
-      .catch(() => null));
+      .catch(ctx.quiet(() => null)));
   // Once a kind per space (per member it is about) per hour from a page.
   const reported = new Map();
   async function health(item) {
@@ -268,7 +268,7 @@ export async function start(ctx) {
     const v = String(ctx.siteV ?? ctx.shaOf?.("conversation") ?? "").slice(0, 12); // the site's manifest hash
     // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
     // read together) — never more of it.
-    const r = String((await space.account().catch(() => null))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
+    const r = String((await space.account().catch(ctx.quiet(() => null)))?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
     const to = await support();
     if (!to) {
       ctx.log("health", { what: `${item.k}: not reported (this page has no support key: support-config)` });

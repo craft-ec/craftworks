@@ -57,7 +57,7 @@ const roles = {
   of: async () => ({ settled: Promise.resolve(), allowsIn: () => true }),
   mayWrite: ({ writer }) => editors.has(writer),
 };
-const ctx = { require: async name => ({ items, space, roles })[name] };
+const ctx = { log: () => {}, failed: () => {}, quiet: make => () => make(), say: e => String(e?.message ?? e), require: async name => ({ items, space, roles })[name] };
 const S = await W.start(ctx);
 const as = who => (me = `did:craftec:${who}`);
 const spaceAt = { who: "space", space: SP };

@@ -112,14 +112,14 @@ export async function start(ctx) {
     await (await table(sp)).put(`k/${id}`, JSON.stringify({ ...v, at: Date.now() }));
   };
   const inOf = sp => (shared(sp) ? sp.id : null);
-  const spaceOf = async id => (id ? ((await space.mine().catch(() => [])).find(s => s.id === id) ?? undefined) : null);
+  const spaceOf = async id => (id ? ((await space.mine().catch(ctx.quiet(() => []))).find(s => s.id === id) ?? undefined) : null);
 
   // A REFERENCE AS IT IS NOW: its key and root from its space's row, where this person reads that space.
   async function current(ref) {
     if (!ref || ref.inline || !ref.id) return ref;
     const sp = await spaceOf(ref.in);
     if (sp === undefined) return ref;
-    const row = await rowOf(sp, ref.id).catch(() => null);
+    const row = await rowOf(sp, ref.id).catch(ctx.quiet(() => null));
     if (!row) return ref;
     const { b, ...was } = ref;
     return { ...was, key: row.key, root: row.root, ...(row.b !== undefined ? { b: row.b } : {}) };
@@ -131,9 +131,9 @@ export async function start(ctx) {
     if (!ref || ref.inline || (ref.id && (ref.in ?? null) === inOf(sp))) return ref;
     const now = await current(ref);
     const from = ref.id ? await spaceOf(ref.in) : undefined;
-    const src = from !== undefined && ref.id ? await rowOf(from, ref.id).catch(() => null) : null;
+    const src = from !== undefined && ref.id ? await rowOf(from, ref.id).catch(ctx.quiet(() => null)) : null;
     const id = ref.id ?? ref.root;
-    const had = await rowOf(sp, id).catch(() => null);
+    const had = await rowOf(sp, id).catch(ctx.quiet(() => null));
     if (!had) await setRow(sp, { id, key: now.key, root: now.root, ...(now.b !== undefined ? { b: now.b } : {}), ...(src?.h ? { h: src.h } : {}), pub: !!pub, app, n: -2 });
     return { ...now, id, in: inOf(sp) };
   }
@@ -143,7 +143,7 @@ export async function start(ctx) {
   async function publicity(refs, sp, pub) {
     for (const ref of refs ?? []) {
       if (!ref?.id || (ref.in ?? null) !== inOf(sp)) continue;
-      const row = await rowOf(sp, ref.id).catch(() => null);
+      const row = await rowOf(sp, ref.id).catch(ctx.quiet(() => null));
       if (row && !!row.pub !== !!pub) await setRow(sp, { ...row, pub: !!pub });
     }
   }
@@ -176,7 +176,7 @@ export async function start(ctx) {
     const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress, null, burn, made ? { made: true } : {});
     const id = root;
     // The row keeps the BURN SECRET (`x`): whoever re-keys the file later burns these pieces with it.
-    if (!(await rowOf(sp, id).catch(() => null))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
+    if (!(await rowOf(sp, id).catch(ctx.quiet(() => null)))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
     return { id, in: inOf(sp), key: keyHex, root, b: hex(burn), size, name, type };
   }
 
@@ -229,7 +229,7 @@ export async function start(ctx) {
     // 1.36 MB/s link). Each finished generation is recorded at once, so a resume still skips exactly the stored ones.
     let sentBytes = stored.reduce((n, s, g) => n + (s?.length >= Math.min(GEN, plan.chunks - g * GEN) + EXTRA ? Math.min(genBytes, size - g * genBytes) : 0), 0);
     let recording = Promise.resolve();
-    const record = () => (recording = recording.then(() => prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now(), ...extra })).catch(() => {})));
+    const record = () => (recording = recording.then(() => prog.write(JSON.stringify({ key: keyHex, name, size, type, stored, at: Date.now(), ...extra })).catch(ctx.quiet(() => {}))));
     let nextGen = 0;
     let failed = null;
     const worker = async () => {
@@ -272,7 +272,7 @@ export async function start(ctx) {
     const puts = Array.from(idx.puts);
     const ok = await Promise.all(puts.slice(0, -1).map(p => putOne([0, ...p], `${name}: its index`)));
     if (ok.includes(false) || !(await putOne([0, ...puts.at(-1)], `${name}: its root`))) throw new Error(`${name}: its index could not be stored (the upload resumes)`);
-    await prog.done().catch(() => {});
+    await prog.done().catch(ctx.quiet(() => {}));
     onProgress({ phase: "done", done: size, size });
     return idx.root;
   }
@@ -397,7 +397,7 @@ export async function start(ctx) {
     // deterministic, so a viewer's copy is the uploader's). Only with the file's burn hash — a piece's first write names it.
     if (absent.length && ref.b) {
       const burn = bytes(ref.b);
-      for (const j of absent) putOne(core.file_mint(f.key, f.plan.size, g, plain, j, burn), `repairing ${ref.name}`).catch(() => {});
+      for (const j of absent) putOne(core.file_mint(f.key, f.plan.size, g, plain, j, burn), `repairing ${ref.name}`).catch(ctx.quiet(() => {}));
       ctx.log("files", { what: `${ref.name}: part ${g + 1}: ${absent.length} fragment(s) not there, made again and put` });
     }
     return plain;
@@ -548,7 +548,7 @@ export async function start(ctx) {
       // Fewer than 16 answered HERE is not "lost": this read ran among keep's own puts (measured 2026-10-06: a pass
       // counted generations damaged whose pieces a plain read then found). The rebuild races every fragment itself and
       // fails cleanly when it truly cannot; a fragment made again that was there is the same bytes.
-      const plain = await generation(ref, f, g).catch(() => null);
+      const plain = await generation(ref, f, g).catch(ctx.quiet(() => null));
       if (!plain) return;
       const lost = listed.filter((_, n) => !got[n]);
       const made = await Promise.all(lost.map(([j]) => putOne(core.file_mint(f.key, f.plan.size, g, plain, j, burn), `repairing ${ref.name}`)));
@@ -594,7 +594,7 @@ export async function start(ctx) {
       Array.from({ length: Math.min(16, all.length) }, async () => {
         while (found && next < all.length) {
           const i = next++;
-          const st = await fetchState(all[i][0], "keeping an assigned file", { raw: true }).catch(() => null);
+          const st = await fetchState(all[i][0], "keeping an assigned file", { raw: true }).catch(ctx.quiet(() => null));
           if (!st || st[0] !== 2) {
             missing.push(i);
             if (!glue.CraftworksCore.registry_found(size, missing)) found = false;

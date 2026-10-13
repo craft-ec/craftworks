@@ -25,7 +25,7 @@ export async function start(ctx) {
   // DEPARTED: before a commit takes a person's nodes out, where each of their feeds stands — so what they wrote still
   // counts, up to there, for everyone who opens the space later (`storage`: the space's table `departed`).
   async function departed(sp, did) {
-    const nodes = await directory.devices(did).catch(() => []);
+    const nodes = await directory.devices(did).catch(ctx.quiet(() => []));
     if (!nodes.length) return;
     const heads = await storage.headsOf(sp, nodes);
     const t = await storage.table(space.tableOf(sp, "departed"), sp);
@@ -85,7 +85,7 @@ export async function start(ctx) {
       const follow = async () => {
         for (const did of people.list("modlist"))
           if (!tails.has(did)) {
-            const t = await directory.publicOf(did, LIST).catch(() => null);
+            const t = await directory.publicOf(did, LIST).catch(ctx.quiet(() => null));
             if (t) (tails.set(did, t), t.onChange(fire));
           }
       };

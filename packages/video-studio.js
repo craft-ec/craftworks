@@ -102,7 +102,7 @@ export async function start(ctx) {
     return { blob: await sheet.convertToBlob({ type: "image/jpeg", quality: 0.7 }), n, cols, w, h, every };
   }
   async function poster(M, track, duration) {
-    const c = await new M.CanvasSink(track, { width: 640, fit: "contain" }).getCanvas(Math.min(duration / 3, 3)).catch(() => null);
+    const c = await new M.CanvasSink(track, { width: 640, fit: "contain" }).getCanvas(Math.min(duration / 3, 3)).catch(ctx.quiet(() => null));
     if (!c) return null;
     const small = new OffscreenCanvas(320, Math.round((320 * c.canvas.height) / c.canvas.width));
     small.getContext("2d").drawImage(c.canvas, 0, 0, small.width, small.height);
@@ -126,7 +126,7 @@ export async function start(ctx) {
   // Its own TAGS (title, artist, album, year, genre: `probe`) kept on its reference whichever way it came — so the
   // file shows the same wherever it is (Videos, Audio, inline in a post). Lyrics, being long, stay with the caller.
   async function make(file, opts = {}) {
-    const t = await probe(file).catch(() => null);
+    const t = await probe(file).catch(ctx.quiet(() => null));
     const tags = t ? Object.fromEntries(["title", "artist", "album", "year", "genre"].map(k => [k, t[k]]).filter(([, v]) => v)) : {};
     const ref = await made(file, opts);
     return Object.keys(tags).length ? { ...ref, tags } : ref;
@@ -153,14 +153,14 @@ export async function start(ctx) {
     const srcH = track.displayHeight;
     const widthOf = hh => Math.max(2, Math.round((hh * track.displayWidth) / track.displayHeight / 2) * 2);
     // Which families this browser encodes.
-    const can = async (codec, hh) => M.canEncodeVideo(codec, { width: widthOf(hh), height: hh }).catch(() => false);
-    const aac = await M.canEncodeAudio("aac").catch(() => false);
+    const can = async (codec, hh) => M.canEncodeVideo(codec, { width: widthOf(hh), height: hh }).catch(ctx.quiet(() => false));
+    const aac = await M.canEncodeAudio("aac").catch(ctx.quiet(() => false));
     // Heights up to the source's (the source's own when it is below the ladder).
     const upTo = hs => {
       const out = hs.filter(x => x <= srcH);
       return out.length ? out : [Math.max(2, srcH - (srcH % 2))];
     };
-    const hw = async (codec, hh) => M.canEncodeVideo(codec, { width: widthOf(hh), height: hh, hardwareAcceleration: "prefer-hardware" }).catch(() => false);
+    const hw = async (codec, hh) => M.canEncodeVideo(codec, { width: widthOf(hh), height: hh, hardwareAcceleration: "prefer-hardware" }).catch(ctx.quiet(() => false));
     const top = upTo(EFFICIENT_HEIGHTS)[0];
     const efficient = (await hw("av1", top)) ? "av1" : (await hw("hevc", top)) ? "hevc" : null;
     const audioFor = codec => (audioTrack ? (codec === "av1" ? { codec: "opus", bitrate: 96_000 } : { codec: aac ? "aac" : "opus", bitrate: 128_000 }) : null);
@@ -172,7 +172,7 @@ export async function start(ctx) {
     say("poster");
     const posterUrl = await poster(M, track, duration);
     say("scrub strip");
-    const sp = await strip(M, track, duration).catch(() => null);
+    const sp = await strip(M, track, duration).catch(ctx.quiet(() => null));
     // THE ORIGINAL, kept: what the background makes the rest from (and a newer codec later).
     const source = await files.put(file, { space, public: pub, app: "video", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
     originals.set(source.id ?? source.root, file);
@@ -218,9 +218,9 @@ export async function start(ctx) {
     const at = await input.getPrimaryAudioTrack();
     if (!at) throw new Error("no audio or video in this file");
     const duration = await input.computeDuration();
-    const tags = await input.getMetadataTags().catch(() => ({}));
+    const tags = await input.getMetadataTags().catch(ctx.quiet(() => ({})));
     const img = tags.images?.find(i => i.kind === "coverFront") ?? tags.images?.[0];
-    const cover = img ? await shrink(new Blob([img.data], { type: img.mimeType }), 320).catch(() => null) : null;
+    const cover = img ? await shrink(new Blob([img.data], { type: img.mimeType }), 320).catch(ctx.quiet(() => null)) : null;
     const source = keepOriginal ? await files.put(file, { space, public: pub, app: "audio", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) }) : null;
     // Its ID by the files' rule (public: the content alone; private: salted by its space) — kept or not.
     const vid = await videoId(source?.key ?? (await files.keyOf(file, { space, public: pub })));
@@ -259,8 +259,8 @@ export async function start(ctx) {
   async function probe(file) {
     const M = await mb();
     const input = new M.Input({ source: new M.BlobSource(file), formats: M.ALL_FORMATS });
-    const t = await input.getMetadataTags().catch(() => ({}));
-    return { title: t.title ?? null, artist: t.artist ?? null, album: t.album ?? null, genre: t.genre ?? null, year: t.date ? new Date(t.date).getFullYear() : null, lyrics: t.lyrics ?? null, video: !!(await input.getPrimaryVideoTrack().catch(() => null)) };
+    const t = await input.getMetadataTags().catch(ctx.quiet(() => ({})));
+    return { title: t.title ?? null, artist: t.artist ?? null, album: t.album ?? null, genre: t.genre ?? null, year: t.date ? new Date(t.date).getFullYear() : null, lyrics: t.lyrics ?? null, video: !!(await input.getPrimaryVideoTrack().catch(ctx.quiet(() => null))) };
   }
   const widthFor = (w, h, hh) => Math.max(2, Math.round((hh * w) / h / 2) * 2);
   // ONE RENDITION made and stored: its manifest entry (null: this browser's encoder refused it).
@@ -282,13 +282,13 @@ export async function start(ctx) {
   // software up to 1080p. What it cannot is left PENDING for another of this person's devices that can.
   async function canHere(M, r, width) {
     // HEVC only on a hardware encoder (a software one would take far too long).
-    if (r.codec === "hevc") return M.canEncodeVideo("hevc", { width, height: r.height, hardwareAcceleration: "prefer-hardware" }).catch(() => false);
+    if (r.codec === "hevc") return M.canEncodeVideo("hevc", { width, height: r.height, hardwareAcceleration: "prefer-hardware" }).catch(ctx.quiet(() => false));
     if (r.codec === "av1") {
-      const hw = await M.canEncodeVideo("av1", { width, height: r.height, hardwareAcceleration: "prefer-hardware" }).catch(() => false);
+      const hw = await M.canEncodeVideo("av1", { width, height: r.height, hardwareAcceleration: "prefer-hardware" }).catch(ctx.quiet(() => false));
       if (hw) return true;
       if (r.height > AV1_SOFTWARE_MAX) return false;
     }
-    return M.canEncodeVideo(r.codec, { width, height: r.height }).catch(() => false);
+    return M.canEncodeVideo(r.codec, { width, height: r.height }).catch(ctx.quiet(() => false));
   }
 
   // THE ORIGINAL on this page: the file picked at upload (on disk, nothing read), or read from the network ONCE and kept
@@ -327,11 +327,11 @@ export async function start(ctx) {
     }
   }
   async function work() {
-    const me = await space.account().catch(() => null);
+    const me = await space.account().catch(ctx.quiet(() => null));
     if (!me) return;
     const t = await leases();
     await t.settled;
-    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video")).catch(() => []);
+    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video")).catch(ctx.quiet(() => []));
     for (const v of mine) {
       const f = v.files?.find(x => x.type === MANIFEST);
       if (!f) continue;
@@ -348,7 +348,7 @@ export async function start(ctx) {
       if (held && !held.waiting && held.device !== device && Date.now() - held.at < LEASE_QUIET) continue;
       const lease = (stage, p) => ((lastBeat = Date.now()), t.put(v.ref, JSON.stringify({ device, at: Date.now(), stage, p: Math.round((p || 0) * 100) / 100, done: m.renditions.length, of: m.renditions.length + m.pending.length })));
       let beat = 0;
-      const say = (stage, p) => Date.now() - beat > 5000 && ((beat = Date.now()), lease(stage, p).catch(() => {}));
+      const say = (stage, p) => Date.now() - beat > 5000 && ((beat = Date.now()), lease(stage, p).catch(ctx.quiet(() => {})));
       await lease("reading the original", 0);
       const M = await mb();
       const original = await originalOf(m, e => say("reading the original", e.done / Math.max(1, e.size)));
@@ -378,7 +378,7 @@ export async function start(ctx) {
     }
   }
   async function progress(ref) {
-    const t = await leases().catch(() => null);
+    const t = await leases().catch(ctx.quiet(() => null));
     try {
       return JSON.parse(t?.rows().find(r => r.key === ref)?.value ?? "null");
     } catch {
@@ -392,7 +392,7 @@ export async function start(ctx) {
 
   // A video's item and manifest as they are now.
   async function latest(ref) {
-    const item = await items.get(ref).catch(() => null);
+    const item = await items.get(ref).catch(ctx.quiet(() => null));
     const file = item?.files?.find(x => x.type === MANIFEST);
     if (!file) return null;
     return { item, file, manifest: JSON.parse(await (await files.get(file)).text()) };
@@ -404,10 +404,10 @@ export async function start(ctx) {
   // THE QUEUE (the header's ⏳): this person's videos with renditions still to make — what is being made now, by which
   // device, and whether it went quiet (its page gone: an open page takes it over within a minute).
   async function queue() {
-    const me = await space.account().catch(() => null);
+    const me = await space.account().catch(ctx.quiet(() => null));
     if (!me) return [];
     const t = await leases();
-    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video")).catch(() => []);
+    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video")).catch(ctx.quiet(() => []));
     const out = [];
     for (const v of mine) {
       const f = v.files?.find(x => x.type === MANIFEST);

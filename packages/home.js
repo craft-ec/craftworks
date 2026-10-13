@@ -138,5 +138,5 @@ export async function mount(ctx, el) {
   addEventListener("craftworks:route", onRoute);
   const onAuth = e => (el.isConnected ? show(e.detail) : removeEventListener("craftworks:auth", onAuth));
   addEventListener("craftworks:auth", onAuth);
-  await show(await auth.check().catch(() => null));
+  await show(await auth.check().catch(ctx.quiet(() => null)));
 }

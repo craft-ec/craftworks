@@ -59,7 +59,7 @@ export async function start(ctx) {
       if (!d || !(await readKeyLog(d))) throw new Error("none");
       return d;
     });
-    return Promise.any([own, named]).catch(() => null);
+    return Promise.any([own, named]).catch(ctx.quiet(() => null));
   }
   // The ACCOUNT words open: new words (`fresh`: a registration) their own inception's, made now — words the person
   // BROUGHT (`own`) refused if some account has them already (words drawn here are 128 random bits: never asked);

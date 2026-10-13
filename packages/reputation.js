@@ -22,7 +22,7 @@ export async function start(ctx) {
     const items = [];
     while (frontier.length && seen.size <= MAX) {
       const next = [];
-      const read = await Promise.all(frontier.map(d => vouch.of(d).catch(() => [])));
+      const read = await Promise.all(frontier.map(d => vouch.of(d).catch(ctx.quiet(() => []))));
       for (const its of read) {
         for (const it of its) {
           items.push(it);
@@ -40,7 +40,7 @@ export async function start(ctx) {
     let result = null;
     for (let round = 0; round < 6 && !result; round++) {
       const r = core.reputation_from_items(idlogCode, items, now);
-      if (r.want) await Promise.all(r.want.map(id => node.read(bytes(id), "reading a voucher's key log", { absent: true }).catch(() => false)));
+      if (r.want) await Promise.all(r.want.map(id => node.read(bytes(id), "reading a voucher's key log", { absent: true }).catch(ctx.quiet(() => false))));
       else result = r;
     }
     return { at: Date.now(), items, result: result ?? { rep: {}, promoted: [], admitted: 0 } };

@@ -94,7 +94,7 @@ export async function start(ctx) {
     // for the person to renew their card: renewal needs THEIR page open, and the welcomes that collide are exactly
     // the ones made while it is not.) Still unseen: a package another account used in a space this one is not in, or
     // one a node used that its account's page has not absorbed yet — the person's page renews the card then.
-    const shared = sharedTags(await index.spacePointers(sp, "writers").catch(() => []));
+    const shared = sharedTags(await index.spacePointers(sp, "writers").catch(ctx.quiet(() => [])));
     for (const r of used.rows()) if (r.value && r.key.startsWith("shared:") && !shared.has(r.key.slice(7))) shared.set(r.key.slice(7), String(r.value));
     const { free, skipped } = freePackages(tags, spent, shared);
     if (skipped.length) {
@@ -119,7 +119,7 @@ export async function start(ctx) {
     const didOfCred = h => glue.did_of(new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16))));
     // In ONE commit (`readd`): a removal then an add cost two epochs, and every epoch leaves whoever is behind further
     // behind (10-08: Ivvor's New Space at 450 epochs for 5 members).
-    const stale = ((await g.ready().catch(() => null))?.members ?? []).filter(m => m.cred && didOfCred(m.cred) === did).map(m => m.index);
+    const stale = ((await g.ready().catch(ctx.quiet(() => null)))?.members ?? []).filter(m => m.cred && didOfCred(m.cred) === did).map(m => m.index);
     const welcome = stale.length ? await g.readd(stale, kp) : await g.add(kp);
     if (stale.length) ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: its earlier entry in the group replaced, in one commit` });
     // MADE FOR THAT PACKAGE, or not sent: a welcome named another key package of theirs (an old one, used already) —
@@ -133,11 +133,11 @@ export async function start(ctx) {
     // welcome reaches them — no other member's welcome may use it (`sharedTags`).
     await index.spacePoint(sp, "writers", { w: sp.self, welcomed: did, kp: tag, at: Date.now() }).catch(e => ctx.failed("conversation", e, `${directory.shown(did, card.handle)}: its key package ${tag.slice(0, 8)} not listed as used in the space: ${e?.message ?? e}`));
     // An earlier welcome to them here still kept unsent (below): its entry replaced by this commit, it could never open.
-    for (const r of used.rows().filter(x => x.value && x.key.startsWith(`outbox:${sp.id}|${did}|`))) await used.remove(r.key).catch(() => {});
+    for (const r of used.rows().filter(x => x.value && x.key.startsWith(`outbox:${sp.id}|${did}|`))) await used.remove(r.key).catch(ctx.quiet(() => {}));
     const { owner, nonce } = sp.governance;
     // ITS HISTORY: the space's earlier epochs' secrets held here — the joiner reads everything before it at once, never
     // walking a log per epoch (one log missing cut a late joiner off from all before it).
-    const at = (await g.ready().catch(() => null))?.epoch ?? 0;
+    const at = (await g.ready().catch(ctx.quiet(() => null)))?.epoch ?? 0;
     // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
     const msg = { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tag, made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) };
     // SENT, or KEPT TO SEND AGAIN (10-11): the commit above already replaced their entry in the group — a welcome lost
@@ -159,7 +159,7 @@ export async function start(ctx) {
       return card;
     }
     // Their NEWEST welcome here (its key package's tag): an ask to welcome again about an older one is stale.
-    await used.put(newestKey, tag).catch(() => {});
+    await used.put(newestKey, tag).catch(ctx.quiet(() => {}));
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tag.slice(0, 8)})` });
     return card;
   }
@@ -184,7 +184,7 @@ export async function start(ctx) {
       try {
         o = JSON.parse(r.value);
       } catch {
-        await used.remove(r.key).catch(() => {});
+        await used.remove(r.key).catch(ctx.quiet(() => {}));
         continue;
       }
       if (now - (o.last ?? 0) < resendWait(o.tries)) continue;
@@ -197,17 +197,17 @@ export async function start(ctx) {
           index.health({ k: "welcome-send-failed", s: spId.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: String(o.why ?? "").slice(0, 160), d: { tries: o.tries, kept: false, final: true } }).catch(() => {});
           ctx.log("conversation", { what: `a kept welcome for ${short(did)} (tag ${tag.slice(0, 8)}) given up after ${o.tries} tries over a day: ${o.why}` });
         }
-        await used.remove(r.key).catch(() => {});
+        await used.remove(r.key).catch(ctx.quiet(() => {}));
         continue;
       }
       try {
         await index.send(did, { ...o.msg, ...(await historyAt(sp, o.at)) });
       } catch (e) {
-        await used.put(r.key, JSON.stringify({ ...o, last: Date.now(), tries: (o.tries ?? 1) + 1, why: String(e?.message ?? e).slice(0, 160) })).catch(() => {});
+        await used.put(r.key, JSON.stringify({ ...o, last: Date.now(), tries: (o.tries ?? 1) + 1, why: String(e?.message ?? e).slice(0, 160) })).catch(ctx.quiet(() => {}));
         continue;
       }
-      await used.put(`newest:${spId}|${did}`, tag).catch(() => {});
-      await used.remove(r.key).catch(() => {});
+      await used.put(`newest:${spId}|${did}`, tag).catch(ctx.quiet(() => {}));
+      await used.remove(r.key).catch(ctx.quiet(() => {}));
       sent += 1;
       ctx.log("conversation", { what: `a kept welcome for ${short(did)} into ${sp.name ?? sp.kind} (tag ${tag.slice(0, 8)}) sent, try ${(o.tries ?? 1) + 1}` });
     }
@@ -284,7 +284,7 @@ export async function start(ctx) {
       if (fresh && p.is("asked", it.from)) {
         await p.set("friend", it.from, true);
         await p.set("asked", it.from, false);
-        if (it.kind === "friend") await index.send(it.from, { kind: "friend-yes", from: (await space.me()), at: Date.now() }).catch(() => {});
+        if (it.kind === "friend") await index.send(it.from, { kind: "friend-yes", from: (await space.me()), at: Date.now() }).catch(ctx.quiet(() => {}));
         continue;
       }
       // A request not answered since it was made (yes, no, or a friendship ended after it).
@@ -296,7 +296,7 @@ export async function start(ctx) {
     const p = await people();
     await p.set("friend", did, false);
     await p.set("answered", did, true);
-    await index.send(did, { kind: "unfriend", from: (await space.me()), at: Date.now() }).catch(() => {});
+    await index.send(did, { kind: "unfriend", from: (await space.me()), at: Date.now() }).catch(ctx.quiet(() => {}));
   }
   async function answerFriend(did, yes) {
     const p = await people();
@@ -324,15 +324,15 @@ export async function start(ctx) {
   async function keyStatus(sp) {
     const r = await (await ctx.require("roles")).of(sp);
     await r.settled;
-    const ptrs = await index.spacePointers(sp, "writers").catch(() => []);
-    const own = (await ownerBranches(sp).catch(() => []))[0] ?? null;
+    const ptrs = await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []));
+    const own = (await ownerBranches(sp).catch(ctx.quiet(() => [])))[0] ?? null;
     const out = new Map();
     for (const m of r.members()) {
-      const devs = await directory.devices(m.did).catch(() => []);
+      const devs = await directory.devices(m.did).catch(ctx.quiet(() => []));
       const anns = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
       const a = anns[0] ?? null;
       const repaired = ptrs.filter(p => p?.repair === m.did);
-      const by = repaired.length ? await Promise.all(repaired.map(async p => (await directory.name(Object.keys(await whoseDevice(p.w, r)).at(0) ?? "").catch(() => null)) ?? short(p.w ?? ""))) : [];
+      const by = repaired.length ? await Promise.all(repaired.map(async p => (await directory.name(Object.keys(await whoseDevice(p.w, r)).at(0) ?? "").catch(ctx.quiet(() => null))) ?? short(p.w ?? ""))) : [];
       // NO DEVICES READ here is not "not announced": what this page could not read, said as such.
       const unreadDevs = !devs.length ? directory.devicesWhy(m.did) : null;
       const state = unreadDevs ? "devices not read" : !a ? "not announced" : !own ? "unknown" : a.epoch === own.epoch && a.branch === own.branch ? "current" : a.epoch < own.epoch ? "behind" : a.epoch === own.epoch ? "another branch" : "ahead";
@@ -351,9 +351,9 @@ export async function start(ctx) {
   // line): `{ s, e, oe, on, u }` — its keys' epoch, the owner's, whether it is on the owner's branch, what it cannot read.
   async function selfState(sp) {
     const g = keys.group(sp);
-    const st = await g.ready().catch(() => null);
-    const own = await ownerBranch(sp).catch(() => null);
-    const on = st && own ? st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch : null;
+    const st = await g.ready().catch(ctx.quiet(() => null));
+    const own = await ownerBranch(sp).catch(ctx.quiet(() => null));
+    const on = st && own ? st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(ctx.quiet(() => null))) === own.branch : null;
     const u = (await ctx.require("storage")).problemsIn(sp.id).length;
     return { s: sp.id.slice(0, 6), e: st?.epoch ?? null, oe: own?.epoch ?? null, on, u };
   }
@@ -364,7 +364,7 @@ export async function start(ctx) {
     if (Date.now() - (observedAt.get(sp.id) ?? 0) < 3600e3) return 0;
     observedAt.set(sp.id, Date.now());
     const ks = await keyStatus(sp);
-    const me = (await space.account().catch(() => null))?.id;
+    const me = (await space.account().catch(ctx.quiet(() => null)))?.id;
     let n = 0;
     for (const [did, k] of ks.members) {
       // (This page's own state is its heartbeat's.)
@@ -380,16 +380,16 @@ export async function start(ctx) {
     const storage = await ctx.require("storage");
     const unread = storage.problemsIn(sp.id).slice(0, 5);
     const key = `reads:${sp.id}`;
-    const was = await storage.upkeepMark(key).catch(() => null);
+    const was = await storage.upkeepMark(key).catch(ctx.quiet(() => null));
     const now = JSON.stringify(unread);
     if (was === now || (was === null && !unread.length)) return false;
     await index.spacePoint(sp, "writers", { w: sp.self, reads: { unread, at: Date.now() } });
-    await storage.setUpkeepMark(key, now).catch(() => {});
+    await storage.setUpkeepMark(key, now).catch(ctx.quiet(() => {}));
     return true;
   }
   // The member a device writes for (`{ did: true }`), among this space's members.
   async function whoseDevice(w, r) {
-    for (const m of r.members()) if ((await directory.devices(m.did).catch(() => [])).includes(w)) return { [m.did]: true };
+    for (const m of r.members()) if ((await directory.devices(m.did).catch(ctx.quiet(() => []))).includes(w)) return { [m.did]: true };
     return {};
   }
   // BEHIND: this node's keys of a space not on the owner's branch at the owner's epoch (a welcome that opened onto an
@@ -410,12 +410,12 @@ export async function start(ctx) {
     if (caughtUpAsked.has(sp.id)) return false;
     const me = await space.account();
     const g = keys.group(sp);
-    const st = await g.ready().catch(() => null);
+    const st = await g.ready().catch(ctx.quiet(() => null));
     if (!me || !st || st.removed) return false;
-    const own = await ownerBranch(sp).catch(() => null);
+    const own = await ownerBranch(sp).catch(ctx.quiet(() => null));
     if (!own) return false;
-    const mine = await g.fingerprint(st.epoch).catch(() => null);
-    if (st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(() => null)) === own.branch) return (setBehind(sp.id, 0), false);
+    const mine = await g.fingerprint(st.epoch).catch(ctx.quiet(() => null));
+    if (st.epoch >= own.epoch && (await g.fingerprint(own.epoch).catch(ctx.quiet(() => null))) === own.branch) return (setBehind(sp.id, 0), false);
     const since = behindSince(sp.id);
     if (!since) return (setBehind(sp.id, Date.now()), false);
     if (Date.now() - since < BEHIND_FOR) return false;
@@ -439,9 +439,9 @@ export async function start(ctx) {
   async function repair(sp) {
     const me = await space.account();
     const g = keys.group(sp);
-    const st = await g.ready().catch(() => null);
+    const st = await g.ready().catch(ctx.quiet(() => null));
     if (!me || !st || st.removed) return [];
-    const own = await ownerBranch(sp).catch(() => null);
+    const own = await ownerBranch(sp).catch(ctx.quiet(() => null));
     if (!own || st.epoch < own.epoch || (await g.fingerprint(own.epoch)) !== own.branch) return [];
     const ptrs = await index.spacePointers(sp, "writers");
     const done = new Set(ptrs.filter(p => p?.repair).map(p => `${p.repair}|${p.for}`));
@@ -452,7 +452,7 @@ export async function start(ctx) {
       const devs = await directory.devices(did);
       const ann = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch)[0];
       if (!ann || ann.epoch > st.epoch || done.has(`${did}|${ann.branch}`)) continue;
-      const fp = await g.fingerprint(ann.epoch).catch(() => null);
+      const fp = await g.fingerprint(ann.epoch).catch(ctx.quiet(() => null));
       if (!fp || fp === ann.branch) continue;
       try {
         await welcome(sp, did, sp.name, null, { epoch: own.epoch, branch: own.branch });
@@ -490,11 +490,11 @@ export async function start(ctx) {
     const sp = (await space.mine()).find(s => s.id === detail.space);
     if (!me || !sp) return;
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
-    const now = (await keys.group(sp).ready().catch(() => null))?.epoch ?? 0;
+    const now = (await keys.group(sp).ready().catch(ctx.quiet(() => null)))?.epoch ?? 0;
     const below = Math.max(Number(detail.below) + 1 || 0, now);
     const ranked = (r?.members() ?? []).sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role)).map(m => m.did);
     const to = [...new Set([sp.governance?.owner, ...ranked].filter(d => d && d !== me.id))].slice(0, 12);
-    for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }).catch(() => {});
+    for (const did of to) await index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }).catch(ctx.quiet(() => {}));
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
   const saidAgain = new Set();
@@ -504,16 +504,16 @@ export async function start(ctx) {
   // loaded, each re-add a commit: the epoch climbed with nothing changed.)
   async function welcomedAgain(sp, did, epoch) {
     if (epoch == null) return false;
-    return (await index.spacePointers(sp, "writers").catch(() => [])).some(x => x?.repair === did && Number(x.epoch) >= Number(epoch));
+    return (await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []))).some(x => x?.repair === did && Number(x.epoch) >= Number(epoch));
   }
   const markWelcomed = (sp, did, epoch, branch) => (
     index.health({ k: "welcomed-again", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), e: Number(epoch) }).catch(() => {}),
-    index.spacePoint(sp, "writers", { w: sp.self, repair: did, epoch: Number(epoch), ...(branch ? { for: branch } : {}) }).catch(() => {})
+    index.spacePoint(sp, "writers", { w: sp.self, repair: did, epoch: Number(epoch), ...(branch ? { for: branch } : {}) }).catch(ctx.quiet(() => {}))
   );
   // The DIDs in this node's group of a space (its MLS members' credentials).
   async function groupDids(sp) {
     const { glue } = await ctx.require("node");
-    const st = await keys.group(sp).ready().catch(() => null);
+    const st = await keys.group(sp).ready().catch(ctx.quiet(() => null));
     return [...new Set((st?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))))))];
   }
   // STUCK behind its own commit (`keys`): its members asked — once a page — to welcome this device again. Its group's
@@ -532,14 +532,14 @@ export async function start(ctx) {
   // (10-08: B asked at epoch 256 and waited while the current members' apps were open — nobody read the bag.)
   async function answerStuck(sp) {
     const me = await space.account();
-    const st = await keys.group(sp).ready().catch(() => null);
+    const st = await keys.group(sp).ready().catch(ctx.quiet(() => null));
     if (!me || !st || st.removed) return [];
     const r = await (await ctx.require("roles")).of(sp);
     await r.settled;
     if (!r.can(me.id, "invite")) return [];
     const once = await (await ctx.require("storage")).table("keypacks");
     const ordering = await ctx.require("ordering");
-    const asks = await index.requests(`stuck ${sp.id}`).catch(() => []);
+    const asks = await index.requests(`stuck ${sp.id}`).catch(ctx.quiet(() => []));
     const out = [];
     for (const q of asks) {
       if (q?.kind !== "stuck" || !q.did || q.did === me.id || !(Number(q.epoch) < st.epoch)) continue;
@@ -553,9 +553,9 @@ export async function start(ctx) {
       const turn = ordering.turn(`stuck:${sp.id}|${q.did}|${q.epoch}`, (await groupDids(sp)).filter(d => d !== q.did), me.id);
       if (turn < 0 || Date.now() - (Number(q.at) || 0) < turn * ordering.TAKEOVER) continue;
       // Welcomed since (by an earlier turn, or a node): its device announced a newer epoch after the ask.
-      const devs = await directory.devices(q.did).catch(() => []);
-      if ((await index.spacePointers(sp, "writers").catch(() => [])).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(q.epoch) && Number(x.at) > Number(q.at))) {
-        await once.put(k, `welcomed since ${Date.now()}`).catch(() => {});
+      const devs = await directory.devices(q.did).catch(ctx.quiet(() => []));
+      if ((await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []))).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(q.epoch) && Number(x.at) > Number(q.at))) {
+        await once.put(k, `welcomed since ${Date.now()}`).catch(ctx.quiet(() => {}));
         continue;
       }
       try {
@@ -580,7 +580,7 @@ export async function start(ctx) {
     if (!me || !sp) return;
     const r = await (await ctx.require("roles")).of(sp).catch(() => null);
     const to = [...new Set([...(r?.members() ?? []).map(m => m.did), ...(detail.dids ?? [])].filter(d => d && d !== me.id))].slice(0, 12);
-    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, stuck: true, epoch: detail.epoch, branch: detail.branch, at: Date.now() }).catch(() => {});
+    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, stuck: true, epoch: detail.epoch, branch: detail.branch, at: Date.now() }).catch(ctx.quiet(() => {}));
     await askNodes(sp, me, detail.epoch);
     ctx.log("conversation", { what: `${sp.name}: stuck behind its own change at epoch ${detail.epoch} — ${to.length} member(s) asked to welcome it again` });
   });
@@ -632,7 +632,7 @@ export async function start(ctx) {
         // a remove and an add each, making more dead welcomes and more asks: epochs 12 → 17 in two minutes).
         const newest = once.rows().find(r => r.key === `newest:${it.space}|${it.from}`)?.value;
         if (newest && it.kp && it.kp !== newest) {
-          await once.put(k, `stale ${Date.now()}`).catch(() => {});
+          await once.put(k, `stale ${Date.now()}`).catch(ctx.quiet(() => {}));
           ctx.log("conversation", { what: `${short(it.from)} asked again about an older welcome into ${sp.name ?? "a space"}: their newest stands, not answered` });
           continue;
         }
@@ -652,9 +652,9 @@ export async function start(ctx) {
           // (this node's key at their epoch is theirs: they are behind it, not elsewhere) — whoever owns the space.
           if (it.stuck) {
             const skip = why => (ctx.log("conversation", { what: `${short(it.from)} stuck in ${sp.name} at epoch ${it.epoch}: not answered here (${why})` }), true);
-            const mineSt = await keys.group(sp).ready().catch(() => null);
+            const mineSt = await keys.group(sp).ready().catch(ctx.quiet(() => null));
             if (!mineSt || mineSt.removed || !(Number(it.epoch) < mineSt.epoch)) { skip(`this node is at ${mineSt?.epoch ?? "no group"}`); continue; }
-            if ((await keys.group(sp).fingerprint(Number(it.epoch)).catch(() => null)) !== it.branch) { skip("another branch"); continue; }
+            if ((await keys.group(sp).fingerprint(Number(it.epoch)).catch(ctx.quiet(() => null))) !== it.branch) { skip("another branch"); continue; }
             // ONE answers: the members take turns (`ordering.turn`), a later one after (turn) × TAKEOVER — and not if
             // the asker has announced a newer epoch since (welcomed by an earlier turn).
             const ordering = await ctx.require("ordering");
@@ -667,8 +667,8 @@ export async function start(ctx) {
             }
             // Welcomed already by an earlier turn: its device announced a newer epoch SINCE the ask (one announced before
             // it is the change it lost).
-            const devs = await directory.devices(it.from).catch(() => []);
-            if ((await index.spacePointers(sp, "writers").catch(() => [])).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(it.epoch) && Number(x.at) > Number(it.at))) {
+            const devs = await directory.devices(it.from).catch(ctx.quiet(() => []));
+            if ((await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []))).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(it.epoch) && Number(x.at) > Number(it.at))) {
               skip("welcomed since");
               await once.put(k, `answered ${Date.now()}`);
               continue;
@@ -682,17 +682,17 @@ export async function start(ctx) {
           }
           // A REPAIR that did not open: made again (onto the owner's branch, from their card as it is now) — whatever
           // the space's record says was repaired already.
-          const own = it.repair ? await ownerBranch(sp).catch(() => null) : null;
+          const own = it.repair ? await ownerBranch(sp).catch(ctx.quiet(() => null)) : null;
           if (it.repair && !own) continue;
           // Only from ON the owner's branch: a welcome from another branch would leave them as behind as before.
-          if (own && (await keys.group(sp).fingerprint(own.epoch).catch(() => null)) !== own.branch) continue;
+          if (own && (await keys.group(sp).fingerprint(own.epoch).catch(ctx.quiet(() => null))) !== own.branch) continue;
           // CONFIRMED BEHIND, or nothing is done (a welcome again takes their entry out first): an ask that says it is
           // on the owner's branch already, or one without where it is (from before), is not answered; nor one whose
           // device has announced the owner's branch at the owner's epoch since.
           if (it.repair) {
             if (it.epoch == null || (it.epoch >= own.epoch && it.branch === own.branch)) continue;
-            const devs = await directory.devices(it.from).catch(() => []);
-            const ann = (await index.spacePointers(sp, "writers").catch(() => [])).filter(x => x?.branch && devs.includes(x.w));
+            const devs = await directory.devices(it.from).catch(ctx.quiet(() => []));
+            const ann = (await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []))).filter(x => x?.branch && devs.includes(x.w));
             if (ann.some(x => x.epoch >= own.epoch && x.branch === own.branch)) continue;
             // ONCE for the epoch it asks from, and ONE answers (the members in turn, as a stuck ask): its ask reaches up
             // to twelve members, and each answering re-added it — one commit each.
@@ -750,7 +750,7 @@ export async function start(ctx) {
         const r = await (await ctx.require("roles")).of(sp).catch(() => null);
         if (!r?.members().some(m => m.did === it.from)) continue;
         const epochs = await (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, Math.max(0, Number(it.below) || 0)).catch(() => []);
-        if (epochs.length) await index.send(it.from, { kind: "history", space: sp.id, from: me.id, epochs, at: Date.now() }).catch(() => {});
+        if (epochs.length) await index.send(it.from, { kind: "history", space: sp.id, from: me.id, epochs, at: Date.now() }).catch(ctx.quiet(() => {}));
         keys.event("history-handed", { space: sp.id, to: it.from, epochs: epochs.length, below: it.below });
         await once.put(k, String(Date.now()));
         ctx.log("conversation", { what: `${sp.name}: ${epochs.length} earlier epoch(s) of its history handed to ${short(it.from)}` });
@@ -772,7 +772,7 @@ export async function start(ctx) {
       let expect = null;
       // Joined already: a group here, not removed. LISTED BUT NO GROUP (its keys lost — owner 10-07: a lost key table):
       // not joined, the welcome taken.
-      const st = had ? await keys.group(had).ready().catch(() => null) : null;
+      const st = had ? await keys.group(had).ready().catch(ctx.quiet(() => null)) : null;
       let above = null;
       if (had && st && !st.removed && !it.repair) {
         // LET IN AGAIN while held here (10-09: #HLt27K behind at 46 — every re-add took its old entry out and sent a
@@ -781,9 +781,9 @@ export async function start(ctx) {
         above = st.epoch;
       } else if (had && st && !st.removed) {
         // The branch it names must be one the owner announced (at any epoch: the repair itself moves the owner on).
-        const own = (await ownerBranches(had).catch(() => [])).find(a => a.epoch === it.repair.epoch && a.branch === it.repair.branch);
+        const own = (await ownerBranches(had).catch(ctx.quiet(() => []))).find(a => a.epoch === it.repair.epoch && a.branch === it.repair.branch);
         if (!own) continue;
-        if ((await keys.group(had).fingerprint(own.epoch).catch(() => null)) === own.branch) continue; // on it already
+        if ((await keys.group(had).fingerprint(own.epoch).catch(ctx.quiet(() => null))) === own.branch) continue; // on it already
         expect = { epoch: own.epoch, branch: own.branch };
       }
       const tried = `${it.space}|${it.welcome.slice(0, 64)}`;
@@ -791,7 +791,7 @@ export async function start(ctx) {
       if (welcomesTried.has(tried)) continue;
       if (!it.repair && (Number(it.made) || 0) < (newestOf.get(newestKey(it)) ?? 0)) {
         welcomesTried.add(tried);
-        if (!done(`dead:${tried}`)) await once.put(`dead:${tried}`, `older ${Date.now()}`).catch(() => {});
+        if (!done(`dead:${tried}`)) await once.put(`dead:${tried}`, `older ${Date.now()}`).catch(ctx.quiet(() => {}));
         continue;
       }
       // DEAD: a welcome made for a key package this account never held opens nowhere, ever (its sender was asked once
@@ -803,23 +803,23 @@ export async function start(ctx) {
         const sp = await space.describe(it.space, v);
         await keys.group(sp).join(it.welcome, { expect, above });
         // JOINED by it: never tried again (its key package is spent — after a removal it would only fail and ask).
-        await once.put(`dead:${tried}`, `joined ${Date.now()}`).catch(() => {});
-        if (it.kp) await once.put(`joined-kp:${String(it.kp).slice(0, 32)}`, String(Date.now())).catch(() => {});
+        await once.put(`dead:${tried}`, `joined ${Date.now()}`).catch(ctx.quiet(() => {}));
+        if (it.kp) await once.put(`joined-kp:${String(it.kp).slice(0, 32)}`, String(Date.now())).catch(ctx.quiet(() => {}));
         await keepHistory(sp, it.history);
         await space.record(it.space, v);
         // Its request answered: no longer waiting — the space's, and the code the welcome names.
-        const t = await asks().catch(() => null);
+        const t = await asks().catch(ctx.quiet(() => null));
         const answered = x => x.key === it.space || (it.code && x.key === `code:${it.code}`) || (it.code === "level" && x.key === `code:${levelCode(it.space)}`);
-        if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await t.remove(r.key).catch(() => {});
+        if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await t.remove(r.key).catch(ctx.quiet(() => {}));
         out.push(sp);
         ctx.log("conversation", { what: it.repair ? `${it.name ?? it.space.slice(0, 8)}: caught up onto the owner's keys — welcomed by ${short(it.from)}, ${Array.isArray(it.history) ? it.history.length : 0} earlier key(s) with it` : `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
         // NOT PAST this node's epoch (an older re-add): done with for good — never a reason to ask anyone again.
         if (/not past this node's/.test(e?.message ?? "")) {
-          await once.put(`dead:${tried}`, `not past ${Date.now()}`).catch(() => {});
+          await once.put(`dead:${tried}`, `not past ${Date.now()}`).catch(ctx.quiet(() => {}));
           continue;
         }
-        const held = it.kp ? await keys.holdsTag(it.kp).catch(() => null) : null;
+        const held = it.kp ? await keys.holdsTag(it.kp).catch(ctx.quiet(() => null)) : null;
         // With what settles its cause: the package it was made for and when, who sent it, whether this account offered
         // that package (and from which batch), whether a repair, and this device's packages counted.
         const d = {
@@ -829,7 +829,7 @@ export async function start(ctx) {
           offered: held || false,
           repair: !!it.repair,
           joined: !!(had && st && !st.removed),
-          pk: await keys.packageCounts().catch(() => null),
+          pk: await keys.packageCounts().catch(ctx.quiet(() => null)),
         };
         index.health({ k: "welcome-failed", s: it.space.slice(0, 6), e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160), d }).catch(() => {});
         // ITS MEMBERSHIP HERE: WELCOME_FAILED, with the reason that decides what may follow (FOUNDATION.md §3) — only a
@@ -837,8 +837,8 @@ export async function start(ctx) {
         const reason = (await keys.writable()) !== true ? "account-keys-unreadable" : /not past/.test(e?.message ?? "") ? "not-past" : !held ? "package-not-held" : "branch";
         (await ctx.require("lifecycle")).become("space", it.space.slice(0, 12), "welcome-failed", { reason, from: d.from });
         // SAID in the space (its writers record: the members list shows it), so a member stuck behind is seen WHY.
-        if (had) await index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }).catch(() => {});
-        if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(() => {});
+        if (had) await index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }).catch(ctx.quiet(() => {}));
+        if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await once.put(`dead:${tried}`, String(Date.now())).catch(ctx.quiet(() => {}));
         // Not dead (a passing failure): tried again on the next pass.
         else welcomesTried.delete(tried);
         // Made for a key package this account does not hold (its card from before): its sender asked — once — to
@@ -850,7 +850,7 @@ export async function start(ctx) {
         // A DUPLICATE (10-11): this account JOINED by that very package already (another welcome for it, from another
         // member or node, opened first) — nothing lost, nothing to ask: each such ask was one more re-add, one more epoch.
         const duplicate = it.kp && done(`joined-kp:${String(it.kp).slice(0, 32)}`);
-        if (duplicate) await once.put(`dead:${tried}`, `duplicate ${Date.now()}`).catch(() => {});
+        if (duplicate) await once.put(`dead:${tried}`, `duplicate ${Date.now()}`).catch(ctx.quiet(() => {}));
         // (Asking to be welcomed again is the account's write: never from a device without its keys — on 10-12 such
         // asks were answered by re-adding the person, which can drop their original devices from the space.)
         else if (!held && !done(k) && (await (await ctx.require("keys")).writable()) === true) {
@@ -949,7 +949,7 @@ export async function start(ctx) {
     if (!me) throw space.loginNeeded();
     const code = codeOf(text);
     if (code.length !== 19) throw new Error("an invite code is 16 letters and digits: xxxx-xxxx-xxxx-xxxx");
-    await directory.publish().catch(() => {}); // the asker's card carries key packages to be added by
+    await directory.publish().catch(ctx.quiet(() => {})); // the asker's card carries key packages to be added by
     await index.request(code, { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(`code:${code}`, { code });
     return code;
@@ -968,7 +968,7 @@ export async function start(ctx) {
   async function levelNow(did) {
     const had = levelsRead.get(did);
     if (had && Date.now() - had.at < 600000) return had.id;
-    const card = await directory.card(did, { fresh: true }).catch(() => null);
+    const card = await directory.card(did, { fresh: true }).catch(ctx.quiet(() => null));
     if (!card) return null;
     const id = (await ctx.require("usage")).levelFrom(card.contrib ?? []).id;
     levelsRead.set(did, { at: Date.now(), id });
@@ -977,7 +977,7 @@ export async function start(ctx) {
   async function joinLevel(gid, name = null) {
     const me = await space.account();
     if (!me) throw space.loginNeeded();
-    await directory.publish().catch(() => {});
+    await directory.publish().catch(ctx.quiet(() => {}));
     await index.request(levelCode(gid), { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(`code:${levelCode(gid)}`, { code: "level", name });
     ctx.log("conversation", { what: `asked to join ${name ?? gid.slice(0, 8)} (a level group)` });
@@ -1012,7 +1012,7 @@ export async function start(ctx) {
   async function joinOpen(desc) {
     const me = await space.account();
     if (!me) throw space.loginNeeded();
-    await directory.publish().catch(() => {});
+    await directory.publish().catch(ctx.quiet(() => {}));
     await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
     await noteAsk(desc.id, { name: desc.name ?? null });
     ctx.log("conversation", { what: `asked to join ${desc.name ?? desc.id.slice(0, 8)} (its open door)` });
@@ -1050,15 +1050,15 @@ export async function start(ctx) {
     await t.settled;
     const mine = new Set((await space.mine()).map(s => s.id));
     const waiting = t.rows().filter(x => x.value && !x.key.startsWith("code:") && !mine.has(x.key)).map(parseAsk).filter(Boolean);
-    const listed = await index.spaces().catch(() => []);
+    const listed = await index.spaces().catch(ctx.quiet(() => []));
     // THE REQUEST ITSELF where the account's copy is missing (10-11, Wren: "Requested" from the open door's bag, its
     // `asks` row gone — so never asked again): each listed space this person is not in, its door's bag read; a request
     // of theirs there is put back into `asks` (when it was made) and handled as any other.
     for (const desc of listed) {
       if (mine.has(desc.id) || waiting.some(a => a.key === desc.id)) continue;
-      const at = Math.max(0, ...(await index.requests(openCode(desc.id)).catch(() => [])).filter(q => q?.kind === "join" && q.did === me.id).map(q => Number(q.at) || 0));
+      const at = Math.max(0, ...(await index.requests(openCode(desc.id)).catch(ctx.quiet(() => []))).filter(q => q?.kind === "join" && q.did === me.id).map(q => Number(q.at) || 0));
       if (!at) continue;
-      await t.put(desc.id, JSON.stringify({ name: desc.name ?? null, at })).catch(() => {});
+      await t.put(desc.id, JSON.stringify({ name: desc.name ?? null, at })).catch(ctx.quiet(() => {}));
       waiting.push({ key: desc.id, name: desc.name ?? null, at });
       ctx.log("conversation", { what: `${desc.name ?? desc.id.slice(0, 8)}: a request found in its door's bag, missing from this account's record — kept again` });
     }
@@ -1075,7 +1075,7 @@ export async function start(ctx) {
         said("not listed in Discover (its public acts unread)");
         continue;
       }
-      const pr = await roles.ofPublic(desc).catch(() => null);
+      const pr = await roles.ofPublic(desc).catch(ctx.quiet(() => null));
       await pr?.settled;
       const admissions = (pr?.acts("admitted") ?? []).filter(x => x.did === me.id).length;
       // Asked again once a PAGE while let in and still not in (each load one request: whoever admits answers it once),
@@ -1109,7 +1109,7 @@ export async function start(ctx) {
       rows.map(async a => {
         if (a.key.startsWith("code:")) return { key: a.key, code: a.key.slice(5), name: a.name ?? null, at: a.at, status: "code" };
         const desc = listed.find(s => s.id === a.key) ?? null;
-        const pr = desc ? await roles.ofPublic(desc).catch(() => null) : null;
+        const pr = desc ? await roles.ofPublic(desc).catch(ctx.quiet(() => null)) : null;
         await pr?.settled;
         const letIn = !!pr?.acts("admitted").some(x => x.did === me?.id);
         return { key: a.key, id: a.key, name: a.name ?? desc?.name ?? null, at: a.at, status: letIn ? "let-in" : "asked", desc };
@@ -1132,14 +1132,14 @@ export async function start(ctx) {
   // The request for this space, while not in it: `{ at, name }`, or null.
   async function asked(id) {
     if ((await space.mine()).some(s => s.id === id)) return null;
-    const t = await asks().catch(() => null);
+    const t = await asks().catch(ctx.quiet(() => null));
     await t?.settled;
     const r = t?.rows().find(x => x.key === id && x.value);
     if (r) return parseAsk(r);
     // THE REQUEST ITSELF (its open door's bag, on the network): the one fact — the account's record of it is a copy
     // that can be missing (not saved yet: a page closed while "Asking…"; a write that failed).
     const me = await space.account();
-    const mine = me ? (await index.requests(openCode(id)).catch(() => [])).filter(q => q?.kind === "join" && q.did === me.id) : [];
+    const mine = me ? (await index.requests(openCode(id)).catch(ctx.quiet(() => []))).filter(q => q?.kind === "join" && q.did === me.id) : [];
     const at = Math.max(0, ...mine.map(q => q.at ?? 0));
     return at ? { key: id, at } : null;
   }
@@ -1154,7 +1154,7 @@ export async function start(ctx) {
     if (how === "open") await index.openRequests(openCode(sp.id));
     await r.act({ act: "policy", path: "", action: "join", who: how === "open" ? "anyone" : "members" });
     // Open: listed in Discover, its acts published (who is in, how to join).
-    if (how === "open") (await r.publish().catch(() => {}), await index.listSpace(sp));
+    if (how === "open") (await r.publish().catch(ctx.quiet(() => {})), await index.listSpace(sp));
   }
   // LET IN: one asker welcomed and recorded `admitted` (by the code they asked with, or "open") — the one way in, for
   // the automatic admit below and for a member's own Let in (`requestsOf`).
@@ -1236,19 +1236,19 @@ export async function start(ctx) {
     const admittedAt = new Map();
     for (const a of r.acts("admitted")) if (a.did && (a.at ?? 0) > (admittedAt.get(a.did) ?? 0)) admittedAt.set(a.did, a.at ?? 0);
     const asks = [];
-    if (r.policy("", "join") === "anyone") for (const q of await index.requests(openCode(sp.id)).catch(() => [])) asks.push({ ...q, code: "open" });
+    if (r.policy("", "join") === "anyone") for (const q of await index.requests(openCode(sp.id)).catch(ctx.quiet(() => []))) asks.push({ ...q, code: "open" });
     // A LEVEL GROUP: its bag's askers whose card reaches its level now (checked as each is read).
     const lv = levelOfGroup(r);
     if (lv) {
       const usage = await ctx.require("usage");
       const inGroup = new Set(r.members().map(m => m.did));
-      for (const q of await index.requests(levelCode(sp.id)).catch(() => [])) {
+      for (const q of await index.requests(levelCode(sp.id)).catch(ctx.quiet(() => []))) {
         if (!q?.did || inGroup.has(q.did)) continue;
         const have = await levelNow(q.did);
         if (have !== null && usage.reaches(have, lv)) asks.push({ ...q, code: "level" });
       }
     }
-    for (const inv of r.invites()) for (const q of await index.requests(inv.code).catch(() => [])) asks.push({ ...q, code: inv.code });
+    for (const inv of r.invites()) for (const q of await index.requests(inv.code).catch(ctx.quiet(() => []))) asks.push({ ...q, code: inv.code });
     // OUT BY THE ACTS: a REMOVED member never comes back by a request (Settings says so); one who LEFT only by a request
     // made after they left (an old one still sits in the bag).
     const removedSet = new Set(r.acts().filter(a => a.act === "remove" && a.did).map(a => a.did));
@@ -1286,9 +1286,9 @@ export async function start(ctx) {
         if (once.rows().some(x => x.key === k && x.value)) continue;
         // IN SINCE (its device announced keys here after the request: a page that asked just before it opened its
         // welcome — measured on fx 10-11, a re-add of a member who was in): nothing to do, for good.
-        const devs = await directory.devices(q.did).catch(() => []);
-        if ((await index.spacePointers(sp, "writers").catch(() => [])).some(x => devs.includes(x?.w) && x.epoch != null && Number(x.at) > Number(q.at))) {
-          await once.put(k, `in since ${Date.now()}`).catch(() => {});
+        const devs = await directory.devices(q.did).catch(ctx.quiet(() => []));
+        if ((await index.spacePointers(sp, "writers").catch(ctx.quiet(() => []))).some(x => devs.includes(x?.w) && x.epoch != null && Number(x.at) > Number(q.at))) {
+          await once.put(k, `in since ${Date.now()}`).catch(ctx.quiet(() => {}));
           continue;
         }
         const ordering = await ctx.require("ordering");
@@ -1360,7 +1360,7 @@ export async function start(ctx) {
       if (!g.group?.startsWith(prefix)) continue;
       const who = g.group.slice(prefix.length);
       const want = new Set(r.members().map(x => x.did).filter(d => !r.banned(d) && r.passes(who, d)));
-      const gr = await roles.of(g).catch(() => null);
+      const gr = await roles.of(g).catch(ctx.quiet(() => null));
       if (!gr) continue;
       await gr.settled;
       const maker = g.governance?.owner === me;
@@ -1422,7 +1422,7 @@ export async function start(ctx) {
           };
           // A channel ITEM: public where the space lets anyone read its chat, else its members'.
           const make = async (name, cid, meta = {}) =>
-            items.submit({ board: server.id, title: channelName(name), body: "", kind: "channel", meta: { ...meta, cid }, audience: (await items.publicIn(server, "channel").catch(() => false)) ? "public" : "members" });
+            items.submit({ board: server.id, title: channelName(name), body: "", kind: "channel", meta: { ...meta, cid }, audience: (await items.publicIn(server, "channel").catch(ctx.quiet(() => false))) ? "public" : "members" });
           return {
             list,
             settled,
@@ -1638,7 +1638,7 @@ export async function start(ctx) {
   const mail = {
     of: spaceMailOf,
     // Does a space take mail (its owner turned its mail on: a key in their record)?
-    accepts: async id => !!(await spaceKey(await spaceDesc(id)).catch(() => null))?.box,
+    accepts: async id => !!(await spaceKey(await spaceDesc(id)).catch(ctx.quiet(() => null)))?.box,
     // WHOM mail can be written to BY NAME (the "To" picker): the people this person knows (friends, followed) and the
     // spaces whose mail is on — theirs and the public ones listed. [{ ref, label, kind: "person" | "space" }]
     async addresses() {

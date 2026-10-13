@@ -52,7 +52,7 @@ export async function mount(ctx, el) {
   // THE RAW VIEW: the text alone (to read, select, copy), and a download.
   async function raw(ref) {
     root.replaceChildren(theme.loading("Opening…"));
-    const it = await items.get(ref).catch(() => null);
+    const it = await items.get(ref).catch(ctx.quiet(() => null));
     if (!it) return root.replaceChildren(h("p", { className: "none", textContent: "This paste is not there, or not yours to read." }));
     if (expired(it)) return root.replaceChildren(h("p", { className: "none", textContent: "This paste has expired." }));
     const blob = URL.createObjectURL(new Blob([it.body ?? ""], { type: "text/plain" }));
@@ -102,7 +102,7 @@ export async function mount(ctx, el) {
     form.onsubmit = e => {
       e.preventDefault();
       if (!text.value.trim()) return (said.textContent = "Nothing to save yet.");
-      saveOnce().catch(() => {});
+      saveOnce().catch(ctx.quiet(() => {}));
     };
     async function saveNow() {
       said.textContent = "";
@@ -129,7 +129,7 @@ export async function mount(ctx, el) {
     const list = h("div", { className: "list" }, theme.loading("Pastes…"));
     const title = at.saved ? "Saved pastes" : at.who === "discover" ? "Public pastes" : at.who === "person" ? "Their pastes" : "Your pastes";
     root.replaceChildren(h("h2", { textContent: `📄 ${title}` }), list);
-    const all = (await at.read().catch(() => [])).filter(p => !expired(p) && !(at.others && p.meta?.unlisted));
+    const all = (await at.read().catch(ctx.quiet(() => []))).filter(p => !expired(p) && !(at.others && p.meta?.unlisted));
     const none = at.saved ? "Nothing saved: “Save” on a paste keeps it here." : at.who === "discover" ? "No public pastes yet." : at.who === "person" ? "No pastes." : "Nothing yet: ＋ New paste above.";
     list.replaceChildren(...(all.length ? all.map(p => cards.card(p, { href: at.href(`p/${encodeURIComponent(p.ref)}`), actions: [], by: at.others })) : [h("p", { className: "none", textContent: none })]));
   }

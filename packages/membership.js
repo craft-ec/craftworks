@@ -82,7 +82,7 @@ export async function start(ctx) {
     }
   }
   keys.onChange(tell);
-  keys.ready().then(tell).catch(() => {});
+  keys.ready().then(tell).catch(ctx.quiet(() => {}));
 
   async function nodes() {
     const st = await keys.ready();

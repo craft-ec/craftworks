@@ -46,7 +46,7 @@ export async function start(ctx) {
     // A space's table: its address key, from the space's id (its rows are sealed with the space's epoch keys).
     if (space) return { key: glue.space_table_key(space, table) };
     // The catalog's key comes with any grant: listing a table is part of using it.
-    const ok = catalog || (await allowed(table).catch(() => false));
+    const ok = catalog || (await allowed(table).catch(ctx.quiet(() => false)));
     if (!ok) return { why: "not allowed" };
     const k = await auth.identity.tableKey(table).catch(e => ({ refused: e?.message ?? String(e) }));
     return k?.tableKey ? { key: k.tableKey } : { why: k?.refused ?? "no key" };
@@ -56,7 +56,7 @@ export async function start(ctx) {
   // or `{ why }` (no grant, or no key for that epoch here — a node removed from the account has none after it). The
   // same grant as the table's own key.
   async function keyAt(table, epoch = -1, { catalog = false, space = null } = {}) {
-    const ok = space || catalog || (await allowed(table).catch(() => false));
+    const ok = space || catalog || (await allowed(table).catch(ctx.quiet(() => false)));
     if (!ok) return { why: "not allowed" };
     const k = await auth.identity.tableKeyAt(table, epoch, space ?? undefined).catch(e => ({ refused: e?.message ?? String(e) }));
     return k?.tableKey ? { epoch: k.epoch, key: k.tableKey } : { why: k?.refused ?? "no key" };

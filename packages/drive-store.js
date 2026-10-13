@@ -20,7 +20,7 @@ export async function start(ctx) {
   const usesDrive = async sp => !shared(sp) || (await roles.of(sp).then(r => r.apps().includes("drive"), () => false));
   // THE DRIVES this person can pick from: theirs, and every space they are in that uses Drive.
   async function drives() {
-    const all = (await space.mine().catch(() => [])).filter(s => s.kind === "server" && !space.isGroup(s));
+    const all = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server" && !space.isGroup(s));
     const on = await Promise.all(all.map(usesDrive));
     return all.filter((_, i) => on[i]);
   }
@@ -46,7 +46,7 @@ export async function start(ctx) {
   // its removal are its item's, in its app (`page`: its item's page — `items.pageOf`).
   const MEDIA = new Set(kinds.media().map(m => m.domain));
   const viewed = async sp =>
-    (await items.inPlaces(await place(sp), [...kinds.all()].filter(k => !["note", "file", "folder"].includes(k)), { withVotes: false }).catch(() => [])).flatMap(it =>
+    (await items.inPlaces(await place(sp), [...kinds.all()].filter(k => !["note", "file", "folder"].includes(k)), { withVotes: false }).catch(ctx.quiet(() => []))).flatMap(it =>
       (it.files ?? []).map((ref, i) => ({
         id: `${it.ref}#${i}`,
         ref,

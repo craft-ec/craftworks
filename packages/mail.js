@@ -188,7 +188,7 @@ export async function mount(ctx, el) {
     f.onsubmit = e => {
       if (e.submitter?.value !== "ok") return;
       e.preventDefault();
-      sendOnce().catch(() => {});
+      sendOnce().catch(ctx.quiet(() => {}));
     };
     async function sendNow() {
       said.hidden = true;

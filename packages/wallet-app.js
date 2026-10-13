@@ -258,7 +258,7 @@ export async function mount(ctx, el) {
       give.disabled = false;
       draw();
     };
-    const [cs, lv, plan, st] = await Promise.all([usage.contributions().catch(() => []), usage.level().catch(() => null), usage.levelPlan().catch(() => []), usage.statement(month()).catch(() => null)]);
+    const [cs, lv, plan, st] = await Promise.all([usage.contributions().catch(ctx.quiet(() => [])), usage.level().catch(ctx.quiet(() => null)), usage.levelPlan().catch(ctx.quiet(() => [])), usage.statement(month()).catch(ctx.quiet(() => null))]);
     const directory = await ctx.require("directory");
     const split = st?.amount
       ? grid(["To", "For", "Tokens"], [

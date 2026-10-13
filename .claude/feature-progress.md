@@ -2468,3 +2468,8 @@ Build order (FOUNDATION §7):
       reach a CORS-open server) and the node refuses the frame's opaque origin; our CSP's own effect is not separately
       shown. NOT done: built-in apps moved into frames (they hand each other DOM and live objects — needs serializable
       capability APIs first); the App Store offering apps not ours (a catalog of published app packages).
+- [x] 5. Silent reads counted — `ctx.quiet(make)`: a read's `.catch` keeps the SAME fallback it had, but a failure
+      that is not absent / not yet / logged out / cancelled / an expected refusal is reported by kind (`swallowed`).
+      460 sites in 75 packages converted (not: sequencing `queue.catch(() => {}).then`, optional `require`, health
+      itself, code without `ctx`, the token files). fx v670: recovery complete, 11 page loads all drawn, ONE swallowed
+      failure surfaced (sealed `tables` on /chat while a recovery's keys arrived). Test stubs gained failed/quiet/say.

@@ -76,7 +76,7 @@ export async function start(ctx) {
     ])
       .catch(async e => {
         // Its own table: this node holds it, so never lost — asked again within the hour.
-        await (await records()).put(idOf(t), JSON.stringify({ name: t.app, at: Date.now(), error: e?.message ?? String(e) })).catch(() => {});
+        await (await records()).put(idOf(t), JSON.stringify({ name: t.app, at: Date.now(), error: e?.message ?? String(e) })).catch(ctx.quiet(() => {}));
         throw e;
       })
       .finally(() => clearTimeout(timer));
@@ -88,7 +88,7 @@ export async function start(ctx) {
   // Every coded file where this person reads: the account's, and each space's (null: the account).
   async function allFiles() {
     const out = [];
-    for (const sp of [null, ...(await space.mine()).filter(s => s.kind === "server")]) for (const row of await files.rows(sp).catch(() => [])) out.push({ sp, row, key: `f/${sp?.id ?? ""}/${row.id}` });
+    for (const sp of [null, ...(await space.mine()).filter(s => s.kind === "server")]) for (const row of await files.rows(sp).catch(ctx.quiet(() => []))) out.push({ sp, row, key: `f/${sp?.id ?? ""}/${row.id}` });
     return out;
   }
   async function keepFile({ sp, row, key }) {
@@ -160,7 +160,7 @@ export async function start(ctx) {
     const files = [];
     for (const w of all) {
       if (total + (w.file.size ?? 0) > limit) {
-        await t.remove(w.key).catch(() => {});
+        await t.remove(w.key).catch(ctx.quiet(() => {}));
         continue;
       }
       total += w.file.size ?? 0;
@@ -185,7 +185,7 @@ export async function start(ctx) {
     const now = new Date();
     const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const months = new Set([monthOf(), monthOf(last.getTime())]);
-    const claims = await index.pointers(`keepers:${root}`).catch(() => []);
+    const claims = await index.pointers(`keepers:${root}`).catch(ctx.quiet(() => []));
     return [...new Set(claims.filter(c => c && typeof c.did === "string" && months.has(c.m)).map(c => c.did))];
   }
   // Said in the bag once the file is WHOLE here (every generation), once a month (the same claim merges).
@@ -201,7 +201,7 @@ export async function start(ctx) {
     const r = t.rows().find(x => x.key.startsWith("f/") && (v => v && !v.error && v.gens && v.whole === v.gens && v.claimed !== m)(read(x)));
     if (!r) return;
     const v = read(r);
-    const row = (await files.rows(v.space ? (await space.mine()).find(s => s.id === v.space) ?? null : null).catch(() => [])).find(x => x.id === v.file);
+    const row = (await files.rows(v.space ? (await space.mine()).find(s => s.id === v.space) ?? null : null).catch(ctx.quiet(() => []))).find(x => x.id === v.file);
     if (row?.root) await claim(row.root);
     await t.put(r.key, JSON.stringify({ ...v, claimed: m }));
   }
@@ -233,7 +233,7 @@ export async function start(ctx) {
     // (Nothing whole yet — the first passes still running: not fixed, asked again.)
     if (!fixed && list.length) {
       await t.put(k, JSON.stringify(list));
-      for (const r of t.rows().filter(x => x.key.startsWith("h/") && x.key !== k)) await t.remove(r.key).catch(() => {});
+      for (const r of t.rows().filter(x => x.key.startsWith("h/") && x.key !== k)) await t.remove(r.key).catch(ctx.quiet(() => {}));
     }
     // Each one's row (its key and root): its space's, or the watched record's own ref.
     const watched = new Map((await kept()).files.map(w => [w.root, w.w.file]));
@@ -251,7 +251,7 @@ export async function start(ctx) {
       }
       const sp = h.space ? (spaces.get(h.space) ?? null) : null;
       if (h.space && !sp) continue;
-      if (!rowsOf.has(h.space)) rowsOf.set(h.space, await files.rows(sp).catch(() => []));
+      if (!rowsOf.has(h.space)) rowsOf.set(h.space, await files.rows(sp).catch(ctx.quiet(() => [])));
       const row = rowsOf.get(h.space).find(x => x.id === h.file);
       if (row?.root) out.push({ sp, row });
     }
@@ -312,8 +312,8 @@ export async function start(ctx) {
       else if (d.files[0]) await keepFile(d.files[0]);
       else {
         // Its own first; then what it is assigned; then what it played, kept for others.
-        const a = (await assignedDue().catch(() => []))[0];
-        const w = a ? null : (await watchedDue().catch(() => []))[0];
+        const a = (await assignedDue().catch(ctx.quiet(() => [])))[0];
+        const w = a ? null : (await watchedDue().catch(ctx.quiet(() => [])))[0];
         if (a) await keepAssigned(a);
         else if (w) await keepWatched(w);
         else await claimOwn().catch(e => ctx.failed("keep", e, `own files not said in the keepers bag: ${e?.message ?? e}`));

@@ -374,12 +374,12 @@ export async function start(ctx) {
     const sp = await spaceOf(poll.ref);
     const r = sp ? await rolesOf(sp) : null;
     if (!sp) await roles.personal(poll.by).ready?.catch?.(() => {});
-    const records = await hashed(await items.attached(poll.ref, BALLOT).catch(() => []));
+    const records = await hashed(await items.attached(poll.ref, BALLOT).catch(ctx.quiet(() => [])));
     const self = await me();
     const tally = pollTally(poll, records, { eligible: eligibility(poll, r) });
     const mineRec = newest(records.filter(x => x.by === self && x.on === poll.ref)).get(self) ?? null;
     const meta = normalizePoll(poll.meta);
-    const may = meta.open && (await items.mayWriteOn(poll, "vote").catch(() => false));
+    const may = meta.open && (await items.mayWriteOn(poll, "vote").catch(ctx.quiet(() => false)));
     return { meta, tally, mine: mineRec?.choice ?? null, may, records };
   }
   // A BALLOT written: a new record in this person's own feed, its seq one above their last on this item.
@@ -390,10 +390,10 @@ export async function start(ctx) {
       if (!p.open) throw new Error("this poll is closed");
       if (!validPollChoice(p, choice)) throw new Error(p.multiple ? "choose one or more of its options" : "choose one of its options");
     } else if (choice !== null && !CHOICES.includes(choice)) throw new Error("a proposal's vote is yes, no or abstain");
-    if (!(await items.mayWriteOn(item, "vote").catch(() => false))) throw new Error("you may not vote on this");
-    const mine = (await hashed(await items.attached(item.ref, BALLOT).catch(() => []))).filter(x => x.by === self);
+    if (!(await items.mayWriteOn(item, "vote").catch(ctx.quiet(() => false)))) throw new Error("you may not vote on this");
+    const mine = (await hashed(await items.attached(item.ref, BALLOT).catch(ctx.quiet(() => [])))).filter(x => x.by === self);
     const sp = await spaceOf(item.ref);
-    const cred = sp ? null : await roles.credToCite(item, "vote").catch(() => null);
+    const cred = sp ? null : await roles.credToCite(item, "vote").catch(ctx.quiet(() => null));
     return items.attach(item.ref, BALLOT, "", { meta: { seq: nextSeq(mine, self), choice, ...(cred ? { cred } : {}) } });
   }
 

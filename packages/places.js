@@ -20,9 +20,9 @@ export async function start(ctx) {
     const views = app.views ?? [];
     const out = [];
     if (views.includes("personal")) out.push({ id: "", label: "You", short: "Me", href: `#${app.route}`, on: !ctx.space });
-    if (views.includes("shared") && (await space.account().catch(() => null))) {
-      for (const sp of (await space.mine().catch(() => [])).filter(s => s.kind === "server")) {
-        const r = await roles.of(sp).catch(() => null);
+    if (views.includes("shared") && (await space.account().catch(ctx.quiet(() => null)))) {
+      for (const sp of (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server")) {
+        const r = await roles.of(sp).catch(ctx.quiet(() => null));
         if (!r || !r.apps().includes(key)) continue;
         out.push({ id: sp.id, label: space.shown(sp), short: space.shown(sp), href: `#/s/${sp.id}${app.route}`, on: ctx.space === sp.id, count: activity && ["chat", "board"].includes(key) ? activity.of(sp.id, key) : 0 });
       }
@@ -47,13 +47,13 @@ export async function start(ctx) {
   // (ONE pair of listeners for every host drawn; a host no longer on the page is dropped.)
   const hosts = new Map(); // host → draw
   const redraw = () => {
-    for (const [host, draw] of hosts) host.isConnected ? draw().catch(() => {}) : hosts.delete(host);
+    for (const [host, draw] of hosts) host.isConnected ? draw().catch(ctx.quiet(() => {})) : hosts.delete(host);
   };
   addEventListener("craftworks:route", redraw);
   addEventListener("craftworks:auth", redraw);
   const keep = (host, draw) => {
     hosts.set(host, draw);
-    draw().catch(() => {});
+    draw().catch(ctx.quiet(() => {}));
   };
 
   // A RAIL (Discord's): a column of the places, each a round mark; the one open lit.

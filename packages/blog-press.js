@@ -156,7 +156,7 @@ export async function start(ctx) {
   async function publishedFrom(d, sp) {
     const days = Math.max(1, Math.ceil((Date.now() - (blogOf(d).due ?? d.at)) / 86400e3) + 1);
     // A space's last days; one's own profile whole (its own tail: never the followed profiles a list's votes read).
-    const list = await (sp ? items.list({ board: sp.id }, "new", "post", { window: days }) : items.inPlaces({ people: [await me()] }, "post", { withVotes: false })).catch(() => []);
+    const list = await (sp ? items.list({ board: sp.id }, "new", "post", { window: days }) : items.inPlaces({ people: [await me()] }, "post", { withVotes: false })).catch(ctx.quiet(() => []));
     return list.find(p => blogOf(p).from === d.id && !blogOf(p).draft) ?? null;
   }
 
@@ -166,12 +166,12 @@ export async function start(ctx) {
     const sp = await placeOf(d);
     const done = await publishedFrom(d, sp);
     if (done && !blogOf(done).review) {
-      await items.remove(d.ref).catch(() => {});
+      await items.remove(d.ref).catch(ctx.quiet(() => {}));
       return { ref: done.ref, review: false };
     }
     if (sp && (await needsReview(sp))) {
       // SENT AGAIN (changed after a decline): the earlier review copy out, the editors read this one.
-      for (const old of new Set([b.review?.ref, done?.ref].filter(Boolean))) await items.remove(old).catch(() => {});
+      for (const old of new Set([b.review?.ref, done?.ref].filter(Boolean))) await items.remove(old).catch(ctx.quiet(() => {}));
       await filesFor(d, sp, false);
       const ref = await items.submit({ board: sp.id, kind: "post", title: d.title, body: d.body, files: d.files, audience: "members", meta: publishedMeta(d, { review: "pending" }) });
       await items.editItem(d.ref, d.body, { files: d.files, title: d.title, meta: { ...d.meta, blog: { ...b, due: null, declined: null, review: { ref, at: Date.now() } } } });
@@ -189,7 +189,7 @@ export async function start(ctx) {
   async function settle(d) {
     const b = blogOf(d);
     const sp = await placeOf(d);
-    const copy = await items.get(b.review.ref).catch(() => null);
+    const copy = await items.get(b.review.ref).catch(ctx.quiet(() => null));
     const back = extra => items.editItem(d.ref, d.body, { files: d.files, title: d.title, meta: { ...d.meta, blog: { ...b, review: null, ...extra } } });
     if (!copy) return back({ declined: null });
     const r = await ruleOf(sp);
@@ -235,7 +235,7 @@ export async function start(ctx) {
     // The last 90 days (a review copy older than that is not listed: its author sends it again).
     const list = await items.list({ board: sp.id }, "new", "post", { window: 90 });
     const pending = list.filter(p => blogOf(p).review === "pending");
-    return Promise.all(pending.sort((a, b) => a.at - b.at).map(async p => ({ ...p, word: approvalOf(await items.thread(p.ref).catch(() => []), did => did !== p.by && r.can(did, "moderate")) })));
+    return Promise.all(pending.sort((a, b) => a.at - b.at).map(async p => ({ ...p, word: approvalOf(await items.thread(p.ref).catch(ctx.quiet(() => [])), did => did !== p.by && r.can(did, "moderate")) })));
   }
   // AN EDITOR's WORD: a comment on the review copy (seen by its author and the other editors, kept with it).
   async function approve(ref, yes, note = "") {

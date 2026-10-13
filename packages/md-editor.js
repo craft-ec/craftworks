@@ -420,7 +420,7 @@ export async function start(ctx) {
       // not to be readable.
       const named = items.refOf(q);
       if (named) {
-        const it = await items.get(named).catch(() => null);
+        const it = await items.get(named).catch(ctx.quiet(() => null));
         if (n !== asked) return;
         return found.replaceChildren(it ? btn(`🔗 ${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title)) : h("span", { className: "s", textContent: "That item is not there, or not yours to read." }));
       }
@@ -459,7 +459,7 @@ export async function start(ctx) {
       }
       const m = before.match(/@([^\s@]*)$/);
       if (!m) return (list.hidden = true);
-      const found = (await people(m[1]).catch(() => [])).slice(0, 6);
+      const found = (await people(m[1]).catch(ctx.quiet(() => []))).slice(0, 6);
       list.replaceChildren(...found.map(p => h("li", { textContent: p.shown, onmousedown: e => (e.preventDefault(), take(p, m[0].length)) })));
       list.hidden = !found.length;
     }

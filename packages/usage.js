@@ -184,7 +184,7 @@ export async function start(ctx) {
     if (!me) return;
     const index = await ctx.require("index");
     const months = new Set(cs.flatMap(c => [monthOf(c.at), monthOf(c.at + (c.days - 1) * 86400000)]));
-    for (const m of months) if (!(await index.pointers(bagOf(m)).catch(() => [])).some(x => x?.did === me)) await index.point(bagOf(m), { did: me });
+    for (const m of months) if (!(await index.pointers(bagOf(m)).catch(ctx.quiet(() => []))).some(x => x?.did === me)) await index.point(bagOf(m), { did: me });
   }
   async function contributions() {
     const t = await storage.table("contrib");
@@ -299,7 +299,7 @@ export async function start(ctx) {
       return bys.get(ref);
     };
     const keepersOf = new Map();
-    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(() => [])), keepersOf.get(root));
+    const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root).catch(ctx.quiet(() => []))), keepersOf.get(root));
     return { me: (await space.me()) ?? null, byOf, keepers, cs: await contributions() };
   }
   const daysOfMonth = m => {
@@ -377,7 +377,7 @@ export async function start(ctx) {
         await t.put(day, JSON.stringify(body));
         wrote += 1;
       }
-      if (any && !(await index.pointers(bagOf(m)).catch(() => [])).some(x => x?.did === me.id)) await index.point(bagOf(m), { did: me.id });
+      if (any && !(await index.pointers(bagOf(m)).catch(ctx.quiet(() => []))).some(x => x?.did === me.id)) await index.point(bagOf(m), { did: me.id });
     }
     return wrote;
   }
@@ -391,7 +391,7 @@ export async function start(ctx) {
   // THE LEDGER of a month (or any days of it: `days`, a test): every contributor's daily statements, summed.
   async function ledger(m = monthOf(), { days = () => true } = {}) {
     const [index, directory] = await Promise.all(["index", "directory"].map(n => ctx.require(n)));
-    const dids = [...new Set((await index.pointers(bagOf(m)).catch(() => [])).map(x => x?.did).filter(d => typeof d === "string" && d.startsWith("did:")))];
+    const dids = [...new Set((await index.pointers(bagOf(m)).catch(ctx.quiet(() => []))).map(x => x?.did).filter(d => typeof d === "string" && d.startsWith("did:")))];
     const by = {};
     // PER DAY too (the cutoff): { day: { final, statements, total, creators, carriers, network, by: { did: {creator, carrier} } } }
     const perDay = {};
@@ -404,7 +404,7 @@ export async function start(ctx) {
     };
     await Promise.all(
       dids.map(async did => {
-        const [t, card] = await Promise.all([directory.publicOf(did, STATEMENTS).catch(() => null), directory.card(did).catch(() => null)]);
+        const [t, card] = await Promise.all([directory.publicOf(did, STATEMENTS).catch(ctx.quiet(() => null)), directory.card(did).catch(ctx.quiet(() => null))]);
         await t?.answer?.();
         const rows = new Map((t?.rows() ?? []).filter(r => r.key.startsWith(`${m}-`) && days(r.key)).map(r => [r.key, parse(r.value)]));
         // Every day of this month their card's contributions give a share — with a row of theirs or without.

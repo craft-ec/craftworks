@@ -88,7 +88,7 @@ export async function start(ctx) {
       const about = h("div", { className: "about" });
       if (usage.reaches(mine.id, it.meta.level)) {
         const conversation = await ctx.require("conversation");
-        const asked = (await conversation.askedCodes().catch(() => [])).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
+        const asked = (await conversation.askedCodes().catch(ctx.quiet(() => []))).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
         if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.failed("item", e, `asking into ${gate.space.slice(0, 8)}: ${e.message}`));
         about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · asked, waiting` }));
       } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/wallet/contribute", textContent: "Contribute (Wallet)" }));

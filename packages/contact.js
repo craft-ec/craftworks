@@ -50,7 +50,7 @@ export async function mount(ctx, el) {
   // EVERY SPACE's PEOPLE, here too (owner 10-13: contact is in every space — its members — so Contact shows them all,
   // as it chooses: each space its own section, opened when wanted; no switching between spaces).
   const [ml, space] = await Promise.all([ctx.require("members-list"), ctx.require("space")]);
-  const spaces = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+  const spaces = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server");
   for (const sp of spaces) {
     const d = Object.assign(document.createElement("details"), { className: "space-people" });
     d.style.cssText = "padding:0 var(--cw-space-3)";
@@ -107,7 +107,7 @@ async function people(ctx, el, { directory, person }) {
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
   grid.replaceChildren(theme.loading("Finding people…"));
-  const lists = await moderation.lists().catch(() => null);
+  const lists = await moderation.lists().catch(ctx.quiet(() => null));
   const dids = (await directory.listed()).filter(d => !lists?.flagged({ by: d }));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

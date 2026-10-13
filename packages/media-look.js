@@ -132,13 +132,13 @@ export async function start(ctx) {
         u.track(v.ref, { ...info, mine }, [f]);
         let roots = [f.root];
         if (f.type === studio.MANIFEST) {
-          const m = await player.manifest(f).catch(() => null);
+          const m = await player.manifest(f).catch(ctx.quiet(() => null));
           if (m) u.track(v.ref, { ...info, mine }, [m.strip?.ref, ...m.renditions.map(r => r.ref)]);
           if (m) roots = m.renditions.map(r => r.ref?.root).filter(Boolean);
         }
         // WHO KEEPS IT (the keepers bag, `keep.keepers`): the people keeping any of its files this month or last.
         const keep = await ctx.require("keep");
-        const ds = new Set((await Promise.all(roots.map(r => keep.keepers(r).catch(() => [])))).flat());
+        const ds = new Set((await Promise.all(roots.map(r => keep.keepers(r).catch(ctx.quiet(() => []))))).flat());
         if (ds.size && el.isConnected) kept.textContent = ` · kept by ${ds.size} ${ds.size === 1 ? "person" : "people"}`;
       }, () => {});
       if (f && audio) view.prepare().catch(e => (view.note.textContent = ctx.say(e)));
@@ -151,7 +151,7 @@ export async function start(ctx) {
           if (label) c.level(label);
           view.play({ autoplay: true }).catch(e => (view.note.textContent = ctx.say(e)));
         };
-      scrubStrip().catch(() => {});
+      scrubStrip().catch(ctx.quiet(() => {}));
     };
     return { el, start: begin, media: video };
   }

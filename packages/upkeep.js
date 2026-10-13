@@ -68,7 +68,7 @@ export async function start(ctx) {
         const ev = self.why ? "not-held" : self.e == null ? "not-held" : self.oe != null && self.e < self.oe ? "behind" : self.on === false ? "off-branch" : self.u ? "unreadable" : "held";
         life.become("space", sp.id.slice(0, 12), ev, { e: self.e, oe: self.oe, u: self.u, ...(self.why ? { why: self.why } : {}) });
         await conversation.observe(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: observing members: ${e.message}`));
-        const r = await roles.of(sp).catch(() => null);
+        const r = await roles.of(sp).catch(ctx.quiet(() => null));
         // AN OPEN SPACE's roster public (the owner, once a page): askers outside learn they were let in.
         if (r && !published.has(sp.id) && r.role(me.id) === "owner" && r.policy("", "join") === "anyone") {
           published.add(sp.id);
@@ -123,8 +123,8 @@ export async function start(ctx) {
     for (const g of st.groups ?? []) if (of(g.space)) await keys.group(of(g.space)).adopt(g.epoch, g.state);
     const written = [];
     // The key packages it used: recorded as spent (a key package works once), before the admissions are acknowledged.
-    const used = await storage().catch(() => null);
-    for (const a of st.admitted ?? []) if (used && a.kp) await used.put(a.kp, String(a.at || Date.now())).catch(() => {});
+    const used = await storage().catch(ctx.quiet(() => null));
+    for (const a of st.admitted ?? []) if (used && a.kp) await used.put(a.kp, String(a.at || Date.now())).catch(ctx.quiet(() => {}));
     for (const a of st.admitted ?? []) {
       const sp = of(a.space);
       if (!sp) continue;
@@ -136,11 +136,11 @@ export async function start(ctx) {
       // Let in AGAIN (a member stuck behind its own commit): a member already — no act.
       if (a.code === "stuck") {
         // Recorded in the space as any member's welcome again (`conversation`'s once-per-epoch rule reads it).
-        await index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch), ...kp }).catch(() => {});
+        await index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch), ...kp }).catch(ctx.quiet(() => {}));
         ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} again (stuck behind its own change) while no page ran` });
         continue;
       }
-      if (kp.kp) await index.spacePoint(sp, "writers", { w: sp.self, welcomed: a.did, ...kp, at: a.at || Date.now() }).catch(() => {});
+      if (kp.kp) await index.spacePoint(sp, "writers", { w: sp.self, welcomed: a.did, ...kp, at: a.at || Date.now() }).catch(ctx.quiet(() => {}));
       const r = await roles.of(sp);
       await r.refresh();
       await r.act({ act: "admitted", code: a.code, did: a.did, at: a.at });
@@ -162,11 +162,11 @@ export async function start(ctx) {
     const spaces = [];
     const { glue } = await ctx.require("node");
     for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
-      const r = await roles.of(sp).catch(() => null);
-      const g = await keys.group(sp).snapshot().catch(() => null);
+      const r = await roles.of(sp).catch(ctx.quiet(() => null));
+      const g = await keys.group(sp).snapshot().catch(ctx.quiet(() => null));
       if (!g) continue;
       const mayInvite = !!r?.can(me.id, "invite");
-      const inGroup = ((await keys.group(sp).ready().catch(() => null))?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16)))));
+      const inGroup = ((await keys.group(sp).ready().catch(ctx.quiet(() => null)))?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16)))));
       const members = [...new Set([...(r?.members() ?? []).map(m => m.did), ...inGroup])];
       // The key packages its members (and their nodes) used, mirrored into this account's `keypacks` (`shared:<tag>`):
       // handed below as spent with this account's own — a package is spent for every space once any member used it.
@@ -187,7 +187,7 @@ export async function start(ctx) {
     }
     // With it, the key packages this account used already — and those another member used (`shared:<tag>`): upkeep
     // never uses one again.
-    const used = await storage().catch(() => null);
+    const used = await storage().catch(ctx.quiet(() => null));
     const spent = used ? [...new Set(used.rows().filter(r => r.value).map(r => r.key.replace(/^shared:/, "")).filter(k => /^[0-9a-f]{32}$/.test(k)))] : [];
     const r = await auth.identity.upkeepMandate(me.id, spaces, spent);
     const said = spaces.map(x => `${x.name}${x.codes.length || x.open || x.level ? "" : " (re-add only)"}`).join(", ");
@@ -207,13 +207,13 @@ export async function start(ctx) {
     // The contracts it writes (their code) and reads: handed over when they are not the ones it holds — the Sealed,
     // Piece and Block contracts too (it re-keys a space's files with no page open).
     if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode))
-      await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode).catch(() => {});
+      await auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode).catch(ctx.quiet(() => {}));
     ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
     // What it did with no page open (admissions, re-keys): its last lines, each said once a page opens.
     for (const line of String(r.upkeep?.said ?? "").split("\n").filter(Boolean)) ctx.log("upkeep said", { what: line });
   }
-  handOver().catch(() => {});
-  addEventListener("craftworks:auth", () => handOver().catch(() => {}));
+  handOver().catch(ctx.quiet(() => {}));
+  addEventListener("craftworks:auth", () => handOver().catch(ctx.quiet(() => {})));
   // A JOB (FOUNDATION.md §3): every 30 s, only while this device may write for the account (its session open, its
   // account group a member) — paused, and said why, otherwise.
   const life = await ctx.require("lifecycle");

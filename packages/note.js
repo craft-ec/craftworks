@@ -294,7 +294,7 @@ export async function mount(ctx, el) {
     const who = editor.querySelector(".who");
     who.textContent = "";
     ctx.require("directory").then(async d => {
-      const name = async did => (did ? d.shown(did, await d.handle(did).catch(() => null)) : "");
+      const name = async did => (did ? d.shown(did, await d.handle(did).catch(ctx.quiet(() => null))) : "");
       const when = t => (t ? new Date(t).toLocaleString() : "");
       const made = it.by ? `By ${await name(it.by)}${it.at ? `, ${when(it.at)}` : ""}` : "";
       const changed = it.edited ? ` · edited${it.editor && it.editor !== it.by ? ` by ${await name(it.editor)}` : ""} ${when(it.edited)}` : "";

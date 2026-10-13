@@ -19,7 +19,7 @@ export async function start(ctx) {
   async function hrefTo({ personal = false, space: sp = null, person = null }) {
     const app = ctx.apps.find(a => a.route === ctx.route);
     const views = app?.views ?? [];
-    const me = (await space.account().catch(() => null))?.id;
+    const me = (await space.account().catch(ctx.quiet(() => null)))?.id;
     if (person && person !== me) return views.includes("person") ? `#${app.route}/u/${person}` : `#/u/${person}`;
     // An app ALWAYS there (Settings) is in every space; any other where that space uses it.
     if (sp) return views.includes("shared") && (app.always || (await roles.of(sp).then(r => r.apps(), () => [])).includes(app.route.slice(1))) ? `#/s/${sp.id}${app.route}` : `#/s/${sp.id}`;
@@ -139,9 +139,9 @@ export async function start(ctx) {
   const column = (title, items, none) => h("section", {}, h("h3", { textContent: title }), h("ul", {}, ...(items.length ? items : [h("p", { className: "none", textContent: none })])));
 
   async function draw() {
-    const me = (await space.account().catch(() => null))?.id;
+    const me = (await space.account().catch(ctx.quiet(() => null)))?.id;
     if (!me) return panel.replaceChildren();
-    const [mine, people, myName] = await Promise.all([space.mine().catch(() => []), edge.people(), directory.handle(me).catch(() => null)]);
+    const [mine, people, myName] = await Promise.all([space.mine().catch(ctx.quiet(() => [])), edge.people(), directory.handle(me).catch(ctx.quiet(() => null))]);
     // (A CIRCLE — an audience, `circles` — is no place of its own: never listed.)
     const shared = mine.filter(s => s.kind === "server" && !space.isGroup(s));
     const friends = people.list("friend").filter(d => d.startsWith("did:"));
@@ -223,9 +223,9 @@ export async function start(ctx) {
   async function here() {
     // A PERSON's space (from Friends or Following): theirs, named.
     const who = personOf();
-    if (who && who !== (await space.account().catch(() => null))?.id) return directory.shown(who, await directory.handle(who).catch(() => null));
+    if (who && who !== (await space.account().catch(ctx.quiet(() => null)))?.id) return directory.shown(who, await directory.handle(who).catch(ctx.quiet(() => null)));
     if (ctx.space && ctx.space !== "discover") {
-      const sp = (await space.mine().catch(() => [])).find(s => s.id === ctx.space);
+      const sp = (await space.mine().catch(ctx.quiet(() => []))).find(s => s.id === ctx.space);
       if (sp) return space.shown(sp);
       // Not in it (seen from outside): its name as Discover lists it.
       const d = await (await ctx.require("items")).publicSpace(ctx.space);

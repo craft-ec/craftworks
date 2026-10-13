@@ -146,6 +146,15 @@ export async function run(boot) {
     boot.log(step, { what: what || String(e?.message ?? e) });
     met(step, e, "failed", what ? { doing: String(what).slice(0, 120) } : {});
   };
+  // A FAILURE A READ TURNS INTO ITS FALLBACK (`.catch(ctx.quiet(() => null))`): the same value as before, but no longer
+  // SILENT — anything but absent / not yet / logged out / cancelled / an expected refusal is reported by its kind, from
+  // where it was met (FOUNDATION.md §4; 10-13: ~460 reads turned every failure into "nothing" without a word).
+  const EXPECTED = new Set(["absent", "not-yet", "login-needed", "cancelled", "refused-expected", "extension"]);
+  ctx.quiet = make => e => {
+    const kind = faultNow?.classify(e).kind;
+    if (kind && !EXPECTED.has(kind)) met(working.at(-1) || ctx.route, e, "swallowed");
+    return make();
+  };
   // WHAT A PERSON READS for a failure: its kind's words (`fault.say`), never a stack.
   ctx.say = e => faultNow?.say(e) ?? String(e?.message ?? e);
 

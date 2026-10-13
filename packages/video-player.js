@@ -61,7 +61,7 @@ export async function start(ctx) {
   // STREAM: true once a playable track started; false (nothing played) to load it whole.
   async function stream(video, ref) {
     if (!canStream() || !/mp4|quicktime|m4v/.test(ref.type ?? "")) return false;
-    const MP4Box = await mp4box().catch(() => null);
+    const MP4Box = await mp4box().catch(ctx.quiet(() => null));
     if (!MP4Box) return false;
     const size = ref.size;
     const mp4 = MP4Box.createFile();
@@ -319,7 +319,7 @@ export async function start(ctx) {
           }
           const e = epoch;
           const i0 = segAt(rs[level], next);
-          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && rs[level].index.segments[i0 + k]; k++) fetchSeg(level, i0 + k).catch(() => {});
+          for (let k = 1; k < FRAGMENTS_IN_FLIGHT && rs[level].index.segments[i0 + k]; k++) fetchSeg(level, i0 + k).catch(ctx.quiet(() => {}));
           const got = await obtain(level, next);
           if (e !== epoch) continue;
           if (!got) {
@@ -424,7 +424,7 @@ export async function start(ctx) {
       if (!low) throw new Error("this video has no rendition this browser plays");
       ref = { ...low.ref, type: "video/mp4" };
     }
-    if (await stream(video, ref).catch(() => false)) {
+    if (await stream(video, ref).catch(ctx.quiet(() => false))) {
       onNote("");
       return "stream";
     }

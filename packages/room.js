@@ -214,7 +214,7 @@ export async function start(ctx) {
               if (earlier) return (limit += PAGE), draw();
               e.target.disabled = true;
               e.target.textContent = "Loading…";
-              await room.older(PAGE).catch(() => 0);
+              await room.older(PAGE).catch(ctx.quiet(() => 0));
               limit += PAGE;
               draw();
             } }))]

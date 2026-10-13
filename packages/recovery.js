@@ -52,14 +52,14 @@ export async function start(ctx) {
     const did = String(id ?? "").trim();
     if (!did.startsWith("did:craftec:")) throw new Error("your account's full id: did:craftec:… (on your Card page)");
     const t = await directory.publicOf(did, TAIL);
-    await t?.reread?.().catch(() => {});
+    await t?.reread?.().catch(ctx.quiet(() => {}));
     const sealed = t?.rows().find(r => r.key === ROW)?.value;
     if (!sealed) throw new Error("this account has no recovery passphrase set");
     return Core.recovery_open(passphrase, glue.did_bytes(did), bytes(sealed));
   }
 
   // New words: the copy holds the old ones — dropped.
-  auth.identity.onWordsChanged(() => clear().catch(() => {}));
+  auth.identity.onWordsChanged(() => clear().catch(ctx.quiet(() => {})));
 
   return { set, has, clear, open };
 }

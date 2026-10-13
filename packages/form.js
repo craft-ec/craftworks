@@ -66,7 +66,7 @@ export async function mount(ctx, el) {
   async function getForm(ref) {
     const sid = items.spaceIdOf(ref);
     const inside = !sid || (await space.mine()).some(s => s.id === sid);
-    const outside = inside ? null : await items.outsideOf(ref).catch(() => null);
+    const outside = inside ? null : await items.outsideOf(ref).catch(ctx.quiet(() => null));
     const it = await items.get(ref, { outside }).catch(e => (ctx.failed("form", e, `reading ${ref.slice(0, 40)}… failed: ${e?.message ?? e}`), null));
     return it && it.kind === "form" ? { ...it, outside } : null;
   }
@@ -93,7 +93,7 @@ export async function mount(ctx, el) {
   // space's, a circle by the credential it cited) — mail is open to anyone, so who may answer is checked where the
   // answers are read (and before sending, for the respondent's sake). A rule not read yet: not counted yet.
   async function mayAnswer(form, place, did, cred = null) {
-    const r = F.toSpace(place) ? await roles.ofPublic(place).catch(() => null) : null;
+    const r = F.toSpace(place) ? await roles.ofPublic(place).catch(ctx.quiet(() => null)) : null;
     await r?.settled;
     if (!r) await roles.personal(form.by).ready?.catch?.(() => {});
     if (r?.banned?.(did)) return false;
@@ -110,7 +110,7 @@ export async function mount(ctx, el) {
     const place = await placeOf(form);
     if (F.toSpace(place) && !(await mail.accepts(place.id))) throw new Error(`${space.shown(place)}'s mail is off, so its forms take no responses yet: its owner turns it on (Mail)`);
     // WHO MAY ANSWER: the form's rule (its readers who may comment); a circle's credential cited, as a comment does.
-    const cred = F.toSpace(place) ? null : await roles.credToCite(form, "comment").catch(() => null);
+    const cred = F.toSpace(place) ? null : await roles.credToCite(form, "comment").catch(ctx.quiet(() => null));
     // (The respondent's own check is the one comments use — `items.mayWriteOn`: a rule not read yet passes here and is
     // checked where the answers are read; measured on fx: a strict check here refused a public form.)
     if (!(await items.mayWriteOn(form, "comment", { outside: F.toSpace(place) ? place : null }))) {
@@ -200,7 +200,7 @@ export async function mount(ctx, el) {
     const tools = h("div", { className: "tools" }, h("a", { href: at.base, textContent: "← Forms" }));
     const said = h("p", { className: "said" });
     const place = await placeOf(form);
-    if (await reads(form, place).catch(() => false)) tools.append(h("a", { className: "cw-btn", href: at.href(`r/${encodeURIComponent(ref)}`), textContent: "Results" }));
+    if (await reads(form, place).catch(ctx.quiet(() => false))) tools.append(h("a", { className: "cw-btn", href: at.href(`r/${encodeURIComponent(ref)}`), textContent: "Results" }));
     if (form.by === me) {
       tools.append(h("a", { className: "cw-btn", href: at.href(`e/${encodeURIComponent(ref)}`), textContent: "Edit" }));
       const flip = h("button", { type: "button", className: "cw-btn", textContent: m.open ? "Close responses" : "Reopen" });
@@ -212,7 +212,7 @@ export async function mount(ctx, el) {
     const head = h("div", {}, h("h2", { textContent: `🗒 ${form.title || "Untitled form"}` }), h("p", { className: "s" }, m.open ? "Accepting responses" : "Closed", m.once ? " · one response per account" : "", " · by ", directory.nameEl(form.by)));
     if (form.body) head.append(h("p", { textContent: form.body, style: "white-space:pre-wrap" }));
     root.replaceChildren(tools, said, head);
-    const mine = await myResponse(form).catch(() => null);
+    const mine = await myResponse(form).catch(ctx.quiet(() => null));
     if (!m.open) return root.append(h("p", { className: "none", textContent: mine ? "This form is closed. Your response is kept (Sent)." : "This form is closed." }));
     // ANSWERED already, one per account: changed where the form allows, else said. (Not one per account: each send a
     // further response.)
@@ -433,10 +433,10 @@ export async function mount(ctx, el) {
     const list = h("div", { className: "list" }, theme.loading("Forms…"));
     const title = at.saved ? "Saved forms" : at.who === "discover" ? "Public forms" : at.who === "person" ? "Their forms" : at.who === "space" ? `${space.shown(at.space)}'s forms` : "Your forms";
     root.replaceChildren(h("h2", { textContent: `🗒 ${title}` }), list);
-    let all = await at.read({ kinds: ["form"] }).catch(() => []);
+    let all = await at.read({ kinds: ["form"] }).catch(ctx.quiet(() => []));
     if (at.who === "mine" && !at.saved) {
       const circles = (await space.mine()).filter(s => s.circle && s.governance?.owner === me);
-      if (circles.length) all = [...all, ...(await items.inPlaces({ spaces: circles }, "form", { withVotes: false }).catch(() => []))];
+      if (circles.length) all = [...all, ...(await items.inPlaces({ spaces: circles }, "form", { withVotes: false }).catch(ctx.quiet(() => [])))];
     }
     const seen = new Set();
     all = all.filter(f => f.kind === "form" && !seen.has(f.ref) && seen.add(f.ref)).sort((a, b) => b.at - a.at);

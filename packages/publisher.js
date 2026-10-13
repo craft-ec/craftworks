@@ -39,11 +39,11 @@ export async function start(ctx) {
     if (spec.maker === "video-studio") {
       const subs = await ctx.require("caption-store");
       for (const s of subtitles) await subs.add(item, s).catch(e => ctx.failed("publish", e, `timed text ${s.name}: ${e.message}`));
-      const lyrics = !subtitles.length && spec.domain === "audio" ? (await maker.probe(file).catch(() => null))?.lyrics : null;
+      const lyrics = !subtitles.length && spec.domain === "audio" ? (await maker.probe(file).catch(ctx.quiet(() => null)))?.lyrics : null;
       if (lyrics)
         await subs
           .add(item, `WEBVTT\n\n00:00:00.000 --> ${new Date(Math.max(1, ref.duration || 3600) * 1000).toISOString().slice(11, 23)}\n${lyrics.trim()}\n`, { label: kinds.attachLabel("subtitle", kind) })
-          .catch(() => {});
+          .catch(ctx.quiet(() => {}));
     }
     return { item, ref };
   }

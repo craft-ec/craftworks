@@ -49,9 +49,9 @@ export async function start(ctx) {
     const st = await files.salt(sp);
     if (acts.length <= st.removals) return;
     const gone = new Set(acts.slice(st.removals).map(a => a.did ?? a.by));
-    await r.refresh().catch(() => {});
+    await r.refresh().catch(ctx.quiet(() => {}));
     if (r.members().some(m => gone.has(m.did))) return; // the group has not moved yet: the next trigger
-    const g = await keys.group(sp).ready().catch(() => null);
+    const g = await keys.group(sp).ready().catch(ctx.quiet(() => null));
     await storage.sealNewest();
     const t = await storage.table(space.tableOf(sp, "files"), sp);
     if (!g || (t.sealing && t.sealing.epoch < g.epoch)) return; // the newest epoch not here yet: `craftworks:keys`
@@ -62,10 +62,10 @@ export async function start(ctx) {
   // THIS PERSON OUT of a space (removed, or left: not in their list): what they uploaded there adopted into their own
   // space (copied while the old key reads) — an uploader keeps their files.
   async function keepOwn(inside) {
-    for (const row of await driveStore.list(null).catch(() => [])) {
+    for (const row of await driveStore.list(null).catch(ctx.quiet(() => []))) {
       if (!row.ref?.in || inside.has(row.ref.in)) continue;
       const ref = await files.adopt(row.ref, null, { app: "drive" });
-      await driveStore.add(ref, { folder: row.folder, from: row.from }).catch(() => {});
+      await driveStore.add(ref, { folder: row.folder, from: row.from }).catch(ctx.quiet(() => {}));
     }
   }
 
@@ -109,7 +109,7 @@ export async function start(ctx) {
   let running = null;
   let again = false;
   async function all() {
-    const mine = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+    const mine = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server");
     const inside = new Set();
     for (const sp of [null, ...mine]) if (await pass(sp).catch(e => ctx.failed("file keys", e, `${label(sp)}: ${e.message ?? e}`)) !== false && sp) inside.add(sp.id);
     await keepOwn(inside);
@@ -128,7 +128,7 @@ export async function start(ctx) {
   // TRIGGERS: each space's table and roles changing; a new epoch; the start (or the login, when nobody is yet).
   const watched = new Set();
   async function watch() {
-    const mine = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+    const mine = (await space.mine().catch(ctx.quiet(() => []))).filter(s => s.kind === "server");
     for (const sp of [null, ...mine]) {
       const k = sp?.id ?? "";
       if (watched.has(k)) continue;
@@ -140,14 +140,14 @@ export async function start(ctx) {
   }
   let started = false;
   async function begin() {
-    if (started || !(await space.account().catch(() => null))) return;
+    if (started || !(await space.account().catch(ctx.quiet(() => null)))) return;
     started = true;
     await watch();
     addEventListener("craftworks:keys", kick);
     (await storage.table("spaces")).onChange(() => watch().then(kick));
     kick();
   }
-  addEventListener("craftworks:auth", () => begin().catch(() => {}));
+  addEventListener("craftworks:auth", () => begin().catch(ctx.quiet(() => {})));
   await begin().catch(e => ctx.log("file keys", { what: e.message ?? String(e) }));
   return { kick };
 }

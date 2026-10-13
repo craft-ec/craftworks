@@ -141,7 +141,7 @@ export async function start(ctx) {
       const sets = await Promise.all(group.map(m => directory.devices(m.did)));
       group.forEach((m, i) => sets[i].forEach(k => writers.set(k, m.did)));
     };
-    if (!out) await learn(await g.ready().catch(() => null));
+    if (!out) await learn(await g.ready().catch(ctx.quiet(() => null)));
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
 
     // THE REPLAY: the acts in order, each kept only if its signer could (the core's `Governance`).
@@ -188,7 +188,7 @@ export async function start(ctx) {
         const fresh = [...roster].filter(d => !known.has(d));
         if (!fresh.length) return;
         fresh.forEach(d => known.add(d));
-        const sets = await Promise.all(fresh.map(d => directory.devices(d).catch(() => [])));
+        const sets = await Promise.all(fresh.map(d => directory.devices(d).catch(ctx.quiet(() => []))));
         fresh.forEach((d, i) => sets[i].forEach(k => writers.set(k, d)));
         await pubActs.add(actWriters);
         replay();
@@ -211,7 +211,7 @@ export async function start(ctx) {
         try {
           if (out) return;
           const before = sig();
-          await learn(await g.ready().catch(() => null));
+          await learn(await g.ready().catch(ctx.quiet(() => null)));
           if (sig() !== before) {
             replay();
             for (const f of changed) f();
@@ -221,7 +221,7 @@ export async function start(ctx) {
         }
       })());
     if (!out) {
-      addEventListener("craftworks:keys", () => relearn().catch(() => {}));
+      addEventListener("craftworks:keys", () => relearn().catch(ctx.quiet(() => {})));
       let wait = 3000;
       const until = Date.now() + 600000;
       const again = () => !group.length && Date.now() < until && setTimeout(() => relearn().finally(again), (wait = Math.min(wait * 2, 60000)));
@@ -231,7 +231,7 @@ export async function start(ctx) {
       replay();
       if (out) widen().then(() => ((group = [...roster].map(did => ({ did }))), changed.forEach(f => f())));
       for (const f of changed) f();
-      if (!out) relearn().catch(() => {});
+      if (!out) relearn().catch(ctx.quiet(() => {}));
     });
     // PUBLIC: something of the space is anyone's — an app read by anyone, or joining open to anyone (an open space is
     // listed in Discover: whoever looks must see who is in it and how to join).
@@ -252,7 +252,7 @@ export async function start(ctx) {
     async function listActWriter() {
       if (out || actListed || !sp.self) return;
       actListed = true;
-      const ws = await index.pointers(ACTS).catch(() => []);
+      const ws = await index.pointers(ACTS).catch(ctx.quiet(() => []));
       if (!ws.some(p => p?.w === sp.self)) await index.point(ACTS, { w: sp.self }).catch(() => (actListed = false));
     }
     // The policy set at exactly a path.
@@ -346,7 +346,7 @@ export async function start(ctx) {
       // Brought current with the group (a member added or removed).
       refresh: async () => {
         if (out) return widen();
-        await learn(await g.ready().catch(() => null));
+        await learn(await g.ready().catch(ctx.quiet(() => null)));
         replay();
       },
       isPublic,
@@ -436,7 +436,7 @@ export async function start(ctx) {
       const ready = directory
         .publicOf(did, "card")
         .then(async x => ((t = x), x && (await x.answer(), replay(), x.onChange(() => (replay(), checked.forEach(f => f()))))))
-        .catch(() => {})
+        .catch(ctx.quiet(() => {}))
         .finally(() => ((loaded = true), checked.forEach(f => f())));
       const policyAt = (path, action, at) => gv?.policy_at(path, action, at) || null;
       // Walked up the path (`board/p/<id>` → `board` → the space), else anyone.
@@ -484,7 +484,7 @@ export async function start(ctx) {
       directory
         .credTable(author, token)
         .then(async t => (t ? (await t.answer(), JSON.parse(t.rows().find(x => x.key === "for")?.value ?? "null")) : null))
-        .catch(() => null)
+        .catch(ctx.quiet(() => null))
         .then(v => ((c.v = v), checked.forEach(f => f())));
     }
     return credChecks.get(k).v;

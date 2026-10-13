@@ -123,10 +123,10 @@ export async function start(ctx) {
     const d = { ep: Number.isFinite(e) ? e : null };
     if (!spObj) return d;
     const g = (await ctx.require("keys")).group(spObj);
-    const st = await g.ready().catch(() => null);
+    const st = await g.ready().catch(ctx.quiet(() => null));
     d.at = st?.epoch ?? null;
     d.removed = !!st?.removed;
-    const lost = await g.lost().catch(() => []);
+    const lost = await g.lost().catch(ctx.quiet(() => []));
     d.lost = lost.map(l => l.epoch).slice(-8);
     if (d.ep != null && table) {
       const k = await (await ctx.require("access")).keyAt(table, d.ep, { space: spObj.id }).catch(e => ({ why: e?.message ?? String(e) }));
@@ -146,7 +146,7 @@ export async function start(ctx) {
       diagnose(spObj, table, w)
         .catch(e => ({ diag: String(e?.message ?? e).slice(0, 60) }))
         .then(d => ctx.require("index").then(ix => ix.health({ k: "cannot-read", s: k.slice(0, 6), why: w, d })))
-        .catch(() => {});
+        .catch(ctx.quiet(() => {}));
     m.set(w, Date.now());
     problems.set(k, m);
   };
@@ -178,12 +178,12 @@ export async function start(ctx) {
       for (const [idHex, t] of live) {
         const w = t.sealing;
         if (!w) continue;
-        const e = await access.keyAt(w.app, -1, { catalog: w.catalog, space: w.space }).catch(() => ({}));
+        const e = await access.keyAt(w.app, -1, { catalog: w.catalog, space: w.space }).catch(ctx.quiet(() => ({})));
         // A newer epoch — or the SAME epoch with another key (a fork healed: the winner's key for that epoch).
         if (!e.key || e.epoch < w.epoch || (e.epoch === w.epoch && e.key === w.key)) continue;
         core.tail_epoch_key(bytes(idHex), e.epoch, bytes(e.key), true);
         const healed = e.epoch === w.epoch;
-        if (healed && w.sp) await alternates(bytes(idHex), w.app, w.sp).catch(() => {});
+        if (healed && w.sp) await alternates(bytes(idHex), w.app, w.sp).catch(ctx.quiet(() => {}));
         w.epoch = e.epoch;
         w.key = e.key;
         ctx.log("table sealing", { what: `${w.app}: writes now with epoch ${e.epoch}${healed ? " (its winning key: a fork healed)" : ""}` });
@@ -195,14 +195,14 @@ export async function start(ctx) {
     if (!unkeyed.size || rekeying) return;
     rekeying = (async () => {
       for (const [idHex, u] of [...unkeyed]) {
-        await epochKeys(idHex, [...u.epochs], u.app).catch(() => {});
+        await epochKeys(idHex, [...u.epochs], u.app).catch(ctx.quiet(() => {}));
         if (unkeyed.has(idHex)) continue;
         const t = live.get(idHex);
         if (t?.lazy) {
           t.poke();
           continue;
         }
-        const v = t && (await settle(JSON.parse(core.tail_view(bytes(idHex))), u.app).catch(() => null));
+        const v = t && (await settle(JSON.parse(core.tail_view(bytes(idHex))), u.app).catch(ctx.quiet(() => null)));
         if (v?.tail) {
           ctx.log("table opened", { what: `${u.app}: the epoch key arrived` });
           t.took(v.tail);
@@ -221,7 +221,7 @@ export async function start(ctx) {
   let reopenedAt = 0;
   async function reopenAfterKeys() {
     // UNREADABLE ones: read again IN PLACE — a table that opens now changes, and whoever reads it draws again.
-    for (const idHex of [...waiting]) live.get(idHex)?.reread().catch(() => {});
+    for (const idHex of [...waiting]) live.get(idHex)?.reread().catch(ctx.quiet(() => {}));
     // A merged table's writer feeds that did not open: gathered again (merged in as they arrive).
     for (const m of mergedNow.values()) m.retryFailed?.();
     // Opened with NO KEY: left behind only when its key is held NOW (its key is set when it opens) — one still without
@@ -229,12 +229,12 @@ export async function start(ctx) {
     const out = [];
     for (const [idHex, t] of [...live]) {
       if (!t.keyless?.()) continue;
-      const k = await access.key(t.app, { space: t.spaceId }).catch(() => ({}));
+      const k = await access.key(t.app, { space: t.spaceId }).catch(ctx.quiet(() => ({})));
       if (k.key) out.push(idHex);
     }
     if (!out.length) return 0;
     for (const idHex of out) (tails.delete(idHex), live.delete(idHex), waiting.delete(idHex), unkeyed.delete(idHex));
-    for (const [k, p] of [...opening]) p.then(t => out.includes(hexOf(t.id)) && opening.get(k) === p && opening.delete(k)).catch(() => {});
+    for (const [k, p] of [...opening]) p.then(t => out.includes(hexOf(t.id)) && opening.get(k) === p && opening.delete(k)).catch(ctx.quiet(() => {}));
     for (const [at, m] of [...mergedNow]) if (m.built.some(id => out.includes(id))) (tables.delete(at), mergedNow.delete(at));
     if (directoryTail && out.includes(hexOf(directoryTail.id))) (directoryOpen = null), (directoryTail = null);
     ctx.log("tables reopened", { what: `${out.length} table(s) opened before their key was held: opened again with it` });
@@ -343,7 +343,7 @@ export async function start(ctx) {
       const had = tails.get(idHex);
       // OPENED AS NEVER MADE (`known: false`, an assumption) and now asked for as unknown: READ (R4 — an assumption
       // never outlives the next open that does not make it).
-      if (known !== false) had.then(t => t.assumed && ((t.assumed = false), t.reread())).catch(() => {});
+      if (known !== false) had.then(t => t.assumed && ((t.assumed = false), t.reread())).catch(ctx.quiet(() => {}));
       return lazy ? had : had.then(t => (t.lazy ? t.whole().then(() => t) : t));
     }
     const id = bytes(idHex);
@@ -421,7 +421,7 @@ export async function start(ctx) {
       // Whether the node ANSWERED the last read (the tail, or "not found"), not silence.
       answered: () => answered,
       // The first read to its end (the node's answer, or its silence past the read's wait): what a DECISION waits for.
-      answer: () => (answer ?? Promise.resolve()).catch(() => {}),
+      answer: () => (answer ?? Promise.resolve()).catch(ctx.quiet(() => {})),
       // ITS READ STATE (FOUNDATION.md §2, the read machine): `{ s: "unknown" }` (not asked, silent, or shown before
       // its answer), `{ s: "absent" }` (the node ANSWERED not found, or the catalog that would list it says none),
       // `{ s: "present" }`, `{ s: "unreadable", why }`. `absent` above is what a page SHOWS; this is what a DECISION
@@ -467,8 +467,8 @@ export async function start(ctx) {
       // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
       if (k.key && !sealWith && !CHANNELS.has(app)) {
         const keys = await ctx.require("keys");
-        if (inSpace?.id) await keys.group(inSpace).ready().catch(() => null);
-        else if (!catalogKey) await keys.ready().catch(() => null);
+        if (inSpace?.id) await keys.group(inSpace).ready().catch(ctx.quiet(() => null));
+        else if (!catalogKey) await keys.ready().catch(ctx.quiet(() => null));
         mark("group");
         const e = await access.keyAt(app, -1, { catalog: catalogKey, space: spaceId });
         mark("epoch");
@@ -478,7 +478,7 @@ export async function start(ctx) {
         t.sealing = { app, catalog: catalogKey, space: spaceId, sp: inSpace?.id ? inSpace : null, epoch: e.key ? e.epoch : -1, key: e.key ?? null };
         // A space's LOST BRANCH (`keys`' heal: this node's commits another beat): its epochs' keys read with, as
         // alternates — what was written there stays readable, and is sealed over to the winner's.
-        if (inSpace?.id) await alternates(id, app, inSpace).catch(() => {});
+        if (inSpace?.id) await alternates(id, app, inSpace).catch(ctx.quiet(() => {}));
         mark("alternates");
       }
       if (known === false) {
@@ -806,13 +806,13 @@ export async function start(ctx) {
     const out = {};
     await Promise.all(
       nodes.map(async node => {
-        const cat = await scope.catalogOf(node).catch(() => null);
+        const cat = await scope.catalogOf(node).catch(ctx.quiet(() => null));
         await cat?.answer();
         if (!cat || cat.absent) return;
         const heads = {};
         await Promise.all(
           listedIn(cat).map(async r => {
-            const t = await tail(node, r.key, { ...scope.opts(r.key), catalog: cat }).catch(() => null);
+            const t = await tail(node, r.key, { ...scope.opts(r.key), catalog: cat }).catch(ctx.quiet(() => null));
             await t?.answer();
             if (!t || t.absent) return;
             const seqs = (t.raw() ?? []).map(([, v]) => seqOf(v)).filter(Number.isFinite);
@@ -912,7 +912,7 @@ export async function start(ctx) {
     // So the directory never decides that the channel is ABSENT: a sealed directory reads as empty on such a node, and
     // "not listed" made it start a SECOND group for the account (fx/fy 10-12: "this node created the account's group"
     // instead of joining it). The channel is always read for what it is.
-    return tail(sp.shared, name, { known: null, beforeCreate: () => listInDirectory(name).catch(() => {}) });
+    return tail(sp.shared, name, { known: null, beforeCreate: () => listInDirectory(name).catch(ctx.quiet(() => {})) });
   }
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
   // The account: the directory names its nodes, their catalogs are account tables. Another space: its GROUP's members write, each listing the space's tables in its own catalog
@@ -961,10 +961,10 @@ export async function start(ctx) {
           };
           each();
           addEventListener("craftworks:keys", async () => {
-            members.splice(0, members.length, ...((await keys.group(sp).ready().catch(() => null))?.members ?? []));
+            members.splice(0, members.length, ...((await keys.group(sp).ready().catch(ctx.quiet(() => null)))?.members ?? []));
             each();
           });
-        })().catch(() => {});
+        })().catch(ctx.quiet(() => {}));
       },
       // This device's catalog listed in the space's writers bag BEFORE it is made: nobody asks for it before then.
       catalogOf: w =>
@@ -988,7 +988,7 @@ export async function start(ctx) {
     if (polled.has(c)) return;
     polled.add(c);
     backoff(async () => {
-      await c.reread().catch(() => {});
+      await c.reread().catch(ctx.quiet(() => {}));
       return !c.absent && polled.delete(c);
     });
   }
@@ -1046,7 +1046,7 @@ export async function start(ctx) {
     const fns = [fn];
     bagPolls.set(sp.id, fns);
     backoff(async () => {
-      const b = await scope.bag(true).catch(() => null);
+      const b = await scope.bag(true).catch(ctx.quiet(() => null));
       if (b) for (const f of fns) f(b.set);
       return false;
     });
@@ -1062,7 +1062,7 @@ export async function start(ctx) {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
       const [mine, others] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
-      const bag = scope.bag ? await scope.bag().catch(() => null) : null;
+      const bag = scope.bag ? await scope.bag().catch(ctx.quiet(() => null)) : null;
       const listed = o => !scope.bag || (bag ? bag.blind || bag.set.has(o) : false);
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
@@ -1106,7 +1106,7 @@ export async function start(ctx) {
       // arrives without a reload.
       const opened = new Set();
       const gather = async o => {
-        const c = await scope.catalogOf(o).catch(() => null);
+        const c = await scope.catalogOf(o).catch(ctx.quiet(() => null));
         if (!c) return;
         await c.answer();
         const open = async () => {
@@ -1114,7 +1114,7 @@ export async function start(ctx) {
           opened.add(o);
           take(await theirs(o, true, c));
         };
-        c.onChange(() => open().catch(() => {}));
+        c.onChange(() => open().catch(ctx.quiet(() => {})));
         if (c.absent) {
           // Listed, not there yet (being made as it was listed): asked again until it is.
           absentCatalog(c);
@@ -1139,13 +1139,13 @@ export async function start(ctx) {
           } catch {}
           if (typeof cap !== "number") continue;
           departedDone.add(r.key);
-          const cat = await scope.catalogOf(r.key).catch(() => null);
+          const cat = await scope.catalogOf(r.key).catch(ctx.quiet(() => null));
           await cat?.answer();
           const f = await theirs(r.key, true, cat);
           if (f) take(capped(f, cap));
         }
       };
-      const gathering = Promise.all([...others.filter(listed).map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.failed("feed not read", e, `${name}: departed writers: ${e.message}`))]);
+      const gathering = Promise.all([...others.filter(listed).map(o => gather(o).catch(ctx.quiet(() => {}))), gatherDeparted().catch(e => ctx.failed("feed not read", e, `${name}: departed writers: ${e.message}`))]);
       const settled = soon(gathering, name);
       // GATHERED: every listed writer's feed tried (not merely shown-after-WAIT.hint): what DECIDES on the table waits
       // for it (R5) — 10-13: the spaces list "decided" after 1.5 s while the other device's feed was still being read
@@ -1153,13 +1153,13 @@ export async function start(ctx) {
       let gathered = false;
       gathering.finally(() => (gathered = true));
       // New writers appear in the bag — read again now and then (one read for the whole space).
-      if (scope.bag) pollBag(sp, scope, set => set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), gather(o).catch(() => {}))));
-      if (scope.departed?.(name)) scope.departedTable().then(d => d.onChange(() => gatherDeparted().catch(() => {})), () => {});
+      if (scope.bag) pollBag(sp, scope, set => set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), gather(o).catch(ctx.quiet(() => {})))));
+      if (scope.departed?.(name)) scope.departedTable().then(d => d.onChange(() => gatherDeparted().catch(ctx.quiet(() => {}))), () => {});
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
       const seen = new Set(others.filter(listed));
       scope.watch?.(async () => {
         const b = scope.bag ? await scope.bag(true).catch(() => bag) : null;
-        for (const o of await scope.writers().catch(() => [])) if (!seen.has(o) && (!scope.bag || b?.blind || b?.set.has(o))) seen.add(o), gather(o).catch(() => {});
+        for (const o of await scope.writers().catch(ctx.quiet(() => []))) if (!seen.has(o) && (!scope.bag || b?.blind || b?.set.has(o))) seen.add(o), gather(o).catch(ctx.quiet(() => {}));
       });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
@@ -1205,7 +1205,7 @@ export async function start(ctx) {
       const write = async (key, value) => {
         await current();
         // A newer epoch just learned: the open tails move onto it before this is sealed.
-        if (sp.kind !== "account") await sealNewest().catch(() => {});
+        if (sp.kind !== "account") await sealNewest().catch(ctx.quiet(() => {}));
         return versioned(me, key, value, await currentId(key));
       };
       const t = {
@@ -1242,7 +1242,7 @@ export async function start(ctx) {
               const out = [];
               let timer;
               const hs = await Promise.race([
-                f.history(k).catch(() => []),
+                f.history(k).catch(ctx.quiet(() => [])),
                 new Promise(r => (timer = setTimeout(() => (ctx.log("history", { what: `${name}: ${f.owner.slice(0, 12)}…'s history not read in ${LIMIT / 1000} s` }), r([])), LIMIT))),
               ]).finally(() => clearTimeout(timer));
               for (const h of hs) {
@@ -1274,7 +1274,7 @@ export async function start(ctx) {
             failedOwners.delete(o);
             opened.delete(o);
             unopened = Math.max(0, unopened - 1);
-            gather(o).catch(() => {});
+            gather(o).catch(ctx.quiet(() => {}));
           }
         },
         // The tails it is built on (their ids, hex): what reopens it when one did not read.
@@ -1377,7 +1377,7 @@ export async function start(ctx) {
         out.push({ name, closed: true });
         continue;
       }
-      const t = await table(name).catch(() => null);
+      const t = await table(name).catch(ctx.quiet(() => null));
       if (t) out.push({ name, sealed: !!t.sealed, ...t.info, address: await addressOf(name) });
     }
     return out;
@@ -1392,12 +1392,12 @@ export async function start(ctx) {
     const out = [];
     for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
       const scope = scopeOf(sp);
-      const cat = await scope.catalogOf(scope.self).catch(() => null);
+      const cat = await scope.catalogOf(scope.self).catch(ctx.quiet(() => null));
       if (!cat) continue;
       await cat.answer?.();
       const tables = [{ name: sp.tables.catalog, sealed: !!cat.sealed, rows: own(cat).length, flushed: true, pending: 0, catalog: true, absent: !!cat.absent, address: hexOf(cat.id) }];
       for (const r of own(cat).filter(x => x.value && placeOf(cat, x.key) !== "none")) {
-        const t = await table(r.key, sp).catch(() => null);
+        const t = await table(r.key, sp).catch(ctx.quiet(() => null));
         if (t) tables.push({ name: r.key, sealed: !!t.sealed, ...t.info, address: await addressOf(r.key) });
       }
       out.push({ space: { id: sp.id, name: sp.name }, tables });
@@ -1454,9 +1454,9 @@ export async function start(ctx) {
     const out = [];
     await Promise.all(
       owners.map(async owner => {
-        const cat = await catalogOf(owner).catch(() => null);
+        const cat = await catalogOf(owner).catch(ctx.quiet(() => null));
         if (!cat || !own(cat).some(r => r.key === name)) return;
-        const t = await tail(owner, name, { catalogKey: ANY_GRANT.has(name), catalog: cat }).catch(() => null);
+        const t = await tail(owner, name, { catalogKey: ANY_GRANT.has(name), catalog: cat }).catch(ctx.quiet(() => null));
         if (t) out.push({ owner, rows: own(t) });
       }),
     );
@@ -1468,13 +1468,13 @@ export async function start(ctx) {
   async function adopt(node) {
     const sp = await space.account();
     const d = await directory();
-    const cats = await Promise.all([sp.self, node].map(o => catalogOf(o).catch(() => null)));
+    const cats = await Promise.all([sp.self, node].map(o => catalogOf(o).catch(ctx.quiet(() => null))));
     const names = new Set(cats.filter(Boolean).flatMap(c => listedIn(c).map(r => r.key)));
     for (const n of d.rows().map(r => r.key)) if (n !== CATALOG && !n.startsWith("node:")) names.add(n);
     let moved = 0;
     for (const name of names) {
       if (CHANNELS.has(name)) continue;
-      const t = await table(name).catch(() => null);
+      const t = await table(name).catch(ctx.quiet(() => null));
       if (!t) continue;
       await t.settled;
       for (const r of t.rows().filter(r => r.id?.startsWith(node))) {

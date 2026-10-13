@@ -52,7 +52,7 @@ export async function start(ctx) {
       : [];
     const choices = sp
       ? [
-          ...((await items.publicIn(sp, kind).catch(() => false))
+          ...((await items.publicIn(sp, kind).catch(ctx.quiet(() => false)))
             ? [["public", "🌐 Everyone (public)"], ["members", `👥 ${space.shown(sp)}'s members`]]
             : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]),
           ...fewer,
