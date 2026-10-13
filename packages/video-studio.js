@@ -135,7 +135,7 @@ export async function start(ctx) {
     try {
       return await encode(file, opts);
     } catch (err) {
-      ctx.log("video-studio", { what: `${file.name}: not encoded here (${err?.message ?? err}): the file as it is` });
+      ctx.failed("video-studio", err, `${file.name}: not encoded here (${err?.message ?? err}): the file as it is`);
       const isVideo = /^video\//.test(file.type);
       const m = isVideo ? await (await ctx.require("video-player")).meta(file).catch(() => ({})) : {};
       const up = await files.put(file, { space: opts.space ?? null, public: !!opts.public, app: opts.app ?? "video", onProgress: p => opts.onProgress?.({ stage: "uploading", p: p.done / Math.max(1, p.size) }) });
@@ -267,7 +267,7 @@ export async function start(ctx) {
   async function makeRendition(M, file, r, { space, pub, name, say, width = null }) {
     const label = `${LABEL[r.codec]} ${r.height}p`;
     const out = await rendition(M, file, { ...r, onProgress: p => say(`encoding ${label}`, p) }).catch(e => {
-      ctx.log("video", { what: `${label} left out: ${e.message ?? e}` });
+      ctx.failed("video", e, `${label} left out: ${e.message ?? e}`);
       return null;
     });
     if (!out) return null;
@@ -321,7 +321,7 @@ export async function start(ctx) {
         await work();
       } while (again);
     } catch (e) {
-      ctx.log("video", { what: `background: ${e.message ?? e}` });
+      ctx.failed("video", e, `background: ${e.message ?? e}`);
     } finally {
       working = false;
     }

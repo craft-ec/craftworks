@@ -99,7 +99,7 @@ export async function start(ctx) {
         ctx.log("file keys", { what: `${label(sp)}: ${row.id.slice(0, 8)}… re-keyed (${pub ? "public" : "sealed for its members"})` });
       } catch (e) {
         failed.set(k, triggers);
-        ctx.log("file keys", { what: `${label(sp)}: ${row.id.slice(0, 8)}… not re-keyed yet — ${e.message ?? e}` });
+        ctx.failed("file keys", e, `${label(sp)}: ${row.id.slice(0, 8)}… not re-keyed yet — ${e.message ?? e}`);
       }
     }
     return true;
@@ -111,7 +111,7 @@ export async function start(ctx) {
   async function all() {
     const mine = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
     const inside = new Set();
-    for (const sp of [null, ...mine]) if (await pass(sp).catch(e => ctx.log("file keys", { what: `${label(sp)}: ${e.message ?? e}` })) !== false && sp) inside.add(sp.id);
+    for (const sp of [null, ...mine]) if (await pass(sp).catch(e => ctx.failed("file keys", e, `${label(sp)}: ${e.message ?? e}`)) !== false && sp) inside.add(sp.id);
     await keepOwn(inside);
   }
   function kick() {

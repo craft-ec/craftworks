@@ -256,7 +256,7 @@ export async function start(ctx) {
           ctx.log("table changed", { what: `${t.app}: seq ${v.tail.seq}, pushed by the node` });
           t.took(v.tail);
         },
-        e => ctx.log("table changed", { what: `${t.app}: ${e.message}` }),
+        e => ctx.failed("table changed", e, `${t.app}: ${e.message}`),
       );
   });
 
@@ -303,7 +303,7 @@ export async function start(ctx) {
           const ours = owner === sp?.self || owner === sp?.shared || ownKeys.has(owner);
           if (cat) await cat.answer();
           const place = cat ? placeOf(cat, app) : opts.known === false ? "unlisted" : "unknown";
-          const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.log("storage", { what: `${app}: noting its place: ${e?.message ?? e}` })) : Promise.resolve());
+          const note = p => (cat && ours ? notePlace(cat, app, p).catch(e => ctx.failed("storage", e, `${app}: noting its place: ${e?.message ?? e}`)) : Promise.resolve());
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
           // Not looked for: not listed.
@@ -411,7 +411,7 @@ export async function start(ctx) {
               await blocks.fetch(idHex, r.fetch, app);
             }
           } catch (e) {
-            ctx.log("history", { what: `${app}: a version not read: ${e.message}` });
+            ctx.failed("history", e, `${app}: a version not read: ${e.message}`);
           }
         }
         return out;
@@ -438,7 +438,7 @@ export async function start(ctx) {
       await t.answer();
       if (st.s !== "unknown") return st;
       deciding ??= read(WAIT.answer)
-        .catch(e => ctx.log("table not decided", { what: `${app}: ${e?.message ?? e}` }))
+        .catch(e => ctx.failed("table not decided", e, `${app}: ${e?.message ?? e}`))
         .finally(() => (deciding = null));
       await deciding;
       return st;
@@ -531,7 +531,7 @@ export async function start(ctx) {
         answered = true;
       } catch (e) {
         // SILENT: shown empty, but UNKNOWN — never "not there" (R1: nothing is made over a table not answered for).
-        ctx.log("table not found yet", { what: `${app}: ${e.message}; shown empty, not decided` });
+        ctx.log("table not found yet", { what: `${app}: ${e.message}; shown empty, not decided` }); // (counted in the visit's waits)
         answered = false;
         if (st.s === "unknown") t.absent = true;
         return;
@@ -606,7 +606,7 @@ export async function start(ctx) {
         }
       }
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
-      if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.log("flush failed", { what: `${app}: ${e.message}` }));
+      if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.failed("flush failed", e, `${app}: ${e.message}`));
       t.absent = false;
       st = { s: "present" };
       whenQuiet();
@@ -617,7 +617,7 @@ export async function start(ctx) {
     function whenQuiet() {
       clearTimeout(quiet);
       quiet = setTimeout(() => {
-        if (core.tail_pending(id) > 0) queue = queue.catch(() => {}).then(() => core.tail_pending(id) > 0 && flush()).catch(e => ctx.log("flush failed", { what: `${app}: ${e?.message ?? e}` }));
+        if (core.tail_pending(id) > 0) queue = queue.catch(() => {}).then(() => core.tail_pending(id) > 0 && flush()).catch(e => ctx.failed("flush failed", e, `${app}: ${e?.message ?? e}`));
       }, QUIET_MS + Math.random() * QUIET_MS); // spread: tables quiet together do not flush together
     }
     // ONE STEP of this tail, the one way a tail moves: the prepared step signed by the identity delegate, sent (the
@@ -707,7 +707,7 @@ export async function start(ctx) {
       };
       const current = await assetOf(false);
       // ITS HISTORY kept too (every version it can read back) — never holding up the current tree's keeping.
-      const older = await assetOf(true).catch(e => (ctx.log("history", { what: `${app}: its history not kept: ${e.message}` }), []));
+      const older = await assetOf(true).catch(e => (ctx.failed("history", e, `${app}: its history not kept: ${e.message}`), []));
       const out = { name: app, at: Date.now(), groups: current.length + older.length, history: older.length, blocks: 0, whole: 0, degraded: 0, damaged: 0, missing: 0, put: 0, unmade: 0 };
       for (const g of [...current, ...older]) {
         const there = await Promise.all(g.slots.map(([, c]) => blocks.probe(c, `keeping ${app}`)));
@@ -763,7 +763,7 @@ export async function start(ctx) {
           // The space's retention (0: Off — the log pruned to nothing, the replaced root not kept).
           const days = daysFor(inSpace);
           const l = core.tail_log_root(id, prior, was, now, now - days * 86400e3, days ? HISTORY.roots : 0);
-          if (l) await step(l, "keeping its history").catch(e => ctx.log("history", { what: `${app}: its history not logged: ${e.message}` }));
+          if (l) await step(l, "keeping its history").catch(e => ctx.failed("history", e, `${app}: its history not logged: ${e.message}`));
         }
         return;
       }
@@ -968,7 +968,7 @@ export async function start(ctx) {
       catalogOf: w =>
         tail(w, sp.tables.catalog, {
           space: sp,
-          ...(w === sp.self ? { beforeCreate: () => listWriters(sp, [w]).catch(e => ctx.log("storage", { what: `${sp.name ?? sp.id}: listing this device as a writer: ${e?.message ?? e}` })) } : {}),
+          ...(w === sp.self ? { beforeCreate: () => listWriters(sp, [w]).catch(e => ctx.failed("storage", e, `${sp.name ?? sp.id}: listing this device as a writer: ${e?.message ?? e}`)) } : {}),
         }),
       // DEPARTED writers (removed, banned, left): the space's table `departed` — written by the member who took their
       // nodes out of the group, BEFORE the commit — gives each node's feeds' last sequence then (`heads`), and what
@@ -1019,7 +1019,7 @@ export async function start(ctx) {
           for (const w of b.set)
             if (!copied.has(`${sp.id}|${w}`) && !items.some(i => i?.w === w && i.sealedAt === index.OPEN)) {
               copied.add(`${sp.id}|${w}`);
-              index.spacePoint(sp, "writers", { w }).catch(e => (copied.delete(`${sp.id}|${w}`), ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: listing ${w.slice(0, 8)} for every member: ${e?.message ?? e}` })));
+              index.spacePoint(sp, "writers", { w }).catch(e => (copied.delete(`${sp.id}|${w}`), ctx.failed("storage", e, `${sp.name ?? sp.id.slice(0, 8)}: listing ${w.slice(0, 8)} for every member: ${e?.message ?? e}`)));
             }
           return b;
         })().catch(e => (bags.delete(sp.id), Promise.reject(e))),
@@ -1072,7 +1072,7 @@ export async function start(ctx) {
       const theirs = (owner, known, cat = null) =>
         tail(owner, name, { known, ...(cat ? { catalog: cat } : {}), ...opts, lazy }).catch(e => {
           unopened += 1;
-          ctx.log("feed not read", { what: `${name}: ${owner.slice(0, 12)}…: ${e.message}` });
+          ctx.failed("feed not read", e, `${name}: ${owner.slice(0, 12)}…: ${e.message}`);
           problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`, sp, name);
           return null;
         });
@@ -1141,8 +1141,13 @@ export async function start(ctx) {
           if (f) take(capped(f, cap));
         }
       };
-      const gathering = Promise.all([...others.filter(listed).map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.log("feed not read", { what: `${name}: departed writers: ${e.message}` }))]);
+      const gathering = Promise.all([...others.filter(listed).map(o => gather(o).catch(() => {})), gatherDeparted().catch(e => ctx.failed("feed not read", e, `${name}: departed writers: ${e.message}`))]);
       const settled = soon(gathering, name);
+      // GATHERED: every listed writer's feed tried (not merely shown-after-WAIT.hint): what DECIDES on the table waits
+      // for it (R5) — 10-13: the spaces list "decided" after 1.5 s while the other device's feed was still being read
+      // read empty, and a recovered space showed "Not listed".
+      let gathered = false;
+      gathering.finally(() => (gathered = true));
       // New writers appear in the bag — read again now and then (one read for the whole space).
       if (scope.bag) pollBag(sp, scope, set => set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), gather(o).catch(() => {}))));
       if (scope.departed?.(name)) scope.departedTable().then(d => d.onChange(() => gatherDeparted().catch(() => {})), () => {});
@@ -1166,7 +1171,7 @@ export async function start(ctx) {
           const slow = setTimeout(() => ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page [${lo || "start"}…${hi || "end"}] not answered in ${WAIT.hint / 1000} s` }), WAIT.hint);
           return f.page({ lo, hi, after: before, reverse: true, limit }).then(
             p => (clearTimeout(slow), performance.now() - t0 > WAIT.hint && ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page answered`, ms: Math.round(performance.now() - t0) }), { f, p }),
-            e => (clearTimeout(slow), ctx.log("page slow", { what: `${name}: ${f.owner.slice(0, 12)}…'s page failed: ${e?.message ?? e}` }), null),
+            e => (clearTimeout(slow), ctx.failed("page slow", e, `${name}: ${f.owner.slice(0, 12)}…'s page failed: ${e?.message ?? e}`), null),
           );
         };
         // The same rule as a read: the writers' pages that answered within WAIT.hint shown; a later one, when it comes,
@@ -1251,11 +1256,12 @@ export async function start(ctx) {
         get state() {
           const own = me.state ?? { s: "unknown" };
           if (own.s !== "present" && own.s !== "absent") return own;
+          if (!gathered) return { s: "unknown", why: "writers' feeds still being read" };
           return unopened ? { s: "unreadable", why: `${unopened} writer feed(s) not read here` } : { s: "present" };
         },
         decided: async () => {
           await me.decided?.();
-          await settled;
+          await Promise.race([gathering, new Promise(r => setTimeout(r, WAIT.answer))]);
           return t.state;
         },
         // The tails it is built on (their ids, hex): what reopens it when one did not read.

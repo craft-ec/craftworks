@@ -66,7 +66,7 @@ export async function start(ctx) {
         onclick: async () => {
           b.disabled = true;
           b.textContent = "Asking…";
-          await conversation.joinOpen(d).then(draw, err => ((said.textContent = err.message), (said.hidden = false), (b.disabled = false), (b.textContent = "Join")));
+          await conversation.joinOpen(d).then(draw, err => ((said.textContent = ctx.say(err)), (said.hidden = false), (b.disabled = false), (b.textContent = "Join")));
         },
       });
       box.replaceChildren(h("div", { style: "display:flex;gap:8px" }, b, followButton(d)), said);

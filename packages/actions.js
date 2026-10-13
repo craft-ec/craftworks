@@ -95,7 +95,7 @@ export async function start(ctx) {
       it.counts = { ...(it.counts ?? {}), react: c };
       it.signaled = { ...(it.signaled ?? {}), react: on ? [...mine(), emoji] : [...mine()].filter(x => x !== emoji) };
       draw();
-      await items.signal(it.ref, "react", emoji, { on, outside: await outsideOf(outside) }).catch(e => ctx.log("actions", { what: `not reacted: ${e.message ?? e}` }));
+      await items.signal(it.ref, "react", emoji, { on, outside: await outsideOf(outside) }).catch(e => ctx.failed("actions", e, `not reacted: ${e.message ?? e}`));
     };
     const pick = h("span", { className: "pick", hidden: true }, ...signals.of("react").choices.map(emoji => h("button", { type: "button", textContent: emoji, onclick: e => (e.preventDefault(), (pick.hidden = true), toggle(emoji)) })));
     const draw = () =>
@@ -133,7 +133,7 @@ export async function start(ctx) {
         if (!c[t]) delete c[t];
         it.counts = { ...(it.counts ?? {}), tag: c };
         it.signaled = { ...(it.signaled ?? {}), tag: mine ? (it.signaled.tag ?? []).filter(x => x !== t) : [...(it.signaled?.tag ?? []), t] };
-        await items.signal(it.ref, "tag", t, { on: !mine }).catch(err => ctx.log("actions", { what: `not tagged: ${err.message ?? err}` }));
+        await items.signal(it.ref, "tag", t, { on: !mine }).catch(err => ctx.failed("actions", err, `not tagged: ${err.message ?? err}`));
       };
       b.replaceWith(input);
       input.focus();
@@ -173,7 +173,7 @@ export async function start(ctx) {
   // across every place) and the item's save SIGNAL (`items.signal`: counted where it is). The signal is best effort.
   const setSaved = async (ref, on) => {
     await pins.set(SAVED(ref), on);
-    items.signal(ref, "save", on).catch(e => ctx.log("actions", { what: `save not counted: ${e.message ?? e}` }));
+    items.signal(ref, "save", on).catch(e => ctx.failed("actions", e, `save not counted: ${e.message ?? e}`));
   };
 
   // A COUNT on its button, as TikTok's (`signals`' counted ones: how many people saved, shared): 999, 1.2K, 3.4M.

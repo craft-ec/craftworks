@@ -25,7 +25,7 @@ export async function start(ctx) {
   // THE ACCOUNT'S GROUP on this device moves only through its lifecycle (FOUNDATION.md §3: `account`): made only by a
   // registration on a channel answered absent, joined only by walking a channel read with its group info.
   const life = await ctx.require("lifecycle");
-  const { Fault } = await ctx.require("fault");
+  const { Fault, attempt } = await ctx.require("fault");
   const ME = "me";
   const lifeIs = s => life.state("account", ME).s === s;
   // The account's keys here at last: a session that was KEYLESS is open.
@@ -47,7 +47,7 @@ export async function start(ctx) {
       const rows = t.rows().filter(r => r.value).map(r => r.key).sort();
       for (const k of rows.slice(0, Math.max(0, rows.length - 500))) await t.remove(k);
     } catch (e) {
-      ctx.log("account keys", { what: `key events not kept: ${e?.message ?? e}` });
+      ctx.failed("account keys", e, `key events not kept: ${e?.message ?? e}`);
     }
   }
   // The key events that are PROBLEMS: also into the day's public health bag (`index.health`) — support sees them.
@@ -317,11 +317,18 @@ export async function start(ctx) {
     // and for a words login (an account that exists) read again for up to a minute while it still shows nothing.
     // DECIDED first (FOUNDATION.md §2: asked again with the long wait while the node is silent).
     let chState = (await channel.decided?.())?.s ?? "unknown";
-    for (let i = 0; !fresh && !channel.rows().length && i < 6; i++) {
-      await new Promise(r => setTimeout(r, 10000));
-      await channel.reread?.().catch(() => {});
-      chState = channel.state?.s ?? chState;
-    }
+    // (A words login, the channel still empty: read again — the fault policy's `not-yet` tries, 10 s apart, a minute.)
+    if (!fresh && !channel.rows().length)
+      await attempt(
+        "account keys",
+        "reading the account's key channel",
+        async n => {
+          if (n) await channel.reread?.().catch(() => {});
+          chState = channel.state?.s ?? chState;
+          if (!channel.rows().length) throw new Fault("not-yet", "the account's key channel still empty", { d: { state: chState } });
+        },
+        { policy: { "not-yet": { tries: 7, report: "never" } } },
+      ).catch(() => {});
     const kept = new Set();
     // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
     // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
@@ -345,10 +352,13 @@ export async function start(ctx) {
         // Each epoch's log read FROM THE NETWORK (not as this new node happens to hold it: nothing yet), and an empty
         // one asked twice more before it counts as the newest — a walk cut short joins at an old epoch.
         let entry = await commitFrom(e, secret, true);
-        for (let i = 0; !entry && i < 2; i++) {
-          await new Promise(r => setTimeout(r, 5000));
-          entry = await commitFrom(e, secret, true);
-        }
+        if (!entry)
+          entry = await attempt(
+            "account keys",
+            "reading an epoch's log",
+            async () => (await commitFrom(e, secret, true)) ?? Promise.reject(new Fault("not-yet", "an epoch's log still empty", { d: { epoch: e } })),
+            { policy: { "not-yet": { tries: 2, wait: () => 5000, report: "never" } } },
+          ).catch(() => null);
         if (!entry) return ((walked.stop = `no commit after epoch ${e} (the newest)`), { e, info, secret });
         const c = parse(entry);
         info = c.info ?? info;
@@ -403,7 +413,7 @@ export async function start(ctx) {
       }
       // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
       // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).
-      setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` })));
+      setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`)));
       return;
     }
     throw new Error("the account's group kept moving: joining it again next time");
@@ -543,7 +553,7 @@ export async function start(ctx) {
         // Writes onto the new epoch first (the removed node holds the old ones), then the card: the removed node no
         // longer listed as the account's (what it writes counts for nothing).
         await storage.sealNewest().catch(() => {});
-        await ctx.require("directory").then(d => d.publish()).catch(e => ctx.log("account keys", { what: `the card: ${e.message}` }));
+        await ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
         for (const sp of await space.mine().catch(() => [])) {
           const g = group(sp);
           if (!(await g.ready().catch(() => null))) continue;
@@ -1187,10 +1197,10 @@ export async function start(ctx) {
         const me = await space.account();
         if (me) await d.publish(); // writes only what is missing or changed: key packages, the devices' credentials
       })
-      .catch(e => ctx.log("account keys", { what: `the card: ${e.message}` }));
+      .catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
   const start = () =>
     ready()
-      .then(st => st && !st.removed && (setTimeout(cardReady), setTimeout(() => auditPackages().catch(e => ctx.log("account keys", { what: `AUDIT failed: ${e?.message ?? e}` })), 20000)))
+      .then(st => st && !st.removed && (setTimeout(cardReady), setTimeout(() => auditPackages().catch(e => ctx.failed("account keys", e, `AUDIT failed: ${e?.message ?? e}`)), 20000)))
       .catch(e => ctx.log("account keys", { what: e?.message ?? String(e) }));
   start();
   addEventListener("craftworks:auth", e => {
@@ -1210,7 +1220,7 @@ export async function start(ctx) {
     const t = await spacekeys();
     await t.put(`packages/${id}`, hexOf(mb.packages()));
     await t.put(`offers/${id}`, JSON.stringify(kps));
-    prunePackages().catch(e => ctx.log("account keys", { what: `pruning key packages: ${e.message}` }));
+    prunePackages().catch(e => ctx.failed("account keys", e, `pruning key packages: ${e.message}`));
     return kps;
   }
   // SPENT BATCHES: a batch is off the card once the next one is made; a welcome made from one of its key packages

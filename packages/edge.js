@@ -127,7 +127,7 @@ export async function start(ctx) {
           ctx
             .require("index")
             .then(async index => index.send(did, { kind: on ? "follow" : "unfollow", from: (await (await ctx.require("space")).account()).id, at, ...(cred ? { cred } : {}) }))
-            .catch(e => ctx.log("edge", { what: `telling ${String(did).slice(12, 20)}… of the follow: ${e?.message ?? e}` }));
+            .catch(e => ctx.failed("edge", e, `telling ${String(did).slice(12, 20)}… of the follow: ${e?.message ?? e}`));
       };
       const about = (rel, id) => {
         try {

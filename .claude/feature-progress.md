@@ -2420,6 +2420,16 @@ Build order (FOUNDATION §7):
       (marker survived); fx after the join: /chat and /board load (before: sealed until a reload); direct-link chat shows
       the channel and message (v653). The first try (v653) looped re-showing the page on every keys event (keyless tables
       reopened while still keyless) — fixed before commit.
-- [ ] 7. Apps on faults
+- [x] 7. Apps on faults — `ctx.failed(step, e, what)` (the trace line + a report by the fault's kind) in place of the
+      127 `ctx.log(…${e.message}…)` failure lines across 37 packages; the loader no longer reads log lines for words
+      ("failed", "could not"). `ctx.say(e)` for 26 messages shown to people (a kind's words — log in, still arriving, not
+      answered — else the error's own; plain refusals keep theirs). The private retry loops on `fault.attempt`: the
+      channel wait and the epoch-log reads (keys), an earlier identity build's silence (auth). NOT converted: the ~546
+      `.catch(() => null|[]|{})` reads (each needs its own judgment; R1 keeps writes safe) and statement.js's 40 rounds
+      (token work). FIXED while checking: merged tables decided only once every writer's feed was gathered (a recovered
+      space read "Not listed" — its list decided after 1.5 s); the visit report never waits on the spaces list (phase 6
+      made it wait up to 120 s: pages closed before reporting); one job tick at a time (a resume from RUNNING, reported
+      ×11 — control: the old runner fails the race test). Verified on fx/fy v656–657: recovery complete without reload,
+      visits arrive, no lifecycle bugs; tests 14/14.
 - [ ] 8. Desktop (App Store, Spaces app with enabled capabilities, Settings)
 - [ ] 9. Reset

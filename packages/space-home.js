@@ -90,7 +90,7 @@ export async function mount(ctx, el) {
         }
         await draw();
       } catch (e) {
-        said.textContent = e.message;
+        said.textContent = ctx.say(e);
         said.hidden = false;
       }
     };
@@ -130,7 +130,7 @@ export async function mount(ctx, el) {
               "ul",
               {},
               ...removable.map(a =>
-                h("li", { onclick: () => r.act({ act: "app", app: keyOf(a), on: false }).then(draw, e => ((said.textContent = e.message), (said.hidden = false))) }, `Remove ${a.name}`),
+                h("li", { onclick: () => r.act({ act: "app", app: keyOf(a), on: false }).then(draw, e => ((said.textContent = ctx.say(e)), (said.hidden = false))) }, `Remove ${a.name}`),
               ),
             ),
           )

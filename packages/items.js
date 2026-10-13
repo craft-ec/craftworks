@@ -112,7 +112,7 @@ export async function start(ctx) {
     const all = await space.mine();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
     // A space whose rules do not read here is not a board here — said, never dropped silently.
-    const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), e => (ctx.log("posts", { what: `${sp.name ?? sp.id.slice(0, 8)}: its rules do not read (${e?.message ?? e})` }), false))));
+    const on = await Promise.all(all.map(sp => roles.of(sp).then(async r => (await r.settled, r.apps().some(a => PLACE_APPS.includes(a))), e => (ctx.failed("posts", e, `${sp.name ?? sp.id.slice(0, 8)}: its rules do not read (${e?.message ?? e})`), false))));
     return all.filter((_, i) => on[i]);
   };
   // The SPACE ID an item reference names (`space:<id>/…`), null for a person's item.
@@ -221,7 +221,7 @@ export async function start(ctx) {
             }
             const about = TOP.has(x.kind) ? k : x.kind === "reaction" ? x.item : x.in;
             if (!about || !x.at || x.meta?.unlisted) continue;
-            await listPublic(`space:${sp.id}/${about}`, x, where).catch(e => ctx.log("posts", { what: `listing ${k} in Discover: ${e?.message ?? e}` }));
+            await listPublic(`space:${sp.id}/${about}`, x, where).catch(e => ctx.failed("posts", e, `listing ${k} in Discover: ${e?.message ?? e}`));
           }
         })().finally(() => (syncing = null)));
       const dedupe = (list, key) => {
@@ -572,7 +572,7 @@ export async function start(ctx) {
       Promise.all(
         [...bySpace].map(async ([id, ptrs]) =>
           // A space that does not read: SAID (never a silent empty list).
-          (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(e => (ctx.log("posts", { what: `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}` }), [])),
+          (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(e => (ctx.failed("posts", e, `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}`), [])),
         ),
       ).then(x => x.flat()),
       dids.size ? profilePosts([...dids], [], kinds_, since).catch(() => []) : [],
@@ -680,7 +680,7 @@ export async function start(ctx) {
       const g = await (await ctx.require("circles")).level(meta.level);
       // Its files PRIVATE first (made public with a public post: the teaser carries none; the group re-keys them for
       // its members, as any file brought into a space).
-      await (await ctx.require("files")).publicity(files, null, false).catch(e => ctx.log("posts", { what: `its files kept private: ${e.message}` }));
+      await (await ctx.require("files")).publicity(files, null, false).catch(e => ctx.failed("posts", e, `its files kept private: ${e.message}`));
       const sealed = await submit({ board: g.id, title, body, kind, files, meta, at, write, audience: "members" });
       return submit({ title, body: "", kind, meta: { level: meta.level, gate: { space: g.id, ref: sealed, name: g.name } }, at });
     }
@@ -717,11 +717,11 @@ export async function start(ctx) {
     }
     const self = await me();
     // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
-    await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.log("posts", { what: `its files: ${e.message}` }));
+    await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.failed("posts", e, `its files: ${e.message}`));
     const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta, at })}`;
     // Listed in Discover (its own bag made with it: nobody reading it waits on one that does not exist).
     // UNLISTED (`meta.unlisted`): public — anyone with its link reads it — but never listed in Discover.
-    if (!only && !meta.unlisted) await listPublic(ref, { kind, at }, { did: self }).catch(e => ctx.log("posts", { what: `listing ${ref}: ${e.message}` }));
+    if (!only && !meta.unlisted) await listPublic(ref, { kind, at }, { did: self }).catch(e => ctx.failed("posts", e, `listing ${ref}: ${e.message}`));
     return ref;
   }
 
@@ -887,7 +887,7 @@ export async function start(ctx) {
       if (!it || it.by === (await me()) || it.signaled?.view) return;
       await signal(ref, "view", true, { outside });
     } catch (e) {
-      ctx.log("posts", { what: `a view not kept: ${e.message ?? e}` });
+      ctx.failed("posts", e, `a view not kept: ${e.message ?? e}`);
     }
   }
 
@@ -902,7 +902,7 @@ export async function start(ctx) {
       if (s) await signal(ref, "time", s, { outside });
       if (b) await signal(ref, "data", b, { outside });
     } catch (e) {
-      ctx.log("posts", { what: `time and data not kept: ${e.message ?? e}` });
+      ctx.failed("posts", e, `time and data not kept: ${e.message ?? e}`);
     }
   }
 
@@ -934,7 +934,7 @@ export async function start(ctx) {
       await (await boardRoom(sp))
         .sync()
         .then(() => storage.setUpkeepMark(mark, sig))
-        .catch(e => ctx.log("posts", { what: `${sp.name}: public copies: ${e.message}` }));
+        .catch(e => ctx.failed("posts", e, `${sp.name}: public copies: ${e.message}`));
     }
   }
   // ATTACHED ITEMS (a subtitle on a video): contributed like a comment — in the item's place (a board), or on a
@@ -1082,7 +1082,7 @@ export async function start(ctx) {
   const mentionsTold = async (ref, kind, body) => {
     const me = await space.me();
     const dids = [...new Set([...String(body ?? "").matchAll(/\(person:(did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\)/g)].map(m => m[1]))].filter(d => d !== me);
-    for (const did of dids) await index.send(did, { kind: "mention", ref, itemKind: kind, from: me, text: String(body).slice(0, 280), at: Date.now() }).catch(e => ctx.log("posts", { what: `telling ${did.slice(12, 20)}… of a mention: ${e.message}` }));
+    for (const did of dids) await index.send(did, { kind: "mention", ref, itemKind: kind, from: me, text: String(body).slice(0, 280), at: Date.now() }).catch(e => ctx.failed("posts", e, `telling ${did.slice(12, 20)}… of a mention: ${e.message}`));
   };
   const told = (p, ref, kind, body) => (ref && mentionsTold(ref, kind, body).catch(() => {}), p);
   return {

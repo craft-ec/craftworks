@@ -146,13 +146,23 @@ export async function start(ctx) {
     if (running.has(name)) return running.get(name);
     let timer = null;
     let stopped = false;
+    let ticking = false; // ONE tick at a time (a tick awaits its needs: another must not move the state meanwhile)
     const tick = async () => {
-      if (stopped) return;
-      const s = at("job", name).s;
-      if (s === "RUNNING") return;
+      if (stopped || ticking) return;
+      ticking = true;
+      try {
+        await tickOnce();
+      } finally {
+        ticking = false;
+      }
+    };
+    const tickOnce = async () => {
+      if (at("job", name).s === "RUNNING") return;
       const ok = await Promise.resolve()
         .then(needs)
         .catch(e => `its needs could not be read: ${e?.message ?? e}`);
+      if (stopped) return;
+      const s = at("job", name).s;
       if (ok !== true) {
         if (s !== "PAUSED") transition("job", name, "pause", { why: String(ok).slice(0, 120) });
         return;

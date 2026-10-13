@@ -140,7 +140,7 @@ export async function start(ctx) {
         given.set(ref, true);
         if (due) items.used(ref, cur);
       }
-    }).catch(e => ctx.log("usage", { what: `not written: ${e?.message ?? e}` })));
+    }).catch(e => ctx.failed("usage", e, `not written: ${e?.message ?? e}`)));
   const given = new Map(); // the items this page counted (given on leaving)
   const life = await ctx.require("lifecycle");
   life.job("usage-flush", { every: 30000, delay: 30000, run: () => pending.size && flush() });
@@ -205,7 +205,7 @@ export async function start(ctx) {
       if (kept.length && key(kept) !== key(on)) await directory.setContributions(kept);
       if (kept.length) await listIn(kept);
     } catch (e) {
-      ctx.log("usage", { what: `contributions not on the card: ${e?.message ?? e}` });
+      ctx.failed("usage", e, `contributions not on the card: ${e?.message ?? e}`);
     }
   }, 15000);
   // THE LEVEL (rewards §5a): FREE, PRO or VIP by what this person gives NOW — today's share of their active
@@ -468,7 +468,7 @@ export async function start(ctx) {
     return { month: m, creator: mine.creator, carrier: mine.carrier, total: (units(mine.creator) + units(mine.carrier)) / UNIT, from: l.contributors, ledger: l };
   }
   // Kept current while any page is open: a minute after it is up, then hourly (a finished day final once written).
-  const publishing = () => publishStatements().catch(e => ctx.log("usage", { what: `statements not published: ${e?.message ?? e}` }));
+  const publishing = () => publishStatements().catch(e => ctx.failed("usage", e, `statements not published: ${e?.message ?? e}`));
   life.job("usage-statements", { every: 3600000, delay: 60000, run: publishing });
   // THE LEVEL AHEAD: each level and its LAST day, from today, as the contributions run out — [{ id, name, until }].
   async function levelPlan() {

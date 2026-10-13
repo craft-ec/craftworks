@@ -104,7 +104,7 @@ export async function start(ctx) {
         await create(it, { name: name.value.trim(), price: Number(price.value), cap: Number(cap.value), numbered: numbered.checked, royaltyBps: Math.round(Number(royalty.value) * 100) });
         changed?.();
       } catch (e) {
-        said.textContent = e.message ?? String(e);
+        said.textContent = ctx.say(e);
         go.disabled = false;
       }
     };
@@ -137,7 +137,7 @@ export async function start(ctx) {
                 b.textContent = `Bought #${got.first}`;
                 changed?.();
               } catch (err) {
-                said.textContent = err.message ?? String(err);
+                said.textContent = ctx.say(err);
                 b.disabled = false;
               }
             };

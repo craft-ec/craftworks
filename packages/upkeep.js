@@ -25,22 +25,22 @@ export async function start(ctx) {
     try {
       const me = await space.account();
       if (!me) return;
-      await absorb(me).catch(e => ctx.log("upkeep", { what: `what the delegate did: ${e.message}` }));
+      await absorb(me).catch(e => ctx.failed("upkeep", e, `what the delegate did: ${e.message}`));
       // THE CARD as it should be (once a page): its key packages ones this account answers — none means every welcome
       // to it fails — a fresh set put there otherwise (whoever invites next picks one of them).
       if (!renewed) {
         renewed = true;
-        await (await ctx.require("directory")).publish().catch(e => ((renewed = false), ctx.log("upkeep", { what: `the card: ${e.message}` })));
-        await conversation.askStuck().catch(e => ctx.log("upkeep", { what: `requests let in, never in: ${e.message}` }));
+        await (await ctx.require("directory")).publish().catch(e => ((renewed = false), ctx.failed("upkeep", e, `the card: ${e.message}`)));
+        await conversation.askStuck().catch(e => ctx.failed("upkeep", e, `requests let in, never in: ${e.message}`));
       }
       // WELCOMES KEPT UNSENT (their commit made, the send failed): sent again, on their own wait (`conversation`).
-      await conversation.resendWelcomes().catch(e => ctx.log("upkeep", { what: `welcomes kept to send again: ${e.message}` }));
-      const joined = await conversation.accept().catch(e => (ctx.log("upkeep", { what: `the inbox: ${e.message}` }), []));
+      await conversation.resendWelcomes().catch(e => ctx.failed("upkeep", e, `welcomes kept to send again: ${e.message}`));
+      const joined = await conversation.accept().catch(e => (ctx.failed("upkeep", e, `the inbox: ${e.message}`), []));
       if (joined.length) ctx.log("upkeep", { what: `joined ${joined.length} space(s) from the inbox` });
       // BLOG: this person's scheduled drafts published when due, and approved ones (`blog-press`) — by any page open.
-      await (await ctx.require("blog-press")).publishDue().catch(e => ctx.log("upkeep", { what: `blog drafts: ${e.message}` }));
+      await (await ctx.require("blog-press")).publishDue().catch(e => ctx.failed("upkeep", e, `blog drafts: ${e.message}`));
       // THE NODE's list first (before each space's slower work): what it keeps with no page open.
-      await mandate(me).catch(e => ctx.log("upkeep", { what: `the mandate: ${e.message}` }));
+      await mandate(me).catch(e => ctx.failed("upkeep", e, `the mandate: ${e.message}`));
       // One space at a time, each once the node is idle (BACKGROUND: a page's reads first).
       const node = await ctx.require("node");
       const servers = (await space.mine()).filter(s => s.kind === "server");
@@ -52,52 +52,52 @@ export async function start(ctx) {
         // REMOVED from it (its group says so): no longer in this person's list — never left shown as theirs.
         if (await (await ctx.require("keys")).group(sp).removed().catch(() => false)) {
           (await ctx.require("lifecycle")).become("space", sp.id.slice(0, 12), "removed", {});
-          await space.forget(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }));
+          await space.forget(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: ${e.message}`));
           continue;
         }
         // BEHIND on its keys (a welcome onto an older branch): the owner and admins asked to welcome this node onto
         // theirs, once each load — before anything that needs the acts this node cannot read yet.
         // (Made SAFE 10-06: asked only after 10 minutes behind, and answered only when the asker is confirmed behind.)
-        await conversation.catchUp(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: catching up: ${e.message}` }));
+        await conversation.catchUp(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: catching up: ${e.message}`));
         // What this page cannot read here, reported into the space (seen by any member on Members & roles).
-        await conversation.reportReads(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: reporting reads: ${e.message}` }));
+        await conversation.reportReads(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: reporting reads: ${e.message}`));
         const self = await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) }));
         seen.push(self);
         // ITS MEMBERSHIP HERE, as a lifecycle state (FOUNDATION.md §3: `space`).
         const life = await ctx.require("lifecycle");
         const ev = self.why ? "not-held" : self.e == null ? "not-held" : self.oe != null && self.e < self.oe ? "behind" : self.on === false ? "off-branch" : self.u ? "unreadable" : "held";
         life.become("space", sp.id.slice(0, 12), ev, { e: self.e, oe: self.oe, u: self.u, ...(self.why ? { why: self.why } : {}) });
-        await conversation.observe(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: observing members: ${e.message}` }));
+        await conversation.observe(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: observing members: ${e.message}`));
         const r = await roles.of(sp).catch(() => null);
         // AN OPEN SPACE's roster public (the owner, once a page): askers outside learn they were let in.
         if (r && !published.has(sp.id) && r.role(me.id) === "owner" && r.policy("", "join") === "anyone") {
           published.add(sp.id);
-          await r.publish().catch(e => ctx.log("upkeep", { what: `${sp.name}: publishing its roster: ${e.message}` }));
+          await r.publish().catch(e => ctx.failed("upkeep", e, `${sp.name}: publishing its roster: ${e.message}`));
         }
         // The acts hold in the group: whoever is banned, removed or has left and is still in it, out — by ANY member
         // (the acts already decided it; the group's one order refuses a second commit of the same removal).
         if (r && !r.left && r.role(me.id)) {
-          const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.log("upkeep", { what: `${sp.name}: bans: ${e.message}` }), 0));
+          const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.failed("upkeep", e, `${sp.name}: bans: ${e.message}`), 0));
           if (n) ctx.log("upkeep", { what: `${sp.name}: ${n} banned device(s) taken out of the group` });
           // A LEVEL GROUP: whoever's card no longer reaches its level, taken out (in turn).
-          await conversation.lapse(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: lapses: ${e.message}` }));
+          await conversation.lapse(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: lapses: ${e.message}`));
           // A FORK's heal: members on another branch of the group's keys welcomed back onto the owner's (by any member
           // on it — nothing new is let in: only who is a member already).
-          const fixed = await conversation.repair(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: repair: ${e.message}` }), []));
+          const fixed = await conversation.repair(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: repair: ${e.message}`), []));
           if (fixed.length) ctx.log("upkeep", { what: `${sp.name}: ${fixed.length} member(s) on another branch welcomed back` });
           // AUDIENCES (a restricted channel's, a post's: a role, admins, chosen people): in step with who passes now — by
           // their maker, or an admin in them while the maker is away.
-          await conversation.keepReaders(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: readers: ${e.message}` }));
+          await conversation.keepReaders(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: readers: ${e.message}`));
         }
         if (!r?.can(me.id, "invite")) continue;
         // A member's ask from behind (the space's STUCK bag): answered here while this page is open — its node stands
         // aside meanwhile.
-        const again = await conversation.answerStuck(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: stuck asks: ${e.message}` }), []));
+        const again = await conversation.answerStuck(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: stuck asks: ${e.message}`), []));
         if (again.length) ctx.log("upkeep", { what: `${sp.name}: ${again.length} member(s) welcomed again from behind` });
         // In by the acts, not in the group: added (in turn).
-        const added = await conversation.reconcile(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: reconcile: ${e.message}` }), []));
+        const added = await conversation.reconcile(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: reconcile: ${e.message}`), []));
         if (added.length) ctx.log("upkeep", { what: `${added.length} added to ${sp.name} as its acts say` });
-        const let_in = await conversation.admit(sp).catch(e => (ctx.log("upkeep", { what: `${sp.name}: ${e.message}` }), []));
+        const let_in = await conversation.admit(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: ${e.message}`), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
       }
       // THE HEARTBEAT: this page open, its version, and its state in each space (a member who stops beating, or whose
@@ -108,7 +108,7 @@ export async function start(ctx) {
       await (await ctx.require("circles")).sync().catch(e => ctx.log("upkeep", { what: `circles: ${e?.message ?? (typeof e === "object" ? JSON.stringify(e) : String(e))}${e?.stack ? ` (${String(e.stack).split("\n")[1]?.trim() ?? ""})` : ""}` }));
       // Boards: what this person wrote is public exactly while its board reads in public (a board made public shows
       // what was written before; one made private takes it back).
-      await (await ctx.require("items")).syncPublic().catch(e => ctx.log("upkeep", { what: `boards: ${e.message}` }));
+      await (await ctx.require("items")).syncPublic().catch(e => ctx.failed("upkeep", e, `boards: ${e.message}`));
     } finally {
       running = false;
     }
@@ -170,7 +170,7 @@ export async function start(ctx) {
       const members = [...new Set([...(r?.members() ?? []).map(m => m.did), ...inGroup])];
       // The key packages its members (and their nodes) used, mirrored into this account's `keypacks` (`shared:<tag>`):
       // handed below as spent with this account's own — a package is spent for every space once any member used it.
-      await conversation.mirrorShared(sp).catch(e => ctx.log("upkeep", { what: `${sp.name}: key packages used there: ${e?.message ?? e}` }));
+      await conversation.mirrorShared(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: key packages used there: ${e?.message ?? e}`));
       // Its STUCK bag made (once a page): the delegate reads it every round, and never asks for one not made.
       if (!stuckBags.has(sp.id)) await index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id), () => {});
       spaces.push({

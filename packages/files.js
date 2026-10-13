@@ -381,7 +381,7 @@ export async function start(ctx) {
                 try {
                   d.add(j, state);
                 } catch (e) {
-                  ctx.log("files", { what: `${ref.name}: a fragment refused (${e.message ?? e})` });
+                  ctx.failed("files", e, `${ref.name}: a fragment refused (${e.message ?? e})`);
                 }
             }
             if (d.done() || --left === 0) resolve();
@@ -480,7 +480,7 @@ export async function start(ctx) {
     await setRow(sp, { ...kept, key: hex(key), root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h, n });
     // The OLD pieces BURNED — once no row of the space still names that key — when they were this space's (keyed
     // under its salt `n`; a public or adopted file's are not this space's to burn).
-    if (row.b && row.n >= 0 && row.key !== hex(key) && !(await rows(sp)).some(r => r.key === row.key)) await burn_(sp, { ...row, x: oldSecret }, old, f).catch(e => ctx.log("files", { what: `${row.id.slice(0, 8)}…: burning its old pieces: ${e.message ?? e}` }));
+    if (row.b && row.n >= 0 && row.key !== hex(key) && !(await rows(sp)).some(r => r.key === row.key)) await burn_(sp, { ...row, x: oldSecret }, old, f).catch(e => ctx.failed("files", e, `${row.id.slice(0, 8)}…: burning its old pieces: ${e.message ?? e}`));
   }
 
   // BURN every piece of a file (its root, its index, each generation's listed fragments), with the secret its space's

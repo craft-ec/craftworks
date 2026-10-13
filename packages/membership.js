@@ -110,7 +110,7 @@ export async function start(ctx) {
     const me = await auth.check();
     await auth.identity.removeDevice(me.didBytes, words, await credentials(index));
     const st = await keys.remove(index);
-    await storage.adopt(node).catch(e => ctx.log("members", { what: `adopting ${node.slice(0, 12)}…'s rows: ${e.message}` }));
+    await storage.adopt(node).catch(e => ctx.failed("members", e, `adopting ${node.slice(0, 12)}…'s rows: ${e.message}`));
     await (await storage.table(MEMBERS)).put(`x/${node}`, JSON.stringify({ epoch: st.epoch, at: Date.now() }));
     cache = null;
     ctx.log("members", { what: `${node.slice(0, 12)}… removed at epoch ${st.epoch}: told in this node's members feed` });

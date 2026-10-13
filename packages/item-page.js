@@ -51,7 +51,7 @@ export async function start(ctx) {
       if (ed.busy()) return ((said.textContent = "Still sending the files: a moment…"), (said.hidden = false));
       save.disabled = true;
       const tags = tg.value();
-      await items.editItem(it.ref, ed.value().trim(), { files: ed.files(), meta: { ...(it.meta ?? {}), tags } }).then(done, e => ((said.textContent = e.message ?? String(e)), (said.hidden = false)));
+      await items.editItem(it.ref, ed.value().trim(), { files: ed.files(), meta: { ...(it.meta ?? {}), tags } }).then(done, e => ((said.textContent = ctx.say(e)), (said.hidden = false)));
       save.disabled = false;
     };
     // ITS HISTORY where it is edited (`history`): an earlier version restored instead of saving this.
@@ -89,7 +89,7 @@ export async function start(ctx) {
       if (usage.reaches(mine.id, it.meta.level)) {
         const conversation = await ctx.require("conversation");
         const asked = (await conversation.askedCodes().catch(() => [])).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
-        if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.log("item", { what: `asking into ${gate.space.slice(0, 8)}: ${e.message}` }));
+        if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.failed("item", e, `asking into ${gate.space.slice(0, 8)}: ${e.message}`));
         about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · asked, waiting` }));
       } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/wallet/contribute", textContent: "Contribute (Wallet)" }));
       return h("div", { className: "cw-page" }, h("h1", { textContent: it.title || "" }), about);

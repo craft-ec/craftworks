@@ -42,7 +42,7 @@ export async function start(ctx) {
       const nodes = r.nodesOf(did);
       if (!nodes.length && act !== "ban") throw new Error("they are not in this space");
       await r.act({ act, did, nodes: await directory.devices(did) });
-      if (nodes.length) await departed(r.space, did).catch(e => ctx.log("moderation", { what: `where their feeds stand: ${e.message}` }));
+      if (nodes.length) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
       if (nodes.length) await keys.group(r.space).remove(nodes.map(n => n.index));
       await r.refresh();
     }
@@ -60,7 +60,7 @@ export async function start(ctx) {
         const out = [...new Set([...r.bannedList(), ...r.goneList()])].filter(did => r.nodesOf(did).length);
         const nodes = out.flatMap(did => r.nodesOf(did));
         if (!nodes.length) return 0;
-        for (const did of out) await departed(r.space, did).catch(e => ctx.log("moderation", { what: `where their feeds stand: ${e.message}` }));
+        for (const did of out) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
         await keys.group(r.space).remove(nodes.map(n => n.index));
         await r.refresh();
         return nodes.length;

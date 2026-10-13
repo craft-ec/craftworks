@@ -152,7 +152,7 @@ export async function mount(ctx, el) {
       said.hidden = true;
       const v = placeSel.value;
       const place = v === "with" ? undefined : v === "own" ? null : mine.find(s => s.id === v);
-      await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim(), ...(file ? { file } : {}), ...(place !== undefined ? { place } : {}) }).then(draw, err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
+      await subs.add(ref, src, { label: f.elements.label.value.trim(), lang: f.elements.lang.value.trim(), ...(file ? { file } : {}), ...(place !== undefined ? { place } : {}) }).then(draw, err => ((said.textContent = ctx.say(err)), (said.hidden = false)));
     };
     const it = itemNow ?? (await itemOf(ref));
     return h("div", {}, h("h3", {}, "For ", file ? `${file.name} in ` : "", h("a", { href: file ? postHref(ref) : watchHref(ref, it?.kind), textContent: `${file ? "" : "▶ "}${it?.title ?? "an item"}` })), list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }), f);
@@ -174,7 +174,7 @@ export async function mount(ctx, el) {
       h(
         "div",
         { className: "row" },
-        h("button", { className: "go", type: "button", textContent: "Save", onclick: async () => ((said.textContent = "Saving…"), await subs.update(ref, { label: label.value.trim(), lang: lang.value.trim(), text: text.value }).then(() => (said.textContent = "Saved."), e => (said.textContent = e.message))) }),
+        h("button", { className: "go", type: "button", textContent: "Save", onclick: async () => ((said.textContent = "Saving…"), await subs.update(ref, { label: label.value.trim(), lang: lang.value.trim(), text: text.value }).then(() => (said.textContent = "Saved."), e => (said.textContent = ctx.say(e)))) }),
         h("button", { type: "button", textContent: "Export .vtt", onclick: () => download(subs.toVtt(text.value), `${label.value || "subtitles"}.vtt`, "text/vtt") }),
         h("button", { type: "button", textContent: "Export .srt", onclick: () => download(subs.toSrt(text.value), `${label.value || "subtitles"}.srt`, "application/x-subrip") }),
         h("button", { type: "button", textContent: "Delete", onclick: async () => (await subs.remove(ref), (location.hash = "#/caption")) }),

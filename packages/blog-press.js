@@ -144,7 +144,7 @@ export async function start(ctx) {
   // What a published copy carries: the draft's tags and cover, and where it came from (never its draft state).
   const publishedMeta = (d, extra = {}) => ({ ...(d.meta?.tags?.length ? { tags: d.meta.tags } : {}), ...(d.meta?.cover ? { cover: d.meta.cover } : {}), ...(blogOf(d).level ? { level: blogOf(d).level } : {}), blog: { from: d.id, ...extra } });
   // Its FILES, in a space: public exactly when what is published there is (a draft's were kept to the space's members).
-  const filesFor = async (d, sp, pub) => sp && (await ctx.require("files")).publicity(d.files, sp, pub).catch(e => ctx.log("blog", { what: `its files: ${e.message}` }));
+  const filesFor = async (d, sp, pub) => sp && (await ctx.require("files")).publicity(d.files, sp, pub).catch(e => ctx.failed("blog", e, `its files: ${e.message}`));
   const placeOf = async d => {
     const id = blogOf(d).place;
     if (!id) return null;
@@ -199,7 +199,7 @@ export async function start(ctx) {
     const audience = b.audience === "public" && !(await items.publicIn(sp, "post")) ? "members" : b.audience || "members";
     await filesFor(d, sp, audience === "public");
     const ref = await items.submit({ board: sp.id, kind: "post", title: d.title, body: d.body, files: d.files, audience, write: b.write ?? null, meta: publishedMeta(d, { approved: word.by }) });
-    await items.remove(copy.ref).catch(e => ctx.log("blog", { what: `the review copy kept: ${e.message}` }));
+    await items.remove(copy.ref).catch(e => ctx.failed("blog", e, `the review copy kept: ${e.message}`));
     await items.remove(d.ref);
     return ref;
   }
@@ -223,7 +223,7 @@ export async function start(ctx) {
             if (typeof ref === "string") ctx.log("blog", { what: `approved and published: ${ref}` });
           }
         } catch (e) {
-          ctx.log("blog", { what: `draft ${d.id}: ${e.message ?? e}` });
+          ctx.failed("blog", e, `draft ${d.id}: ${e.message ?? e}`);
         }
       }
     })().finally(() => (running = null)));

@@ -116,7 +116,8 @@ export async function start(ctx) {
   };
   const say = e => {
     const f = classify(e);
-    return f.kind === "refused-expected" || f.kind === "refused" ? f.message : WORDS[f.kind] ?? `Something went wrong: ${f.message}`;
+    // (A failure with no words of its kind says its own: the refusals apps throw as plain errors read as they were.)
+    return WORDS[f.kind] ?? f.message;
   };
   const present = (el, e) => ((el.textContent = say(e)), el);
 

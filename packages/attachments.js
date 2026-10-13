@@ -152,7 +152,7 @@ export async function start(ctx) {
     // who reads it is who reads this space.
     function take(ref) {
       const pubNow = typeof pub === "function" ? !!pub() : pub;
-      files.adopt(ref, space, { app: from?.app ?? null, pub: pubNow }).then(ready, e => ctx.log("attachments", { what: `${ref.name}: ${e.message ?? e}` }));
+      files.adopt(ref, space, { app: from?.app ?? null, pub: pubNow }).then(ready, e => ctx.failed("attachments", e, `${ref.name}: ${e.message ?? e}`));
     }
     function ready(ref, { quiet = false } = {}) {
       if (items.some(i => i.ref && (i.ref.root ?? i.ref.inline) === (ref.root ?? ref.inline))) return;
@@ -252,7 +252,7 @@ export async function start(ctx) {
         setTimeout(() => URL.revokeObjectURL(url), 60000);
       }
     } catch (e) {
-      note.textContent = e.message ?? String(e);
+      note.textContent = ctx.say(e);
     }
   }
 
@@ -264,7 +264,7 @@ export async function start(ctx) {
       className: "save",
       title: "Save to your Drive",
       textContent: "Save to Drive",
-      onclick: e => files.adopt(r, null, { app: "drive" }).then(ref => drive.add(ref, { from: { saved: true } })).then(() => ((e.target.textContent = "In Drive ✓"), (e.target.disabled = true)), err => (note.textContent = err.message)),
+      onclick: e => files.adopt(r, null, { app: "drive" }).then(ref => drive.add(ref, { from: { saved: true } })).then(() => ((e.target.textContent = "In Drive ✓"), (e.target.disabled = true)), err => (note.textContent = ctx.say(err))),
     });
 
   // THE FILES of an item (what its text does not show inline): each the file look (`cards`: the same as in Drive, as

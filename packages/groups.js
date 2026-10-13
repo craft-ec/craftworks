@@ -41,9 +41,9 @@ export async function start(ctx) {
     await r.settled;
     const keepIn = new Set([me, r.owner].filter(Boolean));
     const have = new Set(r.members().map(m => m.did));
-    for (const did of want) if (!have.has(did) && !keepIn.has(did)) await conversation.invite(sp, did).catch(e => ctx.log("groups", { what: `${sp.name}: ${did.slice(12, 20)}… not added yet: ${e.message}` }));
+    for (const did of want) if (!have.has(did) && !keepIn.has(did)) await conversation.invite(sp, did).catch(e => ctx.failed("groups", e, `${sp.name}: ${did.slice(12, 20)}… not added yet: ${e.message}`));
     const mod = await (await ctx.require("moderation")).of(sp);
-    for (const did of have) if (!want.has(did) && !keepIn.has(did)) await mod.remove(did).catch(e => ctx.log("groups", { what: `${sp.name}: ${did.slice(12, 20)}… not removed yet: ${e.message}` }));
+    for (const did of have) if (!want.has(did) && !keepIn.has(did)) await mod.remove(did).catch(e => ctx.failed("groups", e, `${sp.name}: ${did.slice(12, 20)}… not removed yet: ${e.message}`));
   }
   return { of, find, keep, keyOf };
 }

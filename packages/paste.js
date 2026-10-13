@@ -44,7 +44,7 @@ export async function mount(ctx, el) {
       type: "button",
       className: "cw-btn",
       textContent: "Copy link",
-      onclick: () => navigator.clipboard?.writeText(items.linkOf(ref, "paste")).then(() => (copy.textContent = "Copied"), e => (said.textContent = e.message)),
+      onclick: () => navigator.clipboard?.writeText(items.linkOf(ref, "paste")).then(() => (copy.textContent = "Copied"), e => (said.textContent = ctx.say(e))),
     });
     root.replaceChildren(h("div", { className: "tools" }, h("a", { href: "#/paste", textContent: "← Paste" }), h("a", { className: "cw-btn", href: `#/paste/r/${encodeURIComponent(ref)}`, textContent: "Raw" }), copy, said), page);
   }

@@ -143,7 +143,7 @@ export async function mount(ctx, el) {
             status.textContent = `Sent ${amount.value.trim()} ${v.name} to ${directory.shown(r.to)}, privately.`;
             draw();
           } catch (e) {
-            said.textContent = e.message ?? String(e);
+            said.textContent = ctx.say(e);
             go.disabled = false;
           }
         };
@@ -159,7 +159,7 @@ export async function mount(ctx, el) {
               receive();
               draw();
             } catch (e) {
-              said.textContent = e.message ?? String(e);
+              said.textContent = ctx.say(e);
               move.disabled = false;
             }
           };
@@ -220,7 +220,7 @@ export async function mount(ctx, el) {
         await table.put(id, JSON.stringify({ name: v.name }));
         draw();
       } catch (e) {
-        said.textContent = e.message ?? String(e);
+        said.textContent = ctx.say(e);
       }
     };
     const rows = table.rows();
@@ -295,7 +295,7 @@ export async function mount(ctx, el) {
   const body = h("div");
   root.append(status, body);
   const me = await (await ctx.require("auth")).check();
-  purse.ensureCard(me).catch(e => ctx.log("wallet", { what: `the card's pay keys: ${e.message ?? e}` }));
+  purse.ensureCard(me).catch(e => ctx.failed("wallet", e, `the card's pay keys: ${e.message ?? e}`));
   // The VIEW: a token's page (`#/wallet/t/<id>`) or the list.
   const opened = /^t\/([0-9a-f]{64})$/.exec(ctx.sub ?? "")?.[1] ?? null;
   // THE TABS: Tokens (balances, a token's page), Contribute (what you give: your level, its split), Earnings (the
@@ -326,7 +326,7 @@ export async function mount(ctx, el) {
       else if (waited || r.got) status.textContent = r.got ? "Received." : "";
       waited = waiting > 0;
     } catch (e) {
-      ctx.log("wallet", { what: `receiving: ${e.message ?? e}` });
+      ctx.failed("wallet", e, `receiving: ${e.message ?? e}`);
     } finally {
       busy = false;
     }

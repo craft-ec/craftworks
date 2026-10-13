@@ -57,11 +57,12 @@ export async function run(boot) {
     visit.sentRoutes = visit.routes.length;
     const sp = await require("space").catch(() => null);
     const me = sp ? await sp.me().catch(() => undefined) : undefined;
-    const spaces = me ? await sp.mine().then(l => l.length, e => `failed: ${String(e?.message ?? e).slice(0, 60)}`) : null;
+    // (Never waited on: a report must go before the page is closed — the spaces as their lifecycles stand now.)
     const waits = loaded.has("node") ? await require("node").then(n => n.waits?.() ?? [], () => []) : [];
     // Where each lifecycle ENDED UP (FOUNDATION.md §3): an account group JOIN_FAILED, a session OPEN_KEYLESS — outcomes
     // even when nothing threw.
     const life = loaded.has("lifecycle") ? await require("lifecycle").then(l => l.snapshot(), () => null) : null;
+    const spaces = me ? Object.keys(life?.space ?? {}).length : null;
     const ix = await (healthIndex ??= require("index").catch(() => null));
     await ix?.health?.({ k: "visit", s: "page", to: `${visit.pid}#${visit.n}`, why: "", d: { member: me === undefined ? "unknown" : !!me, spaces, boot: visit.boot, up: Math.round(performance.now() - t00), routes: visit.routes.slice(-12), faults: visit.faults, reconnects: visit.reconnects, waits, life } }).catch(() => {});
   }
@@ -119,10 +120,10 @@ export async function run(boot) {
   let faultNow = null; // the service, once loaded: `fail` classifies at once
   // The LIFECYCLES (`lifecycle`), once the manifest names it: each body component's app machine moved through it.
   const lifeOf = () => (manifest?.packages?.lifecycle ? require("lifecycle").catch(() => null) : null);
-  const met = (source, e, via) =>
+  const met = (source, e, via, extra = {}) =>
     fault().then(f => {
       if (f) {
-        const c = f.met(source, e, { via, stack: stackTop(e) || undefined });
+        const c = f.met(source, e, { via, stack: stackTop(e) || undefined, ...extra });
         visit.faults[c.kind] = (visit.faults[c.kind] ?? 0) + 1;
         return c;
       }
@@ -137,14 +138,16 @@ export async function run(boot) {
   };
   addEventListener("error", e => met(working.at(-1) || ctx.route, e.error ?? new Error(e.message), "page-error"));
   addEventListener("unhandledrejection", e => met(working.at(-1) || ctx.route, e.reason, "page-rejection"));
-  // A LOG LINE THAT SAYS SOMETHING FAILED (the words every package already uses for it), from the package that said it.
-  // (Not a COUNT of them — "0 refused" in a tally says nothing failed.)
-  const FAILED = /(?<!\d )\b(could not|couldn't|failed|refused|cannot|can't|not (loaded|saved|sent|put|stored|played|opened))\b/i;
-  ctx.log = (step, detail = {}) => {
-    boot.log(step, detail);
-    const what = typeof detail?.what === "string" ? detail.what : "";
-    if (step !== "health" && (step === "FAILED" || FAILED.test(what))) report("log-failed", step, what);
+  // A FAILURE MET (`ctx.failed(step, error, what)`): said in the trace as any line, and REPORTED by its fault's kind
+  // (FOUNDATION.md §4) — the one way a package says something failed. (Log lines are no longer read for words like
+  // "failed": a failure is reported because it IS one, not because of how it is worded.)
+  ctx.log = (step, detail = {}) => boot.log(step, detail);
+  ctx.failed = (step, e, what = "") => {
+    boot.log(step, { what: what || String(e?.message ?? e) });
+    met(step, e, "failed", what ? { doing: String(what).slice(0, 120) } : {});
   };
+  // WHAT A PERSON READS for a failure: its kind's words (`fault.say`), never a stack.
+  ctx.say = e => faultNow?.say(e) ?? String(e?.message ?? e);
 
   // A package, fetched and checked by the wrapper, the first time anything asks for it. What it gives depends on its
   // kind: `bytes` (wasm, data), `module` (an imported JS module), `service` (a module whose `start(ctx)` runs once and

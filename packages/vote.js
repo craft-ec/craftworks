@@ -131,7 +131,7 @@ export async function mount(ctx, el) {
     await learnNames([...S.members(), p.by, ...(v.final ? [v.final.by] : []), ...(v.outcome?.did ? [v.outcome.did] : [])]);
     // THE OUTCOME applied by the first page of one who may (`mayApply`) — once finalized PASSED and checked.
     if (v.outcome && v.final?.final.result.passed && !v.applied && v.mayApply && !["forged", "mismatch"].includes(v.verified?.status)) {
-      await S.applyOutcome(p).catch(e => ctx.log("vote", { what: `applying ${p.ref}'s outcome: ${e.message}` }));
+      await S.applyOutcome(p).catch(e => ctx.failed("vote", e, `applying ${p.ref}'s outcome: ${e.message}`));
       v = await (await V.inSpace(sp)).proposalView(p);
     }
     const said = h("p", { className: "said" });

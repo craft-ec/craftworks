@@ -60,7 +60,7 @@ export async function start(ctx) {
         img.src = URL.createObjectURL(blob);
         note.textContent = "";
       } catch (e) {
-        note.textContent = e.message ?? String(e);
+        note.textContent = ctx.say(e);
       }
     };
     return { el, start, media: null };
@@ -141,7 +141,7 @@ export async function start(ctx) {
         const ds = new Set((await Promise.all(roots.map(r => keep.keepers(r).catch(() => [])))).flat());
         if (ds.size && el.isConnected) kept.textContent = ` · kept by ${ds.size} ${ds.size === 1 ? "person" : "people"}`;
       }, () => {});
-      if (f && audio) view.prepare().catch(e => (view.note.textContent = e.message ?? String(e)));
+      if (f && audio) view.prepare().catch(e => (view.note.textContent = ctx.say(e)));
       else if (f)
         start.onclick = () => {
           start.remove();
@@ -149,7 +149,7 @@ export async function start(ctx) {
           if (strip) c.strip(strip);
           if (levels) c.levels(...levels);
           if (label) c.level(label);
-          view.play({ autoplay: true }).catch(e => (view.note.textContent = e.message ?? String(e)));
+          view.play({ autoplay: true }).catch(e => (view.note.textContent = ctx.say(e)));
         };
       scrubStrip().catch(() => {});
     };

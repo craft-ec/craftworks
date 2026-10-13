@@ -432,7 +432,7 @@ This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came
         }
       };
       pass.querySelector(".clear").onclick = async () => {
-        await recovery.clear().catch(err => (recSaid.textContent = err.message));
+        await recovery.clear().catch(err => (recSaid.textContent = ctx.say(err)));
         recSaid.textContent = "Removed.";
         recState();
       };

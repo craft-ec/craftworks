@@ -35,7 +35,7 @@ export async function start(ctx) {
       }
       frontier = next;
     }
-    vouch.relay(items).catch(e => ctx.log("reputation", { what: `relaying: ${e.message ?? e}` }));
+    vouch.relay(items).catch(e => ctx.failed("reputation", e, `relaying: ${e.message ?? e}`));
     const now = (await ctx.require("beacon")).status().height ?? 0;
     let result = null;
     for (let round = 0; round < 6 && !result; round++) {

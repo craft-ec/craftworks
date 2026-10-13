@@ -101,7 +101,7 @@ export async function start(ctx) {
     if (rec.error) rec = await failed(key, rec);
     // ITS KEEPER too (owner 10-07): the uploader's node holds the original — said in the keepers bag, as a viewer who
     // keeps it is, so the data others fetch of it pays its holders (rewards §2), not "no keeper".
-    else if (rec.gens && rec.whole === rec.gens) await claim(row.root).catch(e => ctx.log("keep", { what: `not said in the keepers bag: ${e?.message ?? e}` }));
+    else if (rec.gens && rec.whole === rec.gens) await claim(row.root).catch(e => ctx.failed("keep", e, `not said in the keepers bag: ${e?.message ?? e}`));
     await (await records()).put(key, JSON.stringify(rec));
     return rec;
   }
@@ -175,7 +175,7 @@ export async function start(ctx) {
       .catch(e => ({ error: e?.message ?? String(e) }))
       .finally(() => clearTimeout(timer));
     const { id: _id, ...rec } = out;
-    if (!rec.error && rec.gens && rec.whole === rec.gens) await claim(w.root).catch(e => ctx.log("keep", { what: `not said in the keepers bag: ${e?.message ?? e}` }));
+    if (!rec.error && rec.gens && rec.whole === rec.gens) await claim(w.root).catch(e => ctx.failed("keep", e, `not said in the keepers bag: ${e?.message ?? e}`));
     // A failure is retried within the hour, as a table's; a keep is good for a DAY.
     await (await keptTable()).put(w.key, JSON.stringify({ ...w.w, ...rec, at: rec.error ? Date.now() - DAY + RETRY : Date.now() }));
   }
@@ -304,11 +304,11 @@ export async function start(ctx) {
     try {
       // Its records unreadable here (no grant for them on this site yet, say): said once, and tried next time.
       const d = await due().catch(e => {
-        if (!said) ctx.log("keep", { what: `not keeping yet: ${e?.message ?? e}` });
+        if (!said) ctx.failed("keep", e, `not keeping yet: ${e?.message ?? e}`);
         said = true;
         return { tables: [], files: [] };
       });
-      if (d.tables[0]) await keepOne(d.tables[0]).catch(e => ctx.log("keep", { what: `${d.tables[0].app}: ${e?.message ?? e}` }));
+      if (d.tables[0]) await keepOne(d.tables[0]).catch(e => ctx.failed("keep", e, `${d.tables[0].app}: ${e?.message ?? e}`));
       else if (d.files[0]) await keepFile(d.files[0]);
       else {
         // Its own first; then what it is assigned; then what it played, kept for others.
@@ -316,7 +316,7 @@ export async function start(ctx) {
         const w = a ? null : (await watchedDue().catch(() => []))[0];
         if (a) await keepAssigned(a);
         else if (w) await keepWatched(w);
-        else await claimOwn().catch(e => ctx.log("keep", { what: `own files not said in the keepers bag: ${e?.message ?? e}` }));
+        else await claimOwn().catch(e => ctx.failed("keep", e, `own files not said in the keepers bag: ${e?.message ?? e}`));
       }
     } finally {
       running = false;
@@ -344,5 +344,5 @@ export async function start(ctx) {
   // After the page has settled; then one due table a minute.
   // (A JOB: every minute, two minutes after the page is up, while someone is logged in.)
   (await ctx.require("lifecycle")).job("keep", { every: 60000, delay: 120000, needs: async () => !!(await space.account().catch(() => null)) || "nobody is logged in", run: () => tick() });
-  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.log("keep", { what: `not noted for keeping: ${e?.message ?? e}` })), kept, setLimit, limits, keepers, holdings, assign, assigned: assignedNow };
+  return { status, now, watched: (f, item, o) => watched(f, item, o).catch(e => ctx.failed("keep", e, `not noted for keeping: ${e?.message ?? e}`)), kept, setLimit, limits, keepers, holdings, assign, assigned: assignedNow };
 }

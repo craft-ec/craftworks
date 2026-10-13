@@ -142,7 +142,7 @@ export async function start(ctx) {
         const rows = [];
         if (mine === "owner" && theirs && theirs !== "owner") {
           const sel = el("select", {}, ...["member", "admin"].map(v => el("option", { value: v, textContent: `role: ${v}`, selected: v === theirs })));
-          sel.onchange = () => r.grant(did, sel.value).then(() => r.refresh()).then(draw, e => (said.textContent = e.message));
+          sel.onchange = () => r.grant(did, sel.value).then(() => r.refresh()).then(draw, e => (said.textContent = ctx.say(e)));
           rows.push(sel);
         } else if (theirs) rows.push(el("span", { textContent: `role: ${theirs}` }));
         if (r.can(me.id, "remove") && RANK[mine] > RANK[theirs ?? "member"]) {

@@ -38,7 +38,7 @@ export async function start(ctx) {
     // Its TIMED TEXT: the subtitles given, else the lyrics the file carries (untimed: one cue over the whole).
     if (spec.maker === "video-studio") {
       const subs = await ctx.require("caption-store");
-      for (const s of subtitles) await subs.add(item, s).catch(e => ctx.log("publish", { what: `timed text ${s.name}: ${e.message}` }));
+      for (const s of subtitles) await subs.add(item, s).catch(e => ctx.failed("publish", e, `timed text ${s.name}: ${e.message}`));
       const lyrics = !subtitles.length && spec.domain === "audio" ? (await maker.probe(file).catch(() => null))?.lyrics : null;
       if (lyrics)
         await subs
@@ -120,7 +120,7 @@ export async function start(ctx) {
       e.preventDefault();
       said.hidden = true;
       if (ed.busy()) return ((said.textContent = "Still sending the files: a moment…"), (said.hidden = false));
-      post().catch(err => ((said.textContent = err.message ?? String(err)), (said.hidden = false)));
+      post().catch(err => ((said.textContent = ctx.say(err)), (said.hidden = false)));
     };
     return f;
   }
@@ -199,7 +199,7 @@ export async function start(ctx) {
         });
         onPublished({ ...done, title: f.elements.title.value.trim() });
       } catch (err) {
-        said.textContent = err.message ?? String(err);
+        said.textContent = ctx.say(err);
         said.hidden = false;
         btn.disabled = false;
         progress.textContent = "";

@@ -71,7 +71,7 @@ export async function start(ctx) {
     (await ctx.require("reputation")).refresh();
     const item = await sign(did, on);
     await t.put(did, hexOf(item));
-    await relay([item]).catch(e => ctx.log("vouch", { what: `relaying: ${e.message ?? e}` }));
+    await relay([item]).catch(e => ctx.failed("vouch", e, `relaying: ${e.message ?? e}`));
   }
   async function of(did) {
     const t = await directory.publicOf(did, TABLE);

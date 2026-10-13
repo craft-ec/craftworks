@@ -14,6 +14,7 @@ export async function start(ctx) {
   const { glue } = await ctx.require("node");
   // THE SESSION's lifecycle (FOUNDATION.md §3: `session`): recorded here (shadow — nothing gated on it yet).
   const life = await ctx.require("lifecycle");
+  const fault = await ctx.require("fault");
   let current = null;
   let made = null; // the DID (hex) of an account this page registered
 
@@ -87,18 +88,15 @@ export async function start(ctx) {
     let silent = false;
     for (const prior of ctx.identityPrior) {
       let h;
-      // An earlier build the node is still loading answers nothing for a while: asked again, up to about 90 s.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          h = await id.handoverFrom(prior, pin);
-        } catch (e) {
-          ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${e.message}` });
-          h = null;
-          break;
-        }
-        if (!h?.silent) break;
-        ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: no answer yet (the node is loading it)` });
-      }
+      // An earlier build the node is still loading answers nothing for a while: asked again (the fault policy's
+      // `not-yet`, 3 tries); still silent is said as silent, never as a wrong PIN.
+      h = await fault
+        .attempt("earlier build", `asking ${prior.slice(0, 12)}…`, async () => {
+          const got = await id.handoverFrom(prior, pin);
+          if (got?.silent) throw new fault.Fault("not-yet", "an earlier build not answering yet", { d: { got } });
+          return got;
+        }, { policy: { "not-yet": { tries: 3, wait: () => 0, report: "never" } } })
+        .catch(e => (e?.kind === "not-yet" ? e.d.got : (ctx.failed("earlier build", e, `${prior.slice(0, 12)}…: ${e.message}`), null)));
       if (h?.silent) silent = true;
       if (!h?.handed) continue;
       const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));

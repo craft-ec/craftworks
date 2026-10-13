@@ -102,7 +102,7 @@ export async function start(ctx) {
   // people —, your followers or friends, only you); none given: public or not, by `public`.
   async function upload(file, { space: sp = null, public: pub = false, audience = null, from = null, folder = null, write = null, onProgress = () => {} } = {}) {
     const ref = await files.put(file, { space: sp, public: pub, app: from?.app ?? "drive", onProgress });
-    await add(ref, { space: sp, from, folder, public: pub, audience, write }).catch(e => ctx.log("drive", { what: `listing ${file.name}: ${e.message}` }));
+    await add(ref, { space: sp, from, folder, public: pub, audience, write }).catch(e => ctx.failed("drive", e, `listing ${file.name}: ${e.message}`));
     return ref;
   }
 

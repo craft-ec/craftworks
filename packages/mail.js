@@ -161,7 +161,7 @@ export async function mount(ctx, el) {
       for (const c of toChips) c.label = list.find(a => a.ref === c.ref)?.label ?? c.label;
       drawChips();
     })
-    .catch(e => ctx.log("mail", { what: `addresses: ${e.message}` }));
+    .catch(e => ctx.failed("mail", e, `addresses: ${e.message}`));
 
   // COMPOSE (or reply to `re`; or to `to`, an address): the recipients resolved one by one, then one mail to them all.
   function compose(re = null, to = null) {

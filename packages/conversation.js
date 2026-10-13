@@ -131,7 +131,7 @@ export async function start(ctx) {
     }
     // ITS PACKAGE SPENT, said to every member (the space's writers list): committed, it is spent whether or not the
     // welcome reaches them — no other member's welcome may use it (`sharedTags`).
-    await index.spacePoint(sp, "writers", { w: sp.self, welcomed: did, kp: tag, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: its key package ${tag.slice(0, 8)} not listed as used in the space: ${e?.message ?? e}` }));
+    await index.spacePoint(sp, "writers", { w: sp.self, welcomed: did, kp: tag, at: Date.now() }).catch(e => ctx.failed("conversation", e, `${directory.shown(did, card.handle)}: its key package ${tag.slice(0, 8)} not listed as used in the space: ${e?.message ?? e}`));
     // An earlier welcome to them here still kept unsent (below): its entry replaced by this commit, it could never open.
     for (const r of used.rows().filter(x => x.value && x.key.startsWith(`outbox:${sp.id}|${did}|`))) await used.remove(r.key).catch(() => {});
     const { owner, nonce } = sp.governance;
@@ -426,7 +426,7 @@ export async function start(ctx) {
     const pub = await (await ctx.require("roles")).ofPublic(sp).then(async p => (await p.settled, p.members()), () => []);
     const byRole = [...(r?.members() ?? []), ...pub].sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role));
     const to = [...new Set([r?.owner ?? sp.governance?.owner, ...byRole.map(m => m.did)].filter(d => d && d !== me.id))].slice(0, 12);
-    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, epoch: st.epoch, branch: mine, at: Date.now() }).catch(e => ctx.log("conversation", { what: `${sp.name}: asking ${short(did)} for its keys: ${e.message}` }));
+    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, epoch: st.epoch, branch: mine, at: Date.now() }).catch(e => ctx.failed("conversation", e, `${sp.name}: asking ${short(did)} for its keys: ${e.message}`));
     if (st.epoch < own.epoch) await askNodes(sp, me, st.epoch);
     ctx.log("conversation", { what: `${sp.name}: this node's keys are behind the owner's (epoch ${st.epoch}, theirs ${own.epoch}) — asked ${to.length} to welcome it onto theirs` });
     return true;
@@ -461,7 +461,7 @@ export async function start(ctx) {
         ctx.log("conversation", { what: `${sp.name}: ${short(did)} was on another branch of its keys — welcomed back onto the owner's` });
         out.push(did);
       } catch (e) {
-        ctx.log("conversation", { what: `${sp.name}: repairing ${short(did)}: ${e.message}` });
+        ctx.failed("conversation", e, `${sp.name}: repairing ${short(did)}: ${e.message}`);
       }
     }
     return out;
@@ -525,7 +525,7 @@ export async function start(ctx) {
     index
       .openRequests(`stuck ${sp.id}`)
       .then(() => index.request(`stuck ${sp.id}`, { kind: "stuck", did: me.id, epoch, at: Date.now() }))
-      .catch(e => ctx.log("conversation", { what: `${sp.name}: the ask for members' nodes: ${e?.message ?? e}` }));
+      .catch(e => ctx.failed("conversation", e, `${sp.name}: the ask for members' nodes: ${e?.message ?? e}`));
   // ANSWERED by an OPEN page too: a node stands aside while its person's page is open (the delegate runs a round only
   // for a page away), so the page reads the space's STUCK bag itself, on the node's rules — the asker a member already,
   // behind this page's group, not welcomed since its ask; one member answers (turns), in one commit (`welcome`: readd).
@@ -566,7 +566,7 @@ export async function start(ctx) {
         ctx.log("conversation", { what: `${short(q.did)} asked from epoch ${q.epoch} in ${sp.name} (here ${st.epoch}): welcomed again` });
         out.push(q.did);
       } catch (e) {
-        ctx.log("conversation", { what: `${sp.name}: welcoming ${short(q.did)} again: ${e.message}` });
+        ctx.failed("conversation", e, `${sp.name}: welcoming ${short(q.did)} again: ${e.message}`);
       }
     }
     return out;
@@ -722,7 +722,7 @@ export async function start(ctx) {
           // Said once a page per ask (a node stuck itself fails every pass until it is welcomed again).
           if (!saidAgain.has(k)) {
             saidAgain.add(k);
-            ctx.log("conversation", { what: `welcoming ${short(it.from)} again: ${e.message}` });
+            ctx.failed("conversation", e, `welcoming ${short(it.from)} again: ${e.message}`);
             index.health({ k: "welcome-again-failed", s: String(it.space ?? "").slice(0, 6), to: it.from.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
           }
         }
@@ -738,7 +738,7 @@ export async function start(ctx) {
           .then(() => askAgain())
           .then(
             async n => (await once.put(k, String(Date.now())), ctx.log("conversation", { what: `${short(it.from)} found this card's key packages all used: a fresh set put on it${n ? `, ${n} request(s) made again` : ""}` })),
-            e => ctx.log("conversation", { what: `renewing the card's key packages: ${e?.message ?? e}` }),
+            e => ctx.failed("conversation", e, `renewing the card's key packages: ${e?.message ?? e}`),
           );
         continue;
       }
@@ -861,7 +861,7 @@ export async function start(ctx) {
               .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(epoch != null ? { epoch } : {}), ...(it.repair || had ? { repair: !!it.repair } : {}), at: Date.now() })
               .then(
                 () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `asked ${short(it.from)} to welcome again into ${it.name ?? "a space"} (a welcome made for a key package not held here)` })),
-                err => ctx.log("conversation", { what: `asking ${short(it.from)} to welcome again: ${err.message}` }),
+                err => ctx.failed("conversation", err, `asking ${short(it.from)} to welcome again: ${err.message}`),
               ),
           );
         }
@@ -871,7 +871,7 @@ export async function start(ctx) {
       }
     }
     // Its key package is used up: a new one on the card.
-    if (out.length) await directory.renew().catch(e => ctx.log("conversation", { what: `renewing the key package: ${e.message}` }));
+    if (out.length) await directory.renew().catch(e => ctx.failed("conversation", e, `renewing the key package: ${e.message}`));
     // WELCOMES THIS ACCOUNT CANNOT OPEN: each spent one of the card's key packages (the welcomer marks it used), none
     // opened — the card's may be all spent, or not this account's. A fresh set put on it (once a page), and every request
     // still waiting made again: the next welcome is made from these.
@@ -882,7 +882,7 @@ export async function start(ctx) {
         .then(() => askAgain())
         .then(
           n => ctx.log("conversation", { what: `${unanswerable} welcome(s) made for key packages not held here: a fresh set put on the card${n ? `, ${n} request(s) made again` : ""}` }),
-          e => ((renewedForWelcomes = false), ctx.log("conversation", { what: `renewing the card's key packages: ${e?.message ?? e}` })),
+          e => ((renewedForWelcomes = false), ctx.failed("conversation", e, `renewing the card's key packages: ${e?.message ?? e}`)),
         );
     }
     // THE ASKS, after the card is renewed: an answer made from the card as it was would name a spent package again.
@@ -1004,7 +1004,7 @@ export async function start(ctx) {
       if (turn < 0 || Date.now() - pendingSince.get(k) < (turn + 1) * ordering.TAKEOVER) continue;
       await r.act({ act: "lapsed", did }).then(
         () => (pendingSince.delete(k), out.push(did), ctx.log("conversation", { what: `${sp.name}: ${short(did)}'s level ran out — taken out (they ask again when they give again)` })),
-        e => ctx.log("conversation", { what: `${sp.name}: lapsing ${short(did)}: ${e.message}` }),
+        e => ctx.failed("conversation", e, `${sp.name}: lapsing ${short(did)}: ${e.message}`),
       );
     }
     return out;
@@ -1032,7 +1032,7 @@ export async function start(ctx) {
     for (const r of t.rows().filter(x => x.value && !mine.has(x.key))) {
       const a = parseAsk(r);
       if (!a) continue;
-      await index.request(r.key.startsWith("code:") ? r.key.slice(5) : openCode(r.key), { kind: "join", did: me.id, at: Date.now() }).then(() => (n += 1), e => ctx.log("conversation", { what: `asking again: ${e.message}` }));
+      await index.request(r.key.startsWith("code:") ? r.key.slice(5) : openCode(r.key), { kind: "join", did: me.id, at: Date.now() }).then(() => (n += 1), e => ctx.failed("conversation", e, `asking again: ${e.message}`));
       await noteAsk(r.key, { ...a, key: undefined });
     }
     return n;
@@ -1120,7 +1120,7 @@ export async function start(ctx) {
   // `code:<code>` (the space is not known until the welcome). Gone once in.
   const asks = async () => (await ctx.require("storage")).table("asks");
   async function noteAsk(key, v) {
-    await (await asks()).put(key, JSON.stringify({ ...v, at: Date.now() })).catch(e => ctx.log("conversation", { what: `keeping the request: ${e.message}` }));
+    await (await asks()).put(key, JSON.stringify({ ...v, at: Date.now() })).catch(e => ctx.failed("conversation", e, `keeping the request: ${e.message}`));
   }
   const parseAsk = r => {
     try {
@@ -1220,7 +1220,7 @@ export async function start(ctx) {
         ctx.log("conversation", { what: `${sp.name}: ${short(did)} is in by its acts, not in its group — added (turn ${turn})` });
       } catch (e) {
         failed(k);
-        ctx.log("conversation", { what: `${sp.name}: adding ${short(did)} as its acts say: ${e.message}` });
+        ctx.failed("conversation", e, `${sp.name}: adding ${short(did)} as its acts say: ${e.message}`);
         index.health({ k: "reconcile-failed", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
       }
     }
@@ -1301,7 +1301,7 @@ export async function start(ctx) {
           ctx.log("conversation", { what: `${directory.shown(q.did)} was let into ${sp.name} but never in: welcomed again (turn ${turn})` });
           index.health({ k: "letin-again", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6) }).catch(() => {});
         } catch (e) {
-          ctx.log("conversation", { what: `welcoming ${short(q.did)} again into ${sp.name}: ${e.message}` });
+          ctx.failed("conversation", e, `welcoming ${short(q.did)} again into ${sp.name}: ${e.message}`);
           index.health({ k: "admit-failed", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
         }
         continue;
@@ -1311,7 +1311,7 @@ export async function start(ctx) {
         out.push(q.did);
         ctx.log("conversation", { what: `${directory.shown(q.did)} ${q.code === "open" ? `joined ${sp.name} (open)` : `admitted to ${sp.name} by a code`}` });
       } catch (e) {
-        ctx.log("conversation", { what: `could not admit ${short(q.did)}: ${e.message}` });
+        ctx.failed("conversation", e, `could not admit ${short(q.did)}: ${e.message}`);
         index.health({ k: "admit-failed", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }).catch(() => {});
       }
     }
@@ -1341,7 +1341,7 @@ export async function start(ctx) {
         for (const app of r.apps()) await gr.act({ act: "app", app, on: true });
       },
     });
-    await keepReaders(sp).catch(e => ctx.log("audiences", { what: `${space.shown(sp)}: ${e.message}` }));
+    await keepReaders(sp).catch(e => ctx.failed("audiences", e, `${space.shown(sp)}: ${e.message}`));
     return g;
   }
   // AN AUDIENCE KEPT IN STEP — by its maker, and by the space's admins in it too: its maker makes them the group's admins
@@ -1370,7 +1370,7 @@ export async function start(ctx) {
         await gr.refresh?.();
         for (const m of gr.members())
           if (m.did !== me && adminsOf(m.did) && gr.role(m.did) === "member")
-            await gr.grant(m.did, "admin").catch(e => ctx.log("audiences", { what: `${g.name ?? "an audience"}: making ${short(m.did)} its admin: ${e.message}` }));
+            await gr.grant(m.did, "admin").catch(e => ctx.failed("audiences", e, `${g.name ?? "an audience"}: making ${short(m.did)} its admin: ${e.message}`));
         continue;
       }
       if (gr.role(me) !== "admin" || !gr.can(me, "invite") || !gr.can(me, "remove")) continue;
@@ -1576,7 +1576,7 @@ export async function start(ctx) {
             await t.put(`in/${it.key}`, JSON.stringify(m));
             n += 1;
           } catch (e) {
-            ctx.log("mail", { what: `${sp.name}: a mail from ${short(it.from)} did not open: ${e.message}` });
+            ctx.failed("mail", e, `${sp.name}: a mail from ${short(it.from)} did not open: ${e.message}`);
           }
         }
         return n;
@@ -1666,7 +1666,7 @@ export async function start(ctx) {
       const m = { id: `${Date.now().toString(36)}.${newId()}`, from: me.id, to, subject: String(subject ?? ""), body: String(body ?? ""), at: Date.now(), re, ...(files.length ? { files } : {}) };
       await deliver(m, me);
       await (await kept()).put(`sent/${m.id}`, JSON.stringify(m));
-      mail.prune().catch(e => ctx.log("mail", { what: `pruning: ${e.message}` }));
+      mail.prune().catch(e => ctx.failed("mail", e, `pruning: ${e.message}`));
       return m;
     },
     // OLD MAIL in this account's public tail: each recipient keeps what they opened (their `mailbox`), so a sealed
@@ -1703,7 +1703,7 @@ export async function start(ctx) {
           await t.put(`in/${it.key}`, JSON.stringify(m));
           n += 1;
         } catch (e) {
-          ctx.log("mail", { what: `a mail from ${short(it.from)} did not open: ${e.message}` });
+          ctx.failed("mail", e, `a mail from ${short(it.from)} did not open: ${e.message}`);
         }
       }
       return n;

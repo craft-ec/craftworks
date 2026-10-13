@@ -92,5 +92,6 @@ test("absentOnly: null for absent or not yet; every other failure thrown on", ()
 test("say: one wording per kind; a refusal says its own words", () => {
   assert.equal(F.say(new F.Fault("login-needed", "nobody is logged in")), "Log in to do that.");
   assert.equal(F.say(new F.Fault("refused-expected", "members only", { message: "Chat is for its members" })), "Chat is for its members");
-  assert.match(F.say(new Error("boom")), /Something went wrong: boom/);
+  assert.equal(F.say(new Error("only its author removes it")), "only its author removes it", "a plain refusal keeps its words");
+  assert.equal(F.say(new F.Fault("transient", "reading notes", { message: "reading notes: no answer in 30 s" })), "Your node did not answer in time — try again in a moment.");
 });

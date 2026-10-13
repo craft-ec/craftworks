@@ -25,7 +25,7 @@ export async function start(ctx) {
       },
       e => {
         for (const t of list) asked.delete(t);
-        ctx.log("not allowed", { what: `${list.join(", ")}: ${e.message}` });
+        ctx.failed("not allowed", e, `${list.join(", ")}: ${e.message}`);
         return false;
       },
     );

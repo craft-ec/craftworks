@@ -51,7 +51,7 @@ export async function start(ctx) {
   async function holdingsOf(epoch) {
     // (Like the token service, `keep` and `files` need an account: asked for once one is logged in.)
     const [keep, files, { bytes }] = await Promise.all(["keep", "files", "tokens"].map(n => ctx.require(n)));
-    await assignment(epoch, keep).catch(e => ctx.log("keeper", { what: `no assignment this epoch (${e?.message ?? e})` }));
+    await assignment(epoch, keep).catch(e => ctx.failed("keeper", e, `no assignment this epoch (${e?.message ?? e})`));
     const fs = await keep.holdings(epoch);
     // EVERY file it holds whole listed again in this epoch's registry — its own, those it watched, those it is assigned
     // (none missing): a file stays listed while anyone keeps it, its uploader online or not.
@@ -63,7 +63,7 @@ export async function start(ctx) {
       await item
         .then(i => index.bag.chained(Core.registry_address, epoch, i, "listing a file in the registry"))
         .then(() => (listed += 1))
-        .catch(e => ctx.log("keeper", { what: `${(f.assigned?.key ?? f.row.id).slice(0, 8)}…: not listed (${e?.message ?? e})` }));
+        .catch(e => ctx.failed("keeper", e, `${(f.assigned?.key ?? f.row.id).slice(0, 8)}…: not listed (${e?.message ?? e})`));
     }
     state.listed = listed;
     state.own = fs.filter(f => !f.assigned).length;
@@ -75,7 +75,7 @@ export async function start(ctx) {
         continue;
       }
       const { sp, row } = f;
-      hosted.push(...(await files.pieces(sp, row).catch(e => (ctx.log("keeper", { what: `${row.id.slice(0, 8)}…: its pieces not listed (${e?.message ?? e})` }), []))));
+      hosted.push(...(await files.pieces(sp, row).catch(e => (ctx.failed("keeper", e, `${row.id.slice(0, 8)}…: its pieces not listed (${e?.message ?? e})`), []))));
     }
     state.files = fs.length;
     state.pieces = hosted.length;
@@ -134,7 +134,7 @@ export async function start(ctx) {
       if (ce != null && self.claimed !== ce && (await seatIsMine(epoch, me))) {
         self.claimed = ce;
         const { creds } = await tokens.device();
-        const c = await run(sigs => core.keeper_claim(tokens.code, beacon, tokens.idlogCode, me.didBytes, h, public_, creds, sigs)).catch(e => (ctx.log("keeper", { what: `stake not claimed: ${e?.message ?? e}` }), null));
+        const c = await run(sigs => core.keeper_claim(tokens.code, beacon, tokens.idlogCode, me.didBytes, h, public_, creds, sigs)).catch(e => (ctx.failed("keeper", e, `stake not claimed: ${e?.message ?? e}`), null));
         if (c?.puts) {
           await putAll(c.puts);
           ctx.log("keeper", { what: `claimed in the witness lot: ${c.amount} units of $CRAFT, claims epoch ${c.epoch}` });
@@ -143,7 +143,7 @@ export async function start(ctx) {
       if (ce != null && self.pointed !== ce && !(h - (self.pointTried ?? -Infinity) < 16)) {
         self.pointTried = h; // (its reads once every 16 heights while not pointed)
         const bagCode = await ctx.require("bag-wasm");
-        const p = await run(() => core.keeper_point(tokens.code, beacon, tokens.idlogCode, bagCode, beaconCode, me.didBytes, ce, h)).catch(e => (ctx.log("keeper", { what: `claim not pointed to: ${e?.message ?? e}` }), null));
+        const p = await run(() => core.keeper_point(tokens.code, beacon, tokens.idlogCode, bagCode, beaconCode, me.didBytes, ce, h)).catch(e => (ctx.failed("keeper", e, `claim not pointed to: ${e?.message ?? e}`), null));
         if (p?.put) {
           await putAll([p.put]);
           self.pointed = ce;

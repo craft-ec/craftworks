@@ -65,7 +65,7 @@ export async function start(ctx) {
     let started = false;
     // Its TRACKS read (a few rows, not the media): shown in its line at once, the player's once it plays.
     let prepared = null;
-    const prepare = () => (prepared ??= tracks().catch(e => (line.textContent = e.message ?? String(e))));
+    const prepare = () => (prepared ??= tracks().catch(e => (line.textContent = ctx.say(e))));
     async function play({ autoplay = false } = {}) {
       if (started) return;
       started = true;

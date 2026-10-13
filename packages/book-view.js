@@ -71,7 +71,7 @@ export async function start(ctx) {
         note.textContent = "Opening…";
         book = await studio.open(blob, studio.formatOf(file) ?? undefined);
       } catch (e) {
-        note.textContent = e.message ?? String(e);
+        note.textContent = ctx.say(e);
         opened = false;
         return;
       }
@@ -125,7 +125,7 @@ export async function start(ctx) {
           const shownPages = await Promise.all([place.at, ...(place.two && place.at + 1 < count ? [place.at + 1] : [])].map(i => book.page(i, width, height)));
           if (mine === drawing) pages.replaceChildren(...shownPages);
         } catch (e) {
-          if (mine === drawing) note.textContent = e.message ?? String(e);
+          if (mine === drawing) note.textContent = ctx.say(e);
         }
       }
       if (!count) {

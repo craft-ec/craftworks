@@ -223,7 +223,7 @@ export async function mount(ctx, el) {
   function verdict(ref, done) {
     const note = h("input", { type: "text", placeholder: "Note (optional)", maxLength: 280 });
     const said = h("span", { className: "said" });
-    const go = yes => press.approve(ref, yes, note.value.trim()).then(done, e => (said.textContent = e.message));
+    const go = yes => press.approve(ref, yes, note.value.trim()).then(done, e => (said.textContent = ctx.say(e)));
     return h("div", { className: "tools", style: "margin-top:6px" }, note, h("button", { type: "button", className: "cw-btn primary", textContent: "✅ Approve", onclick: () => go(true) }), h("button", { type: "button", className: "cw-btn", textContent: "❌ Decline", onclick: () => go(false) }), said);
   }
 
@@ -259,10 +259,10 @@ export async function mount(ctx, el) {
       const b = blogOf(d);
       const said = h("span", { className: "said" });
       const publish = h("button", { type: "button", className: "cw-btn primary", textContent: b.review ? "Send again" : "Publish now" });
-      const go = theme.action(publish, () => press.publish(d).then(x => (x.review ? draw() : (location.hash = `${b.place ? `#/s/${b.place}/blog` : "#/blog"}/p/${x.ref}`)), e => ((said.textContent = e.message), Promise.reject(e))), { busy: "Publishing…", done: "Done ✓" });
+      const go = theme.action(publish, () => press.publish(d).then(x => (x.review ? draw() : (location.hash = `${b.place ? `#/s/${b.place}/blog` : "#/blog"}/p/${x.ref}`)), e => ((said.textContent = ctx.say(e)), Promise.reject(e))), { busy: "Publishing…", done: "Done ✓" });
       publish.onclick = () => go().catch(() => {});
       const del = h("button", { type: "button", className: "cw-btn", textContent: "Delete" });
-      del.onclick = () => (del.dataset.armed === "1" ? items.remove(d.ref).then(() => draw(), e => (said.textContent = e.message)) : ((del.dataset.armed = "1"), (del.textContent = "Confirm: delete")));
+      del.onclick = () => (del.dataset.armed === "1" ? items.remove(d.ref).then(() => draw(), e => (said.textContent = ctx.say(e))) : ((del.dataset.armed = "1"), (del.textContent = "Confirm: delete")));
       const where = b.place ? `for ${spaces.get(b.place) ? space.shown(spaces.get(b.place)) : "a space you left"}` : "for your blog";
       const state = b.review ? (b.declined ? "❌ declined — change it and send again" : `in review since ${ago(b.review.at)}`) : Number.isFinite(b.due) ? `⏰ publishes ${new Date(b.due).toLocaleString()}${b.due <= Date.now() ? " (due: the next page open publishes it)" : ""}` : "not scheduled";
       return h("div", { className: "row", style: "grid-template-columns:minmax(0,1fr)" }, h("h3", {}, h("a", { href: `#/blog/write/${d.ref}`, textContent: d.title || "Untitled draft" })), h("div", { className: "s", textContent: `${where} · ${state} · saved ${ago(d.edited || d.at)}` }), h("div", { className: "tools" }, h("a", { className: "cw-btn", href: `#/blog/write/${d.ref}`, textContent: "Edit" }), publish, del, said));

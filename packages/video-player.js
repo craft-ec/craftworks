@@ -121,7 +121,7 @@ export async function start(ctx) {
         }
         if (eof && !ended) mp4.flush();
       } catch (e) {
-        ctx.log("video", { what: `${ref.name}: ${e.message ?? e}` });
+        ctx.failed("video", e, `${ref.name}: ${e.message ?? e}`);
       } finally {
         feeding = false;
       }

@@ -67,7 +67,7 @@ export async function mount(ctx, el) {
     const sid = items.spaceIdOf(ref);
     const inside = !sid || (await space.mine()).some(s => s.id === sid);
     const outside = inside ? null : await items.outsideOf(ref).catch(() => null);
-    const it = await items.get(ref, { outside }).catch(e => (ctx.log("form", { what: `reading ${ref.slice(0, 40)}… failed: ${e?.message ?? e}` }), null));
+    const it = await items.get(ref, { outside }).catch(e => (ctx.failed("form", e, `reading ${ref.slice(0, 40)}… failed: ${e?.message ?? e}`), null));
     return it && it.kind === "form" ? { ...it, outside } : null;
   }
   // ITS PLACE: the space it is in (this person's, or the public one read from outside), or null (a person's own).
@@ -349,7 +349,7 @@ export async function mount(ctx, el) {
     // A new response (mail) drawn in while the results are open: one listener per mailbox.
     const boxKey = F.toSpace(place) ? place.id : "";
     if (!watched.has(boxKey)) (watched.add(boxKey), box.onChange(redrawSoon));
-    await box.fetch().catch(e => ctx.log("form", { what: `fetching mail: ${e.message}` }));
+    await box.fetch().catch(e => ctx.failed("form", e, `fetching mail: ${e.message}`));
     // Only mail addressed to this form's mailbox, from someone the form's rule lets answer.
     const addressed = await responsesIn(box, "in", form, F.responseTo(form, place));
     const allowed = await Promise.all(addressed.map(x => mayAnswer(form, place, x.by, x.cred)));

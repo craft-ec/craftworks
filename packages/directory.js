@@ -134,7 +134,7 @@ export async function start(ctx) {
       ctx
         .require("conversation")
         .then(c => c.askAgain())
-        .then(n => ctx.log("card", { what: `${n} request(s) made again` }), e => ctx.log("card", { what: `asking again: ${e.message}` }));
+        .then(n => ctx.log("card", { what: `${n} request(s) made again` }), e => ctx.failed("card", e, `asking again: ${e.message}`));
     }
     await putNodes(t);
     return { did: sp.id, ...read(t) };
@@ -169,7 +169,7 @@ export async function start(ctx) {
     const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
     // And into the account's DEVICES contract (a grow-only set: the union is kept) — where readers count them.
     const me = await auth.check().catch(() => null);
-    const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).then(() => true, e => (ctx.log("card", { what: `the account's devices: ${e.message}` }), false)) : false;
+    const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).then(() => true, e => (ctx.failed("card", e, `the account's devices: ${e.message}`), false)) : false;
     // Said on the card once the contract is put: what readers check before looking it up.
     if (put && !read(t).hasDevices) await t.put("devices", "1");
     if (!creds.length || JSON.stringify(creds) === JSON.stringify(read(t).nodes.slice().sort())) return;

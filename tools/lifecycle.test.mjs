@@ -94,3 +94,14 @@ test("become moves only on a change", async () => {
   await tick();
   assert.deepEqual(healths.map(h => h.to), ["UNKNOWN>HELD", "HELD>BEHIND"]);
 });
+
+test("two ticks at once (a timer and now()) never move the job from a state they did not see", async () => {
+  healths.length = 0;
+  let runs = 0;
+  const j = L.job("race", { every: 1000, needs: () => new Promise(r => setTimeout(() => r(true), 20)), run: async () => (runs++, new Promise(r => setTimeout(r, 30))) });
+  await Promise.all([j.now(), j.now(), j.now()]);
+  await new Promise(r => setTimeout(r, 80));
+  j.stop();
+  assert.ok(runs >= 1);
+  assert.equal(healths.filter(h => /bug|refused/.test(h.k)).length, 0);
+});

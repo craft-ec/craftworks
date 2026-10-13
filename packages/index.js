@@ -281,7 +281,7 @@ export async function start(ctx) {
     } catch (e) {
       // NOT SILENT: a report that could not be written is logged here (and asked again next hour).
       reported.delete(key);
-      ctx.log("health", { what: `${item.k}: not reported (${e?.message ?? e})` });
+      ctx.log("health", { what: `${item.k}: not reported (${e?.message ?? e})` }); // (never a fault: reporting it would report again)
       return false;
     }
   }

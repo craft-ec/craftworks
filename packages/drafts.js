@@ -54,7 +54,7 @@ export async function start(ctx) {
       const put = v === null ? t.remove(k) : t.put(k, JSON.stringify({ v, at: Date.now() }));
       await put.then(
         () => written.set(k, v),
-        e => ((ok = false), owed.has(k) || owed.set(k, v), ctx.log("drafts", { what: `not saved: ${e?.message ?? e}` })),
+        e => ((ok = false), owed.has(k) || owed.set(k, v), ctx.failed("drafts", e, `not saved: ${e?.message ?? e}`)),
       );
     }
     return ok;

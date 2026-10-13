@@ -88,7 +88,7 @@ export async function start(ctx) {
       const token = hexOf(crypto.getRandomValues(new Uint8Array(16)));
       await (await credTable(me.id, token)).put("for", JSON.stringify({ did, circle: which, at: Date.now() }));
       await people.set(rel, did, true, Date.now(), { token });
-      await index.send(did, { kind: "cred", circle: which, token, from: me.id, at: Date.now() }).catch(e => ctx.log("circles", { what: `handing ${did.slice(12, 20)}… their ${which} credential: ${e.message}` }));
+      await index.send(did, { kind: "cred", circle: which, token, from: me.id, at: Date.now() }).catch(e => ctx.failed("circles", e, `handing ${did.slice(12, 20)}… their ${which} credential: ${e.message}`));
     }
     for (const did of people.list(rel)) {
       if (want.has(did)) continue;

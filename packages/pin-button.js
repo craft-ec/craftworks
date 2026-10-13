@@ -45,7 +45,7 @@ export async function start(ctx) {
       onSet?.(on);
       set(ref, on).catch(err => {
         paint(b, has(ref));
-        ctx.log("pin failed", { what: `${ref}: ${err?.message ?? err}` });
+        ctx.failed("pin failed", err, `${ref}: ${err?.message ?? err}`);
       });
     };
     buttons.add(b);
