@@ -24,31 +24,39 @@ export async function mount(ctx, el) {
   let at = null;
   async function list() {
     const sp = at.space && !at.outside ? at.space : null;
-    const bs = await bundles.of(sp);
+    // DISCOVER (and someone else's, or a space from outside): the bundles they show in public — as every app's.
+    const others = at.who === "discover" || at.who === "person" || at.outside;
+    const bs = others
+      ? (await at.read({ kinds: ["bundle"] }).catch(ctx.quiet(() => []))).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }))
+      : await bundles.of(sp);
+    // WHO SEES a new one: in your space just you, or anyone (public — listed in Discover); in a shared space its members,
+    // or anyone.
+    const who = h("select", { ariaLabel: "Who sees it" }, ...(sp ? [["members", "Its members"], ["public", "Anyone (public)"]] : [["private", "Only you"], ["public", "Anyone (public)"]]).map(([v, t]) => h("option", { value: v, textContent: t })));
     const make = h("button", {
       type: "button",
       className: "main",
       textContent: "＋ New bundle",
       onclick: async () => {
         const name = prompt("The bundle's name");
-        if (name) await bundles.make(name, sp).then(ref => (location.hash = at.href(`b/${encodeURIComponent(ref)}`)), fail);
+        if (name) await bundles.make(name, sp, { audience: who.value }).then(ref => (location.hash = at.href(`b/${encodeURIComponent(ref)}`)), fail);
       },
     });
     root.replaceChildren(
-      h("div", { className: "row" }, h("h2", { textContent: sp ? `${(await ctx.require("space")).shown(sp)} · bundles` : "Your bundles" }), at.outside ? null : make),
-      bs.length ? h("ul", {}, ...bs.map(b => h("li", {}, h("a", { href: at.href(`b/${encodeURIComponent(b.ref)}`), textContent: `${b.title} · ${b.members.length} item${b.members.length === 1 ? "" : "s"}` })))) : h("p", { className: "none", textContent: "No bundles yet." }),
+      h("div", { className: "row" }, h("h2", { textContent: at.who === "discover" ? "Public bundles" : at.who === "person" ? "Their bundles" : sp ? `${(await ctx.require("space")).shown(sp)} · bundles` : "Your bundles" }), others ? null : who, others ? null : make),
+      bs.length ? h("ul", {}, ...bs.map(b => h("li", {}, h("a", { href: at.href(`b/${encodeURIComponent(b.ref)}`), textContent: `${b.title} · ${b.members.length} item${b.members.length === 1 ? "" : "s"}${b.item?.audience === "public" || b.item?.pub ? " · public" : ""}` })))) : h("p", { className: "none", textContent: others ? "No public bundles yet." : "No bundles yet." }),
       said,
     );
   }
 
   async function one(bref) {
-    const b = (await bundles.of(at.space && !at.outside ? at.space : null)).find(x => x.ref === bref) ?? (await items.get(bref).then(it => (it ? { ref: it.ref, title: it.title, members: it.meta?.members ?? [], item: it } : null)));
+    const mineHere = at.who === "mine" || (at.who === "space" && !at.outside);
+    const b = (mineHere ? (await bundles.of(at.space && !at.outside ? at.space : null)).find(x => x.ref === bref) : null) ?? (await items.get(bref, { outside: await items.outsideOf(bref).catch(ctx.quiet(() => null)) }).then(it => (it ? { ref: it.ref, title: it.title, members: it.meta?.members ?? [], item: it } : null)));
     if (!b) return root.replaceChildren(h("p", { className: "none", textContent: "Not found." }));
     const got = await Promise.all(b.members.map(r => items.get(r).catch(ctx.quiet(() => null))));
     const rows = b.members.map((ref, i) => {
       const it = got[i];
       const label = it ? `${kinds.of(it.kind)?.label ?? it.kind} · ${it.title || String(it.body ?? "").slice(0, 60) || "untitled"}` : "(not readable here)";
-      const tools = at.outside
+      const tools = !mineHere
         ? null
         : h(
             "span",
@@ -74,6 +82,14 @@ export async function mount(ctx, el) {
     at.tabs([]);
     root.replaceChildren(theme.loading("Reading the bundles…"));
     const s = at.sub;
+    // A BUNDLE's OWN PAGE (`…/p/<ref>`): the one item page — its comments, votes, who sees it, its EDITIONS and copies
+    // (item > edition > copy, as every item's) — framed here, with the way back to its members.
+    const pm = /(?:^|\/)p\/(.+)$/.exec(s);
+    if (pm) {
+      const bref = decodeURIComponent(pm[1]);
+      const page = await (await ctx.require("item-page")).show(bref, { app: "bundle", back: at.base, discover: at.who === "discover" }).catch(e => h("p", { textContent: ctx.say(e) }));
+      return root.replaceChildren(h("p", {}, h("a", { href: at.href(`b/${encodeURIComponent(bref)}`), textContent: "← Its items" })), page);
+    }
     return (s.startsWith("b/") ? one(decodeURIComponent(s.slice(2))) : list()).catch(fail);
   };
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/bundle" && draw(), { signal: ctx.signal });
