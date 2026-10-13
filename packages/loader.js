@@ -352,7 +352,13 @@ export async function run(boot) {
     });
     for (const [i, name] of names.entries()) {
       const el = els[i];
-      const mod = await require(name);
+      let mod = await require(name);
+      // AN APP NOT RUN HERE (a page published as BYTES, not a module): run in its OWN FRAME by the app host, with the
+      // system API only (FOUNDATION.md §3, "Apps are installed").
+      if (mod instanceof Uint8Array) {
+        const bytes = mod;
+        mod = { mount: async (c, host) => (await require("apphost")).mount(host, { app: name, bytes }) };
+      }
       const t = performance.now();
       working.push(name);
       const p = placeholders.get(el);

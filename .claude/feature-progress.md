@@ -2458,3 +2458,13 @@ Build order (FOUNDATION §7):
       `sealed label-menu`). `space.find(id)`: "not one of yours" only once the list is COMPLETE (space Home and Chat; a
       recovered device's Home said "Not listed" while the other device's list arrived). Job pause/resume quiet (×25 guest
       noise). Verified v664: two words recoveries complete, Board and Chat on the recovered device, no fault reports.
+- [x] 4. Apps in their own frames — `apphost.js`: a page published as BYTES runs in a sandboxed srcdoc frame (own
+      opaque origin; CSP `connect-src 'none'` set before its code; its module a data: URL) with the SYSTEM API by
+      messages, the page enforcing each call: its OWN rows (the account's `appdata` table, keys `<app>/…`), places,
+      where, go(#/…), say. `sample-app` (🧪 Sample, Developer) proves it. fx v665–669: its row kept across a reload;
+      another app's row in `appdata` NOT seen; from inside — fetch, WebSocket to the node, the page's DOM: blocked; an
+      unknown call refused. Network control: with connect allowed in our CSP the frame is STILL blocked — Freenet's
+      gateway CSP on the app page allows only the node (`connect-src http://127.0.0.1:<port>`; even the outer page cannot
+      reach a CORS-open server) and the node refuses the frame's opaque origin; our CSP's own effect is not separately
+      shown. NOT done: built-in apps moved into frames (they hand each other DOM and live objects — needs serializable
+      capability APIs first); the App Store offering apps not ours (a catalog of published app packages).
