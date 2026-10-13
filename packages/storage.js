@@ -1590,6 +1590,13 @@ export async function start(ctx) {
     directoryTail = null;
     return rows.map(([k]) => k);
   }
+  // …or, where it reads, every node of the group listed in it (each one's feeds found).
+  async function listNodes(groupNodes = []) {
+    const sp = await space.account.strict();
+    const keys = [...new Set([sp.self, ...groupNodes])];
+    for (const k of keys) await listInDirectory(`node:${k}`);
+    return keys;
+  }
   // The directory's read STATE here (`unreadable`: sealed with a key this login does not hold — a forked account's
   // original login; `keys.repairAccount` runs only there).
   async function directoryState() {
@@ -1631,5 +1638,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

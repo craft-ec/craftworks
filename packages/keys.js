@@ -431,17 +431,22 @@ export async function start(ctx) {
   async function repairAccount(say = () => {}) {
     const held = await ready();
     if (!held) throw new Error("this login holds no keys of the account's group here: log in where its keys are (the original login, its own PIN)");
-    // ONLY where the directory does NOT read: the original login of a forked account (the second group sealed the
-    // directory over — that group's logins read it). Where it reads, there is nothing to repair here, and a repair would
-    // make this login's group the account's over the other one.
-    const dir = await storage.directoryState();
-    if (dir.s !== "unreadable") throw new Error(dir.s === "present" ? "your account's directory reads here: nothing to repair on this login (run it on the login whose spaces are missing elsewhere: the original one)" : "your account's directory is not read yet here: try again in a moment");
+    // ONLY on the login that HOLDS THE ACCOUNT'S DATA — its spaces read here (a second group's logins read none of
+    // them). Whether the directory reads does not tell them apart (the owner's account, 10-13: its original login
+    // reads it, the second group's do not; a fork that sealed it over the other way round on fx).
+    const list = await (await ctx.require("space")).mine.strict();
+    if (list.complete === false) throw new Error("your spaces are still being read here: try again in a moment");
+    if (!list.some(s => s.kind === "server")) throw new Error("no space of yours reads on this login: run it on the login where your spaces show (the original one)");
     const st = mls.status();
-    say(`this login's group: epoch ${st.epoch}, ${st.members.length} node(s)`);
+    say(`this login's group: epoch ${st.epoch}, ${st.members.length} node(s); ${list.filter(s => s.kind === "server").length} space(s) read here`);
     // Every node of this group keeps its feeds listed (a node's key is in its credential: did ‖ owner ‖ node).
     const nodes = st.members.map(m => (m.cred ? String(m.cred).slice(136, 200) : null)).filter(k => /^[0-9a-f]{64}$/.test(k ?? ""));
-    const listed = await storage.repairDirectory(nodes);
-    say(`the directory made again: ${listed.length} row(s)`);
+    // THE DIRECTORY: made again only where it does not read here (sealed over by the other group); where it reads, kept,
+    // and every node of this group listed in it.
+    const dir = await storage.directoryState();
+    if (dir.s === "unreadable") say(`the directory made again: ${(await storage.repairDirectory(nodes)).length} row(s)`);
+    else if (dir.s === "present") say(`the directory reads here: kept (${(await storage.listNodes(nodes)).length} node(s) listed)`);
+    else throw new Error("your account's directory is not read yet here: try again in a moment");
     const sealed = await storage.resealOwn();
     say(`${sealed.length} table(s) of this node sealed under epoch ${st.epoch}`);
     const channel = await storage.table(CHANNEL);
@@ -451,7 +456,7 @@ export async function start(ctx) {
     say(`the account's channel points at this group from epoch ${st.epoch}: a words login now joins it`);
     await keyEvent("repaired", { epoch: st.epoch, tables: sealed.length });
     dispatchEvent(new CustomEvent("craftworks:keys"));
-    return { epoch: st.epoch, directory: listed.length, tables: sealed.length };
+    return { epoch: st.epoch, tables: sealed.length };
   }
 
   // NEW WORDS: every escrow sealed again for them (the old words open nothing after the change), and from now on escrows
