@@ -544,16 +544,42 @@ export async function start(ctx) {
     return (await publicSpace(id)) ?? (await edge.people()).about("follow", id);
   }
   // DISCOVER: the public spaces listed (their descriptions), each proved by its id (its owner), one per id.
+  // LEFTOVERS (FOUNDATION.md §5): a listing whose space does not OPEN — its public acts unread, or none of them counts
+  // (a space under keys nobody holds any more) — is left out, never shown as a space that opens nothing; how many,
+  // reported once a page (`leftover`).
+  const openable = new Map(); // space id → Promise<bool>, once a page
+  const opens = d =>
+    openable.get(d.id) ??
+    openable
+      .set(
+        d.id,
+        (async () => {
+          const pr = await (await ctx.require("roles")).ofPublic(d);
+          await pr.settled;
+          return pr.acts().length > 0;
+        })().catch(() => false),
+      )
+      .get(d.id);
+  let leftoverSaid = false;
   async function publicSpaces() {
     const seen = new Map();
     const lists = await (await ctx.require("moderation")).lists().catch(() => null);
+    const candidates = [];
     for (const d of await index.spaces().catch(() => [])) {
       if (!d?.id || seen.has(d.id) || !d.governance?.owner) continue;
       if ((await space.owner(d).catch(() => null)) !== d.governance.owner) continue;
       if (lists?.flagged({ space: d.id, by: d.governance.owner })) continue;
       seen.set(d.id, { id: d.id, name: String(d.name ?? "").slice(0, 100), kind: "server", governance: d.governance });
+      candidates.push(seen.get(d.id));
     }
-    return [...seen.values()];
+    const ok = await Promise.all(candidates.map(opens));
+    const shown = candidates.filter((_, i) => ok[i]);
+    const hidden = candidates.length - shown.length;
+    if (hidden && !leftoverSaid) {
+      leftoverSaid = true;
+      index.health({ k: "leftover", s: "spaces", why: `${hidden} of ${candidates.length} listed space(s) do not open: left out of Discover`, d: { hidden, of: candidates.length } }).catch(() => {});
+    }
+    return shown;
   }
 
   // POSTS AS DISCOVER's BAGS LIST THEM: each public space's (only listed spaces, not flagged) read from its pointed

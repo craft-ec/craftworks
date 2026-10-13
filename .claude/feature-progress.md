@@ -2444,4 +2444,8 @@ Build order (FOUNDATION §7):
       as "Not listed"). Verified on fx/fy v660–661: recovery complete without reload; Store remove → Home drops it →
       install back; Spaces app (base always on; enabling wiki → Wiki shows it); chat rail, board line, no picker,
       Contact's space sections. NOT built: apps in their own frames and apps not ours (the Store's catalog is the site's).
-- [ ] 9. Reset
+- [x] 9. Leftovers (no reset, owner 10-13) — Discover's listed spaces shown only if their public acts read and one
+      counts (`items.publicSpaces`; once a page per space); hidden ones counted (`leftover` health report). fx: 3 of 8
+      hidden — exactly the 3 with 0 acts AND no public description (two independent checks agree); the 5 that open
+      shown. People listings already dropped unopenable cards. Also fixed: "@layer …" text shown to people in three
+      places (contact's post count, account's block line, the delete confirm) — left by an earlier stylesheet edit.

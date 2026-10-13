@@ -253,9 +253,7 @@ export async function start(ctx) {
           it.edited ? btn("🕘 History", e => history.open(e.currentTarget, it.ref, { current: it, mayRestore: mine || !!it.mayEdit, restored: () => changed?.() })) : null,
           it.mayRemove
             ? btn(mine ? "Delete" : "Remove", async e => {
-                if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `@layer components {
-Confirm: ${mine ? "delete" : "remove"}
-}`));
+                if (e.target.dataset.armed !== "1") return ((e.target.dataset.armed = "1"), (e.target.textContent = `Confirm: ${mine ? "delete" : "remove"}`));
                 await items.remove(it.ref).then(() => removed?.(), fail);
               })
             : null,
