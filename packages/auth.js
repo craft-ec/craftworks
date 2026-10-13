@@ -34,9 +34,13 @@ export async function start(ctx) {
     return current;
   };
 
+  // Whether this page STARTED with nobody logged in (its first answer): a session opened later was a login made HERE
+  // (a PIN, recovery words, a registration) — the loader's resume is for that alone, never for a visit.
+  let startedOut = null;
   async function check() {
     if (current) return current;
     const w = await id.who();
+    startedOut ??= !w.unlocked;
     return w.unlocked ? opened(w) : null;
   }
 
@@ -153,6 +157,7 @@ export async function start(ctx) {
   }
 
   return {
+    loggedInHere: () => !!current && startedOut === true,
     check: ctx.total("auth.check", () => null, check), accept: opened, unlock, join, logout, current: () => current, identity: id,
     // `fn({ entropy, did, node, fresh })`, called after a words login or a registration, before the words are wiped.
     onJoined: f => joined.push(f),

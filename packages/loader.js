@@ -756,9 +756,12 @@ export async function run(boot) {
   // built on them (roles, spaces, names) RESUMED: the page saved (drafts) and loaded again where the person is. An
   // unreadable table that opens now changes in place (no resume).
   addEventListener("craftworks:reopen", async () => {
-    // (At most one resume a minute — remembered across the reload in the frame's name: its storage is refused here.)
-    const last = Number(/^cw-resumed:(\d+)$/.exec(window.name)?.[1] ?? 0);
-    if (Date.now() - last < 60000) return showAgain("tables opened again (resumed a moment ago: shown again instead)");
+    // ONLY after a login made on this page (recovery words, a PIN, a registration), and ONCE per tab — remembered across
+    // the reload in the frame's name (its storage is refused here). A visit never reloads: on a slow node every load
+    // opens tables before its keys are held, and a resume there reloaded every load, forever (live v385, 10-13).
+    const auth = loaded.has("auth") ? await require("auth").catch(() => null) : null;
+    if (!auth?.loggedInHere?.()) return showAgain("tables opened again with their keys");
+    if (/^cw-resumed:/.test(window.name)) return showAgain("tables opened again (resumed once already: shown again instead)");
     if (loaded.has("drafts") && !(await require("drafts").then(d => d.flush(), () => false))) return showAgain("tables opened again (a draft not saved: no resume)");
     window.name = `cw-resumed:${Date.now()}`;
     ctx.log("page", { what: "resumed: tables opened before their key was held, opened again with it" });
