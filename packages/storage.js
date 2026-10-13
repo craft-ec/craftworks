@@ -222,6 +222,8 @@ export async function start(ctx) {
   async function reopenAfterKeys() {
     // UNREADABLE ones: read again IN PLACE — a table that opens now changes, and whoever reads it draws again.
     for (const idHex of [...waiting]) live.get(idHex)?.reread().catch(() => {});
+    // A merged table's writer feeds that did not open: gathered again (merged in as they arrive).
+    for (const m of mergedNow.values()) m.retryFailed?.();
     // Opened with NO KEY: left behind only when its key is held NOW (its key is set when it opens) — one still without
     // a key stays as it is (never a loop of reopening what cannot open).
     const out = [];
@@ -1068,10 +1070,12 @@ export async function start(ctx) {
       // recovered its epochs) is left out and COUNTED, never fatal: this node writes only its own feed, so nothing it
       // cannot see is written over. Its own feed must open.
       let unopened = 0;
+      const failedOwners = new Set(); // writers whose feed did not open here: gathered again when keys arrive (R3)
       const opts = scope.opts(name);
       const theirs = (owner, known, cat = null) =>
         tail(owner, name, { known, ...(cat ? { catalog: cat } : {}), ...opts, lazy }).catch(e => {
           unopened += 1;
+          failedOwners.add(owner);
           ctx.failed("feed not read", e, `${name}: ${owner.slice(0, 12)}…: ${e.message}`);
           problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`, sp, name);
           return null;
@@ -1263,6 +1267,15 @@ export async function start(ctx) {
           await me.decided?.();
           await Promise.race([gathering, new Promise(r => setTimeout(r, WAIT.answer))]);
           return t.state;
+        },
+        // R3: the writers whose feed did not open here, GATHERED AGAIN (keys arrived since).
+        retryFailed: () => {
+          for (const o of [...failedOwners]) {
+            failedOwners.delete(o);
+            opened.delete(o);
+            unopened = Math.max(0, unopened - 1);
+            gather(o).catch(() => {});
+          }
         },
         // The tails it is built on (their ids, hex): what reopens it when one did not read.
         get built() {

@@ -53,7 +53,8 @@ export async function mount(ctx, el) {
         .dc.open .back { display: block; }
       }
     }</style>
-    <div class="dc">
+    <div class="dcw" style="display:flex;min-height:420px"><nav class="rail" aria-label="Spaces"></nav>
+    <div class="dc" style="flex:1">
       <aside class="side"><h2>—</h2><div class="chans"></div><p class="said" hidden></p></aside>
       <button type="button" class="back cw-flat">‹ Back</button>
       <section class="room"></section>
@@ -63,7 +64,10 @@ export async function mount(ctx, el) {
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Start</button></div></form></dialog>
       <dialog class="ask"><form method="dialog"><label><span></span><input name="answer" autocomplete="off" required></label>
         <div class="row"><button value="cancel" formnovalidate>Cancel</button><button value="ok">Create</button></div></form></dialog>
-    </div>`;
+    </div></div>`;
+  // CHAT's PLACES, as Discord shows them: a RAIL of spaces beside it — You (your conversations), each space with chat
+  // on, Discover (`places`: the one list; how it is drawn is Chat's).
+  ctx.require("places").then(p => p.rail(el.querySelector(".rail")), () => {});
   const $ = s => el.querySelector(s);
   // A click outside a question (on its backdrop) cancels it, as Esc does.
   $(".ask").addEventListener("click", e => e.target === e.currentTarget && e.currentTarget.close("cancel"));

@@ -82,11 +82,15 @@ export async function mount(ctx, el) {
     // a shared space's are on its own Home), each with its pill (what is new: `activity`) and its pin (`app:<route>`).
     let activity = null;
     const icons = await ctx.require("app-icons");
-    const personal = ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal"));
+    // Only the apps INSTALLED (`installed`: the App Store's; every app until it is removed).
+    const installed = await ctx.require("installed");
+    let have = new Set((await installed.list().catch(() => ctx.apps)).map(a => a.route));
+    const personal = () => ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal") && have.has(a.route));
     const desk = icons.desk(el.querySelector(".desk"), {
-      items: () => personal.map(a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0 })),
+      items: () => personal().map(a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0 })),
       pinKey: a => `app:${a.route}`,
     });
+    addEventListener("craftworks:installed", async () => ((have = new Set((await installed.list()).map(a => a.route))), desk.redraw()), { signal: ctx.signal });
     // What is new in each app: its badge, kept current.
     ctx.require("activity").then(a => {
       activity = a;

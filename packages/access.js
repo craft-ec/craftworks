@@ -18,7 +18,14 @@ export async function start(ctx) {
   function grant(name) {
     if (asked.has(name)) return asked.get(name);
     const list = ctx.uses.includes(name) ? ctx.uses.filter(t => !asked.has(t)) : [name];
-    const p = auth.identity.grant(list).then(
+    // At most MAX_GRANT (32) tables a grant (the identity delegate refuses a longer list WHOLE — 10-13: a 33rd table
+    // in `uses` made every write of the site fail): asked in batches, granted when every batch is.
+    const MAX_GRANT = 32;
+    const batches = [];
+    for (let i = 0; i < list.length; i += MAX_GRANT) batches.push(list.slice(i, i + MAX_GRANT));
+    const p = Promise.all(batches.map(b => auth.identity.grant(b)))
+      .then(gs => ({ granted: gs.every(g => g.granted), refused: gs.find(g => !g.granted)?.refused }))
+      .then(
       g => {
         ctx.log(g.granted ? "allowed" : "not allowed", { what: `${list.join(", ")}${g.granted ? "" : `: ${g.refused ?? JSON.stringify(g)}`}` });
         return !!g.granted;

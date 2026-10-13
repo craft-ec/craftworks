@@ -24,8 +24,10 @@
 //   r.missing()              // acts other acts name that this reader does not have (its view of the space is short)
 //   r.owner                  // who owns it now (a `transfer` act hands it on)
 //   r.invites()              // the invite codes in force: [{ code, by, at, expires, uses, admitted }]
-//   r.apps()                 // the APPS the space uses (chat, board, note): an `app` act ({ app, on }) adds or
-//                            // removes one; a new space has none (its Home and settings only)
+//   r.enabled()              // the CAPABILITIES its owner enabled (ARCHITECTURE §1, "The desktop"): its domains
+//                            // (text, video, chat, wiki, vote …) and features (comments, reactions, mail) — the one
+//                            // list the space keeps; `r.enable(cap, on)` changes it (an `app` act naming the capability)
+//   r.apps()                 // the APPS that show it: each whose manifest `needs` it enables (none: Home and settings)
 //   ACCESS, like row-level security: POLICIES `{ path, action, who }` (a `policy` act, by who may `apps`; `read` by
 //   the owner only), INHERITED along the path — an item (`board/p/<id>`), a container (`chat/<channel>`), an app
 //   (`board`), the space (""): the most specific wins, else its parent's, else the default. Actions: read, post,
@@ -55,6 +57,22 @@ export async function start(ctx) {
   // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
   // text, video, audio, note, caption, file …), else the space's. `DOMAINS`: every domain a policy can name.
   const DOMAINS = ["text", "video", "audio", "image", "book", "caption", "note", "file", "chat", "form", "wiki", "vote"];
+  // A space's CAPABILITIES: what its owner enables — its domains and the features on them. Apps compose from these:
+  // an app shows the space when the space enables what the app `needs` (its manifest entry), and draws only what is on.
+  const FEATURES = ["comments", "reactions", "mail", "contact"];
+  const CAPABILITIES = [...DOMAINS, ...FEATURES];
+  // BASE (owner 10-13): what every space has from its first member and never turns off — its people (contact: the
+  // members), chat and mail (the basic ways to reach it; Form's answers go by its mail).
+  const BASE = ["chat", "mail", "contact"];
+  // The apps a list of enabled names opens: each app whose `needs` are all on (and, until the reset, an app turned on
+  // by its own name by an older act).
+  const appsFor = on => {
+    const caps = new Set(on);
+    return (ctx.apps ?? [])
+      .filter(a => ((a.needs ?? []).length && a.needs.every(n => caps.has(n))) || caps.has(a.route.slice(1)))
+      .map(a => a.route.slice(1))
+      .sort();
+  };
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
   const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
@@ -269,7 +287,15 @@ export async function start(ctx) {
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       missing: () => (out ? [] : dag.missing(new Set(t.rows().map(x => x.key)))),
       invites: () => JSON.parse(gv.invites(Date.now())),
-      apps: () => gv.apps(),
+      enabled: () => [...new Set([...BASE, ...gv.apps().filter(x => CAPABILITIES.includes(x))])],
+      base: () => BASE,
+      enable: (cap, on) => {
+        if (!CAPABILITIES.includes(cap)) throw new Error(`"${cap}" is not a capability a space enables`);
+        if (BASE.includes(cap)) throw new Error(`${cap} is always on in a space`);
+        return r.act({ act: "app", app: cap, on: !!on });
+      },
+      capabilities: () => CAPABILITIES,
+      apps: () => appsFor([...BASE, ...gv.apps()]),
       // LISTS of named people (`{ id: { by, people } }`): audiences by name (`list:<id>`), any member's to make.
       lists: () => {
         try {
@@ -430,6 +456,9 @@ export async function start(ctx) {
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,
+        // (The personal space is the person's: every capability on.)
+        enabled: () => CAPABILITIES,
+        capabilities: () => CAPABILITIES,
         apps: () => ["board", "video", "audio", "image", "book"],
         act: async ({ act, path, action, who }) => {
           if (act !== "policy") throw new Error("a personal space keeps policies only");

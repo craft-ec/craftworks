@@ -11,6 +11,8 @@
 //   EDIT         `…/blog/edit/<ref>`     a published article changed (a new version: its history kept)
 // UI only. Its look is `theme`'s tokens; what an item is, `items`'; who may, `roles`'.
 export async function mount(ctx, el) {
+  // WHERE it is — its spaces — shown as this app chooses (`places`: a subtle group line).
+  ctx.require("places").then(p => p.attach(el, "group"), () => {});
   const [items, press, theme, space, cards, markdown, attachments, directory, person] = await Promise.all(
     ["items", "blog-press", "theme", "space", "cards", "markdown", "attachments", "directory", "person"].map(n => ctx.require(n)),
   );

@@ -47,6 +47,23 @@ export async function mount(ctx, el) {
       said.hidden = false;
     });
   await list.show(el.querySelector(".list"));
+  // EVERY SPACE's PEOPLE, here too (owner 10-13: contact is in every space — its members — so Contact shows them all,
+  // as it chooses: each space its own section, opened when wanted; no switching between spaces).
+  const [ml, space] = await Promise.all([ctx.require("members-list"), ctx.require("space")]);
+  const spaces = (await space.mine().catch(() => [])).filter(s => s.kind === "server");
+  for (const sp of spaces) {
+    const d = Object.assign(document.createElement("details"), { className: "space-people" });
+    d.style.cssText = "padding:0 var(--cw-space-3)";
+    const sum = Object.assign(document.createElement("summary"), { textContent: `${space.shown(sp)} · people` });
+    d.append(sum);
+    let shown = false;
+    d.ontoggle = async () => {
+      if (!d.open || shown) return;
+      shown = true;
+      d.append(await ml.show(sp, { manage: false }).catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) })));
+    };
+    el.querySelector(".ct").append(d);
+  }
 }
 
 // A SPACE's Contact: its people and their roles — the one list (`members-list`), with its tools for who may — and,

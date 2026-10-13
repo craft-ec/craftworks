@@ -9,6 +9,8 @@
 // UI only: posts are `posts`', names `directory`'s, and a name opens the one `person` menu (follow; in a space, its
 // role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
+  // WHERE it is — its spaces — shown as this app chooses (`places`: a subtle group line).
+  ctx.require("places").then(p => p.attach(el, "group"), () => {});
   const [posts, directory, person, theme, space, roles, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "cards"].map(n => ctx.require(n)));
   const me = await space.me();
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.

@@ -25,8 +25,10 @@ no space dropdown and no app dropdown.
   before it is installed.
 - **Spaces** (an app): make, join and find spaces; a space's members, roles, invites and bans; and the space's
   **enabled capabilities** — the one list its owner maintains: the domains that live in it (`roles`' `DOMAINS`: text,
-  video, audio, image, book, caption, note, file, chat, form, wiki, vote) and the features on them (comments, votes,
-  reactions, mail), each with its read/write policy. Enabling and disabling are the space's acts (`enable`, `disable`,
+  video, audio, image, book, caption, note, file, chat, form, wiki, vote) and the features on them (comments,
+  reactions, mail, contact), each with its read/write policy. Its BASE is always on and never turned off (owner
+  2026-10-13): contact (its members — there from the first one), chat and mail (the basic ways to reach it; Form's
+  answers go by mail). Enabling and disabling are the space's acts (`enable`, `disable`,
   replacing `app`), so roles decide who may. A SHARED space is made and joined by invite: one governance log every app
   on it reads. The PERSONAL space is the person, not an entry here.
 - **Settings** (an app): the system's — account, devices, each app's permissions, node, appearance.
@@ -34,11 +36,13 @@ no space dropdown and no app dropdown.
   those it can use. It shows a space when the space enables what it needs, and draws only what is enabled (no comment
   box where comments are off). No app is ever added to a space: an app installed later, ours or anyone's, works on
   every space that enables what it needs, and a capability disabled disappears from every app at once.
-- **Spaces inside an app are the app's.** An app shows, in its own sidebar, You (personal), the spaces the person is in
-  that it can show, and Discover where it has a public view — as Mail lists its accounts. The app decides what a space
-  is in its words and layout (Board: a community; Video: a channel; Chat: a server with channels). A SHARED view never
-  crosses spaces; the PERSONAL view may gather across every space the person is in (Board's Feed, unread across
-  spaces). Messages is personal only: conversations between equals — who needs governance makes a space.
+- **Spaces inside an app are the app's.** There is no switcher of spaces: each app shows them in its own terms and
+  layout (owner 2026-10-13) — Chat a RAIL of spaces (Discord's), Board and Blog a subtle "in: …" GROUP line (Reddit's),
+  Video a CHANNEL, Audio and Book a COLLECTION, Contact every space's people in one list — reached through what the app
+  shows (a channel's page, what you follow), as YouTube or Spotify do. One list of where an app can be (`places`) feeds
+  them all; the loader draws none. A SHARED view never crosses spaces; the PERSONAL view may gather across every space
+  the person is in (Board's Feed, unread across spaces). Messages is personal only: conversations between equals — who
+  needs governance makes a space.
 - **An app defines its own settings and its space configuration**: a settings schema in its manifest, its settings
   inside the app. A space's values are the space's `config` acts, so roles decide who may change them; `app-settings`
   is the one renderer of those schemas, not a page holding every app's fields.

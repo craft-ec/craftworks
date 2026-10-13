@@ -79,9 +79,12 @@ export async function mount(ctx, el) {
     const openSettings = tab => (location.hash = `#/s/${sp.id}/settings${tab && tab !== "overview" ? `/${tab}` : ""}`);
     // Its apps, as every Home shows them (`app-icons`): a pill with what is new (Chat: its unread), and — for who may —
     // the apps it does not use yet, dimmed, with Add.
+    // ADD an app: what it NEEDS enabled — the space's capabilities (ARCHITECTURE §1): every app that needs no more
+    // shows it too.
     const add = k => async () => {
       try {
-        await r.act({ act: "app", app: k, on: true });
+        const a = sharedApps.find(x => keyOf(x) === k);
+        for (const cap of a?.needs ?? []) await r.enable(cap, true);
         // Chat added: its first channel, if it has none.
         if (k === "chat") {
           const c = await conversation.channels(sp);
@@ -107,7 +110,8 @@ export async function mount(ctx, el) {
       pinKey: a => `app:/s/${sp.id}${a.route}`,
       empty: "No apps yet: its owner or an admin adds them.",
     });
-    const removable = may ? sharedApps.filter(a => !a.always && on.includes(keyOf(a))) : [];
+    // (What the space enables — and so which apps show it — is kept in ONE list: the Spaces app's.)
+    const capabilities = may ? h("p", {}, h("a", { href: `#/spaces/${sp.id}`, textContent: "Capabilities" }), ` · ${r.enabled().join(", ") || "none enabled"}`) : null;
     root.replaceChildren(
       ...[
       h(
@@ -121,20 +125,7 @@ export async function mount(ctx, el) {
         h("p", {}, h("a", { href: `#/s/${sp.id}/contact`, textContent: r.membersText() }), ` · you: ${r.role(me) ?? "member"}`),
       ),
       appGrid,
-      removable.length
-        ? h(
-            "section",
-            {},
-            h("h3", { textContent: "Remove an app" }),
-            h(
-              "ul",
-              {},
-              ...removable.map(a =>
-                h("li", { onclick: () => r.act({ act: "app", app: keyOf(a), on: false }).then(draw, e => ((said.textContent = ctx.say(e)), (said.hidden = false))) }, `Remove ${a.name}`),
-              ),
-            ),
-          )
-        : null,
+      capabilities,
       said,
       ].filter(Boolean),
     );

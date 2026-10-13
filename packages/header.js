@@ -293,52 +293,13 @@ export function mount(ctx, el) {
     return l;
   };
 
-  // THE APP SWITCHER: the apps of the space open (a shared space: its Home and the apps it uses; Personal: Home and the
-  // apps with a personal view). Logged out: "Home".
-  let drawing = 0;
-  const watched = new Set();
-  async function switcher() {
-    const n = ++drawing;
+  // THE APP's NAME (ARCHITECTURE §1, "The desktop": no space dropdown, no app dropdown — apps are opened from Home, and
+  // where an app is, its spaces, is the APP's to show: `places`, as its manifest says).
+  function switcher() {
     const box = el.querySelector(".name");
     const app = ctx.apps.find(a => a.route === ctx.route);
     const here = ctx.route === "/" || ctx.route === "/space" ? "Home" : ctx.route === "/settings" ? "Settings" : (app?.name ?? "");
-    // Asked quietly (never a login dialog: the header is on every page).
-    const session = await ctx.require("auth").then(a => a.check()).catch(() => null);
-    if (n !== drawing) return;
-    if (!session) return box.replaceChildren(here);
-    let entries, who;
-    // WHAT IS NEW per app (`activity`: the same counts as each Home's tiles) — redrawn as they change.
-    const activity = await ctx.require("activity").catch(() => null);
-    if (activity && !watched.has("activity")) (watched.add("activity"), activity.onChange(() => switcher()));
-    // (DISCOVER is your personal space's: each app's Discover tab — the personal apps here, as at home.)
-    if (ctx.space && ctx.space !== "discover") {
-      const space = await ctx.require("space");
-      const sp = (await space.mine()).find(s => s.id === ctx.space);
-      const r = sp ? await (await ctx.require("roles")).of(sp) : null;
-      const on = r ? r.apps() : [];
-      // The space's apps changing (one added or removed): the switcher again.
-      if (r && !watched.has(sp.id)) {
-        watched.add(sp.id);
-        r.onChange(() => ctx.space === sp.id && switcher());
-      }
-      entries = [
-        { label: `${await (await ctx.require("spaces-panel")).here()} · Home`, href: `#/s/${ctx.space}`, on: ctx.route === "/space" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("shared") && (a.always || on.includes(a.route.slice(1)))).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#/s/${ctx.space}${a.route}`, on: a.route === ctx.route, count: activity && ["chat", "board"].includes(a.route.slice(1)) ? activity.of(ctx.space, a.route.slice(1)) : 0 })),
-      ];
-    } else if ((who = await ctx.require("where").then(w => w.personOf())) && who !== (await ctx.require("space").then(s => s.account()))?.id) {
-      // A PERSON's space: their Home and the apps that show someone's space (the manifest's `person` view) — staying theirs.
-      const name = (await ctx.require("directory")).shown(who, await (await ctx.require("directory")).handle(who).catch(() => null));
-      entries = [
-        { label: `${name} · Home`, href: `#/u/${who}`, on: ctx.route === "/" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("person")).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: `#${a.route}/u/${who}`, on: a.route === ctx.route })),
-      ];
-    } else
-      entries = [
-        { label: "Home", href: "#/", on: ctx.route === "/" },
-        ...ctx.apps.filter(a => (a.views ?? []).includes("personal")).map(a => ({ label: `${a.icon ?? ""} ${a.name}`, href: a.route, on: a.route === ctx.route, count: a.counts && activity ? activity.total(a.counts) : 0 })),
-      ].map(e => ({ ...e, href: e.href.startsWith("#") ? e.href : `#${e.href}` }));
-    if (n !== drawing) return;
-    box.replaceChildren(dropdown(here, entries, link));
+    box.replaceChildren(app ? `${app.icon ?? ""} ${here}` : here);
   }
 
   // THE SPACE you are in: its name (logged in); a click opens the spaces panel. What is unread in your other spaces on it.
@@ -352,9 +313,11 @@ export function mount(ctx, el) {
   if (typeof ResizeObserver === "function") new ResizeObserver(more).observe(tabsEl);
   new MutationObserver(more).observe(tabsEl, { childList: true, subtree: true });
   const spaceB = el.querySelector(".space-name");
-  spaceB.onclick = () => ctx.require("spaces-panel").then(p => p.open());
+  // (No space dropdown: spaces are the Spaces app's, and each app shows its own places.)
+  spaceB.hidden = true;
   let naming = 0;
   async function spaceName() {
+    if (spaceB.hidden) return;
     const n = ++naming;
     const session = await ctx.require("auth").then(a => a.check()).catch(() => null);
     if (n !== naming) return;

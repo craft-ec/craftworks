@@ -1336,9 +1336,9 @@ export async function start(ctx) {
     const r = await (await ctx.require("roles")).of(sp);
     const g = await groups.of(audienceKey(sp, who), {
       name: `${space.shown(sp)} · ${who.startsWith("role:") ? (r.roles().find(x => `role:${x.id}` === who)?.name ?? "a role") : who.startsWith("list:") ? "chosen people" : who}`,
-      // Its apps: the space's (whatever kind is kept for this audience).
+      // Its capabilities: the space's (whatever kind is kept for this audience).
       setup: async (_, gr) => {
-        for (const app of r.apps()) await gr.act({ act: "app", app, on: true });
+        for (const cap of r.enabled()) await gr.enable(cap, true);
       },
     });
     await keepReaders(sp).catch(e => ctx.failed("audiences", e, `${space.shown(sp)}: ${e.message}`));

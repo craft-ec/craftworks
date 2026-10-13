@@ -2431,5 +2431,17 @@ Build order (FOUNDATION §7):
       made it wait up to 120 s: pages closed before reporting); one job tick at a time (a resume from RUNNING, reported
       ×11 — control: the old runner fails the race test). Verified on fx/fy v656–657: recovery complete without reload,
       visits arrive, no lifecycle bugs; tests 14/14.
-- [ ] 8. Desktop (App Store, Spaces app with enabled capabilities, Settings)
+- [x] 8. Desktop — a space keeps its ENABLED CAPABILITIES (`roles.enabled/enable/capabilities/base`; carried by the
+      existing `app` act naming the capability — no core change); chat, mail, contact are its BASE (always on, never
+      off — owner 10-13); each app's manifest names what it `needs` and `roles.apps()` derives from that. SPACES app
+      (`#/spaces`: your spaces, make, join; `#/spaces/<id>`: its capabilities, the apps that show it, its settings).
+      INSTALLED apps (`installed` table; every app until removed; system apps always) and the APP STORE (`#/store`);
+      Home shows the installed ones. Header: the app's name only — no space dropdown, no app dropdown. WHERE an app is
+      is the APP's own (`places`: one list; Chat draws a Discord rail, Board and Blog a subtle "in: …" line; Video,
+      Audio, Book, Wiki … show spaces in their own terms with no switcher; Contact lists every space's people). FIXED:
+      grants asked in batches of ≤32 (the identity delegate refuses a longer list WHOLE: the 33rd table broke every
+      write); a merged table's writer feeds that failed before keys arrived are gathered again (recovery read the space
+      as "Not listed"). Verified on fx/fy v660–661: recovery complete without reload; Store remove → Home drops it →
+      install back; Spaces app (base always on; enabling wiki → Wiki shows it); chat rail, board line, no picker,
+      Contact's space sections. NOT built: apps in their own frames and apps not ours (the Store's catalog is the site's).
 - [ ] 9. Reset

@@ -147,6 +147,13 @@ export async function start(ctx) {
     await (await ctx.require("keys")).group(sp).create();
     await (await (await ctx.require("storage")).table(SPACES)).put(sp.id, JSON.stringify(v));
     ctx.log("space", { what: `${kind} “${name}” made: ${sp.id.slice(0, 12)}…` });
+    // CHAT is always on in a space (owner 10-13: chat, mail and contact are its BASE — `roles`): its first channel made.
+    if (kind === "server")
+      await (async () => {
+        const c = await (await ctx.require("conversation")).channels(sp);
+        await c.settled;
+        if (!c.list().length) await c.add("general");
+      })().catch(e => ctx.failed("space", e, `${name}: its first capabilities not enabled: ${e?.message ?? e}`));
     return sp;
   }
 

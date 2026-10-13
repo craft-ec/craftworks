@@ -37,7 +37,8 @@ export async function start(ctx) {
       name: `${AUDIENCES[which].name} of ${handle || "me"}`,
       // Its place (a board): its owner posts; its members read, comment and vote.
       setup: async (_, r) => {
-        await r.act({ act: "app", app: "board", on: true });
+        // (Its board: what it needs, enabled — posts, comments, reactions.)
+        for (const cap of ["text", "comments", "reactions"]) await r.enable(cap, true);
         await r.act({ act: "policy", path: "", action: "post", who: "admins" });
       },
     });
@@ -57,7 +58,8 @@ export async function start(ctx) {
       setup: async (sp, r) => {
         await index.openRequests((await ctx.require("conversation")).levelCode(sp.id));
         await r.act({ act: "policy", path: "", action: "join", who: `level:${lv}` });
-        await r.act({ act: "app", app: "board", on: true });
+        // (Its board: what it needs, enabled — posts, comments, reactions.)
+        for (const cap of ["text", "comments", "reactions"]) await r.enable(cap, true);
         await r.act({ act: "policy", path: "", action: "post", who: "admins" });
       },
     });
