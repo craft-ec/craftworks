@@ -74,7 +74,10 @@ impl KeyRef {
     pub fn of(raw: &[u8]) -> Option<(KeyRef, usize)> {
         match *raw.first()? {
             SEALED if raw.get(1) == Some(&0) => Some((KeyRef::Table, 2)),
-            SEALED_EPOCH => Some((KeyRef::Epoch(u64::from_be_bytes(raw.get(1..9)?.try_into().ok()?)), 9)),
+            SEALED_EPOCH => Some((
+                KeyRef::Epoch(u64::from_be_bytes(raw.get(1..9)?.try_into().ok()?)),
+                9,
+            )),
             _ => None,
         }
     }
@@ -111,27 +114,49 @@ pub fn seal_key(tk: &[u8; 32], by: KeyRef, key: &[u8]) -> Vec<u8> {
     let head = by.header();
     let k = subkey(tk, "craftworks 2026-09-28 sealed row key");
     let n = nonce(&k, &[key]);
-    [&head[..], &n, &aead(&k, &n, &head, key, false).expect("seals")].concat()
+    [
+        &head[..],
+        &n,
+        &aead(&k, &n, &head, key, false).expect("seals"),
+    ]
+    .concat()
 }
 
 /// A row value, sealed and BOUND to its sealed key (a value moved to another row does not open).
 pub fn seal_value(tk: &[u8; 32], by: KeyRef, sealed_key: &[u8], value: &[u8]) -> Vec<u8> {
     let k = subkey(tk, "craftworks 2026-09-28 sealed row value");
     let n = nonce(&k, &[sealed_key, value]);
-    [&by.header()[..], &n, &aead(&k, &n, sealed_key, value, false).expect("seals")].concat()
+    [
+        &by.header()[..],
+        &n,
+        &aead(&k, &n, sealed_key, value, false).expect("seals"),
+    ]
+    .concat()
 }
 
 pub fn open_key(tk: &[u8; 32], raw: &[u8]) -> Option<Vec<u8>> {
     let (_, hl) = KeyRef::of(raw)?;
     let (head, rest) = raw.split_at(hl);
     let (n, ct) = rest.split_at_checked(24)?;
-    aead(&subkey(tk, "craftworks 2026-09-28 sealed row key"), n.try_into().ok()?, head, ct, true)
+    aead(
+        &subkey(tk, "craftworks 2026-09-28 sealed row key"),
+        n.try_into().ok()?,
+        head,
+        ct,
+        true,
+    )
 }
 
 pub fn open_value(tk: &[u8; 32], sealed_key: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
     let (_, hl) = KeyRef::of(raw)?;
     let (n, ct) = raw[hl..].split_at_checked(24)?;
-    aead(&subkey(tk, "craftworks 2026-09-28 sealed row value"), n.try_into().ok()?, sealed_key, ct, true)
+    aead(
+        &subkey(tk, "craftworks 2026-09-28 sealed row value"),
+        n.try_into().ok()?,
+        sealed_key,
+        ct,
+        true,
+    )
 }
 
 /// A tree block SEALED WHOLE (its Block state, `kind ‖ body`), bound to its id. The nonce comes from the key and the
@@ -140,14 +165,25 @@ pub fn seal_block(tk: &[u8; 32], by: KeyRef, cid: &Cid, state: &[u8]) -> Vec<u8>
     let head = by.header();
     let k = subkey(tk, "craftworks 2026-09-28 sealed block");
     let n = nonce(&k, &[cid]);
-    [&head[..], &n, &aead(&k, &n, &[&head[..], cid].concat(), state, false).expect("seals")].concat()
+    [
+        &head[..],
+        &n,
+        &aead(&k, &n, &[&head[..], cid].concat(), state, false).expect("seals"),
+    ]
+    .concat()
 }
 
 pub fn open_block(tk: &[u8; 32], cid: &Cid, raw: &[u8]) -> Option<Vec<u8>> {
     let (_, hl) = KeyRef::of(raw)?;
     let (head, rest) = raw.split_at(hl);
     let (n, ct) = rest.split_at_checked(24)?;
-    aead(&subkey(tk, "craftworks 2026-09-28 sealed block"), n.try_into().ok()?, &[head, cid].concat(), ct, true)
+    aead(
+        &subkey(tk, "craftworks 2026-09-28 sealed block"),
+        n.try_into().ok()?,
+        &[head, cid].concat(),
+        ct,
+        true,
+    )
 }
 
 /// Where a sealed block lives: a keyed hash of its id under the table's own key (the Sealed contract's params). Only
@@ -249,7 +285,8 @@ struct Rows {
 impl Open {
     /// Table `table` of the account whose data key is `key`.
     pub fn new(tail_code: &[u8], key: &[u8; 32], table: &str) -> Open {
-        let params = contract_keys::register_params(key, &[b"t/".as_slice(), table.as_bytes()].concat());
+        let params =
+            contract_keys::register_params(key, &[b"t/".as_slice(), table.as_bytes()].concat());
         let writer = Writer::new(&params).expect("our own params parse");
         Open {
             params,
@@ -347,8 +384,32 @@ impl Open {
 
     /// The key the tree names as the one it is sealed with (see [`SEALED_TREE`]) — `(which, its id)`; `None`: no tree
     /// yet (or a public one).
+    /// WHY a sealed tree does not open here, with what settles it (a support read tells a missing epoch from another
+    /// branch's key): the key the tree names, whether this page holds that epoch at all, and the epochs it holds.
+    fn sealed_why(&self) -> String {
+        let held: Vec<u64> = self.epochs.keys().copied().collect();
+        let held = match held.len() {
+            0 => "none".to_string(),
+            n if n <= 6 => format!("{held:?}"),
+            n => format!("{n}: {}..{}", held[0], held[n - 1]),
+        };
+        match self.tree_key_ref() {
+            Some((KeyRef::Epoch(e), _)) if self.no_key.contains(&e) => format!("its tree is sealed with a key this page does not hold (epoch {e}: no key here; held {held})"),
+            Some((KeyRef::Epoch(e), _)) => format!("its tree is sealed with a key this page does not hold (epoch {e}: the key held here does not open it — another branch's; held {held})"),
+            Some((KeyRef::Table, _)) => "its tree is sealed with a key this page does not hold (the table's own key)".into(),
+            None => "its tree is sealed with a key this page does not hold (it names no key)".into(),
+        }
+    }
+
     fn tree_key_ref(&self) -> Option<(KeyRef, [u8; 32])> {
-        let v = self.writer.current()?.body.entries.get(SEALED_TREE)?.value.clone()?;
+        let v = self
+            .writer
+            .current()?
+            .body
+            .entries
+            .get(SEALED_TREE)?
+            .value
+            .clone()?;
         let (by, hl) = KeyRef::of(&v)?;
         Some((by, v.get(hl..hl + 32)?.try_into().ok()?))
     }
@@ -356,7 +417,9 @@ impl Open {
     /// A tree that names no key (written before the fresh start of 2026-10-04): read as no tree at all — the tail's own
     /// rows are the table — and built again, in the current form, by the next flush. Nothing written since lacks it.
     fn tree_from_before(&self) -> bool {
-        self.sealed_tree() && self.tree_key_ref().is_none() && self.writer.current().is_some_and(|t| t.body.root.is_some())
+        self.sealed_tree()
+            && self.tree_key_ref().is_none()
+            && self.writer.current().is_some_and(|t| t.body.root.is_some())
     }
 
     /// THE key the tree's blocks are sealed with and their addresses come from: found by its id among the keys held
@@ -421,7 +484,14 @@ impl Open {
     /// deleted.
     fn row_ops(&self, key: &[u8], value: &[u8]) -> Option<Vec<Op>> {
         if self.public {
-            return Some(vec![if value.is_empty() { Op::Delete { key: key.to_vec() } } else { Op::Set { key: key.to_vec(), value: value.to_vec() } }]);
+            return Some(vec![if value.is_empty() {
+                Op::Delete { key: key.to_vec() }
+            } else {
+                Op::Set {
+                    key: key.to_vec(),
+                    value: value.to_vec(),
+                }
+            }]);
         }
         let by = self.writes?;
         let tk = self.key_for(by)?;
@@ -429,10 +499,17 @@ impl Open {
         let mut ops = vec![if value.is_empty() {
             Op::Delete { key: sk.clone() }
         } else {
-            Op::Set { value: seal_value(&tk, by, &sk, value), key: sk.clone() }
+            Op::Set {
+                value: seal_value(&tk, by, &sk, value),
+                key: sk.clone(),
+            }
         }];
         if let Some((old, _)) = self.stale.get(key) {
-            ops.extend(old.iter().filter(|o| **o != sk).map(|o| Op::Delete { key: o.clone() }));
+            ops.extend(
+                old.iter()
+                    .filter(|o| **o != sk)
+                    .map(|o| Op::Delete { key: o.clone() }),
+            );
         }
         Some(ops)
     }
@@ -445,8 +522,15 @@ impl Open {
         let mut ops = Vec::new();
         for (k, (old, v)) in self.stale.iter().take(n) {
             let sk = seal_key(&tk, by, k);
-            ops.push(Op::Set { value: seal_value(&tk, by, &sk, v), key: sk.clone() });
-            ops.extend(old.iter().filter(|o| **o != sk).map(|o| Op::Delete { key: o.clone() }));
+            ops.push(Op::Set {
+                value: seal_value(&tk, by, &sk, v),
+                key: sk.clone(),
+            });
+            ops.extend(
+                old.iter()
+                    .filter(|o| **o != sk)
+                    .map(|o| Op::Delete { key: o.clone() }),
+            );
         }
         if ops.is_empty() {
             return None;
@@ -469,7 +553,9 @@ impl Open {
         if !self.sealed_tree() {
             return self.take_block(want, state);
         }
-        let Some((by, _)) = KeyRef::of(state) else { return false };
+        let Some((by, _)) = KeyRef::of(state) else {
+            return false;
+        };
         let keys = self.keys_for(by);
         if keys.is_empty() {
             self.locked.insert(*want, state.to_vec());
@@ -500,30 +586,55 @@ impl Open {
                 Some((KeyRef::Epoch(e), _)) if !self.no_key.contains(&e) => {
                     keys.insert(e);
                 }
-                Some((by, _)) => return Err(format!("a tree block is sealed with a key this node does not hold ({by:?})")),
+                Some((by, _)) => {
+                    return Err(format!(
+                        "a tree block is sealed with a key this node does not hold ({by:?})"
+                    ))
+                }
             }
         }
-        Ok(if keys.is_empty() { Step::Need(fetch) } else { Step::Keys(keys.into_iter().collect()) })
+        Ok(if keys.is_empty() {
+            Step::Need(fetch)
+        } else {
+            Step::Keys(keys.into_iter().collect())
+        })
     }
 
     /// Pending rows in the tail (its own rows are not ones).
     pub fn pending_rows(&self) -> usize {
-        self.writer.body().entries.keys().filter(|k| k.first() != Some(&0)).count()
+        self.writer
+            .body()
+            .entries
+            .keys()
+            .filter(|k| k.first() != Some(&0))
+            .count()
     }
 
     /// The root's parity ids, as the tail names them.
     pub fn root_parity_ids(&self) -> Vec<Cid> {
         let body = self.writer.body();
-        let Some(e) = body.entries.get(ROOT_PARITY) else { return Vec::new() };
-        e.value.as_deref().unwrap_or_default().chunks_exact(32).map(|c| c.try_into().expect("32")).collect()
+        let Some(e) = body.entries.get(ROOT_PARITY) else {
+            return Vec::new();
+        };
+        e.value
+            .as_deref()
+            .unwrap_or_default()
+            .chunks_exact(32)
+            .map(|c| c.try_into().expect("32"))
+            .collect()
     }
 
     /// The table's ASSET (phase 4, Lifecycle: what keeping it keeps): every block its current tree reaches, in the
     /// groups they are coded in — the root's group of one, then each node's groups (a branch's children, a leaf's
     /// values), each `k` members then their parity. `Need` the nodes not held yet (the walk descends through them).
     pub fn asset(&self) -> Result<Step<Vec<AssetGroup>>, String> {
-        let Some(root) = self.writer.body().root else { return Ok(Step::Ready(Vec::new())) };
-        let mut groups = vec![AssetGroup { slots: [vec![root], self.root_parity_ids()].concat(), k: 1 }];
+        let Some(root) = self.writer.body().root else {
+            return Ok(Step::Ready(Vec::new()));
+        };
+        let mut groups = vec![AssetGroup {
+            slots: [vec![root], self.root_parity_ids()].concat(),
+            k: 1,
+        }];
         let (mut stack, mut seen, mut need) = (vec![root], BTreeSet::new(), Vec::new());
         while let Some(cid) = stack.pop() {
             if !seen.insert(cid) {
@@ -533,13 +644,20 @@ impl Open {
                 need.push(cid);
                 continue;
             };
-            let node = freenet_prolly::node::Node::parse(bytes).map_err(|e| format!("tree node {} does not parse: {e:?}", hex(&cid)))?;
+            let node = freenet_prolly::node::Node::parse(bytes)
+                .map_err(|e| format!("tree node {} does not parse: {e:?}", hex(&cid)))?;
             let ids: Vec<Cid> = node.parity().collect();
             let pn = freenet_prolly::parity::PARITY;
-            for (g, (_, members)) in freenet_prolly::parity::group_members(&node).into_iter().enumerate() {
+            for (g, (_, members)) in freenet_prolly::parity::group_members(&node)
+                .into_iter()
+                .enumerate()
+            {
                 let par = ids.get(pn * g..pn * (g + 1)).unwrap_or(&[]);
                 let k = members.len();
-                groups.push(AssetGroup { slots: [members, par.to_vec()].concat(), k });
+                groups.push(AssetGroup {
+                    slots: [members, par.to_vec()].concat(),
+                    k,
+                });
             }
             if !node.is_leaf() {
                 for i in 0..node.len() {
@@ -564,9 +682,17 @@ impl Open {
                 let g = groups.iter().find(|g| g.slots[g.k..].contains(cid))?;
                 let members: Option<Vec<Vec<u8>>> = g.slots[..g.k]
                     .iter()
-                    .map(|m| self.blocks.0.get(m).and_then(|b| contract_keys::block::block_state(m, b)))
+                    .map(|m| {
+                        self.blocks
+                            .0
+                            .get(m)
+                            .and_then(|b| contract_keys::block::block_state(m, b))
+                    })
                     .collect();
-                let p = freenet_prolly::parity::encode_group(&members?).ok()?.into_iter().find(|p| freenet_prolly::block_id(freenet_prolly::kind::PARITY, p) == *cid)?;
+                let p = freenet_prolly::parity::encode_group(&members?)
+                    .ok()?
+                    .into_iter()
+                    .find(|p| freenet_prolly::block_id(freenet_prolly::kind::PARITY, p) == *cid)?;
                 contract_keys::block::block_state(cid, &p)?
             }
         };
@@ -591,8 +717,12 @@ impl Open {
 
     /// Rebuild `missing` from what is held of its group; kept only if it hashes to `missing` (`engine::repair::rebuild`).
     pub fn rebuild(&mut self, group: &engine::repair::Group) -> Result<(), String> {
-        let have: Vec<Option<Vec<u8>>> =
-            group.slots.iter().enumerate().map(|(i, c)| self.blocks.0.get(c).map(|b| group.stored(i, b))).collect();
+        let have: Vec<Option<Vec<u8>>> = group
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(i, c)| self.blocks.0.get(c).map(|b| group.stored(i, b)))
+            .collect();
         let body = engine::repair::rebuild(group, &have)?;
         self.blocks.insert(group.missing, &body);
         Ok(())
@@ -612,15 +742,34 @@ impl Open {
     /// are not there. `Need` when the old tree's blocks along the edited paths are not held yet; `Keys` when a row is
     /// sealed under an epoch whose key is not held yet.
     pub fn flush(&mut self) -> Result<Step<Flush>, String> {
+        self.flush_given(None)
+    }
+
+    /// REPLACE (a repair, never an ordinary write): the table becomes exactly `rows` (plain keys and values) — a new
+    /// tree of them alone, under the key writes use, every row the tail holds leaving with it. For a table no key held
+    /// here opens any more (its tree sealed over by another branch of the group): what it held is not read, it is
+    /// replaced. The caller decides what the rows are.
+    pub fn replace(&mut self, rows: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Step<Flush>, String> {
+        self.flush_given(Some(rows))
+    }
+
+    fn flush_given(
+        &mut self,
+        given: Option<Vec<(Vec<u8>, Vec<u8>)>>,
+    ) -> Result<Step<Flush>, String> {
         // A public tail: its tree in the clear, no key.
         let seal = if self.public {
             None
         } else {
             let by = self.writes.ok_or("this table's key is not held here")?;
-            Some((by, self.key_for(by).ok_or("this table's key is not held here")?))
+            Some((
+                by,
+                self.key_for(by)
+                    .ok_or("this table's key is not held here")?,
+            ))
         };
         // Under another key than the tree's (an epoch moved, a fork healed): the tree built again, whole, under this one.
-        let reseal = self.rekey();
+        let reseal = self.rekey() || given.is_some();
         if self.pending_rows() == 0 && !reseal {
             return Err("nothing to flush".into());
         }
@@ -629,14 +778,23 @@ impl Open {
         let mut plain = body.clone();
         plain.entries.clear();
         let mut staging = if reseal {
-            let all = match self.collect()? {
-                Step::Ready(r) => r.rows,
-                Step::Need(x) => return Ok(Step::Need(x)),
-                Step::Keys(k) => return Ok(Step::Keys(k)),
+            let all = match given {
+                Some(rows) => rows.into_iter().collect(),
+                None => match self.collect()? {
+                    Step::Ready(r) => r.rows,
+                    Step::Need(x) => return Ok(Step::Need(x)),
+                    Step::Keys(k) => return Ok(Step::Keys(k)),
+                },
             };
             plain.root = None;
             for (k, v) in all {
-                plain.entries.insert(k, tail::Entry { seq: through, value: Some(v) });
+                plain.entries.insert(
+                    k,
+                    tail::Entry {
+                        seq: through,
+                        value: Some(v),
+                    },
+                );
             }
             MemBlocks::default()
         } else {
@@ -658,29 +816,57 @@ impl Open {
             staging.insert(*cid, bytes);
         }
         // The root's group of one: parity no parent lists, so its ids go in the tail beside the root.
-        let root_bytes = staging.0.get(&applied.root).ok_or("the new root is not among the blocks")?.clone();
-        let root_parity = engine::repair::root_parity(&root_bytes).ok_or("the root's parity would not code")?;
+        let root_bytes = staging
+            .0
+            .get(&applied.root)
+            .ok_or("the new root is not among the blocks")?
+            .clone();
+        let root_parity =
+            engine::repair::root_parity(&root_bytes).ok_or("the root's parity would not code")?;
         let mut ids = Vec::new();
         for (cid, bytes) in &root_parity {
             staging.insert(*cid, bytes);
             ids.extend_from_slice(cid);
         }
         let mut blocks = Vec::new();
-        for (cid, body) in staging.0.iter().filter(|(c, _)| reseal || !self.blocks.0.contains_key(*c)) {
-            let state = contract_keys::block::block_state(cid, body).ok_or_else(|| format!("block {} is of no known kind", hex(cid)))?;
-            blocks.push((*cid, match seal {
-                Some((by, tk)) => seal_block(&tk, by, cid, &state),
-                None => state,
-            }));
+        for (cid, body) in staging
+            .0
+            .iter()
+            .filter(|(c, _)| reseal || !self.blocks.0.contains_key(*c))
+        {
+            let state = contract_keys::block::block_state(cid, body)
+                .ok_or_else(|| format!("block {} is of no known kind", hex(cid)))?;
+            blocks.push((
+                *cid,
+                match seal {
+                    Some((by, tk)) => seal_block(&tk, by, cid, &state),
+                    None => state,
+                },
+            ));
         }
-        let mut ops = vec![op, Op::Set { key: ROOT_PARITY.to_vec(), value: ids }];
+        let mut ops = vec![
+            op,
+            Op::Set {
+                key: ROOT_PARITY.to_vec(),
+                value: ids,
+            },
+        ];
         if seal.is_some() {
             let (by, tk) = seal.expect("sealed");
-            ops.push(Op::Set { key: SEALED_TREE.to_vec(), value: [by.header(), key_id(&tk).to_vec()].concat() });
+            ops.push(Op::Set {
+                key: SEALED_TREE.to_vec(),
+                value: [by.header(), key_id(&tk).to_vec()].concat(),
+            });
         }
         let (seq, hash) = self.prepare(ops).ok_or("the tail would refuse the flush")?;
         self.staged = Some(staging);
-        Ok(Step::Ready(Flush { sealed: seal.is_some(), address_key: seal.map(|(_, tk)| tk), seq, hash, blocks }))
+        Ok(Step::Ready(Flush {
+            sealed: seal.is_some(),
+            address_key: seal.map(|(_, tk)| tk),
+            seq,
+            hash,
+            blocks,
+        }))
     }
 
     /// SKIP AHEAD: the identity signed this tail through `last`, and the network — asked, and answering — holds less
@@ -696,7 +882,12 @@ impl Open {
         }
         let body = self.writer.body().apply(&u.ops, seq)?;
         let out = (seq, body.hash());
-        self.pending = Some(Unsigned { seq, ops: u.ops, body, message: Vec::new() });
+        self.pending = Some(Unsigned {
+            seq,
+            ops: u.ops,
+            body,
+            message: Vec::new(),
+        });
         Some(out)
     }
 
@@ -704,11 +895,21 @@ impl Open {
     /// `Update(delta)`.
     pub fn commit(&mut self, sig: [u8; 64]) -> Option<Send> {
         let u = self.pending.take()?;
-        let signed = Signed { terminal: false, seq: u.seq, value_hash: u.body.hash(), bitmap: 0, sigs: vec![sig] };
+        let signed = Signed {
+            terminal: false,
+            seq: u.seq,
+            value_hash: u.body.hash(),
+            bitmap: 0,
+            sigs: vec![sig],
+        };
         // A step past the next (`skip_to`): the whole state, checked as any reader checks it.
         if u.seq > self.writer.seq() + 1 {
             let p = craftec_register_contract::wire::Params::parse(&self.params)?;
-            let state = tail::Tail { signed, body: u.body }.encode(&p.authority);
+            let state = tail::Tail {
+                signed,
+                body: u.body,
+            }
+            .encode(&p.authority);
             let w = Writer::resume(&self.params, &state).filter(|w| w.seq() == u.seq)?;
             self.writer = w;
             if let Some(b) = self.staged.take() {
@@ -759,7 +960,11 @@ impl Open {
     /// in one step is written after its old copy is deleted), as `(row, seq, value)`; and the epochs whose keys are
     /// needed first to open the rest.
     fn tail_rows(&self, body: &tail::Body) -> (Vec<(Vec<u8>, u64, Option<Vec<u8>>)>, Vec<u64>) {
-        let mut list: Vec<_> = body.entries.iter().filter(|(k, _)| k.first() != Some(&0)).collect();
+        let mut list: Vec<_> = body
+            .entries
+            .iter()
+            .filter(|(k, _)| k.first() != Some(&0))
+            .collect();
         list.sort_by_key(|(_, e)| (e.seq, e.value.is_some()));
         let (mut rows, mut keys) = (Vec::new(), BTreeSet::new());
         for (k, e) in list {
@@ -781,10 +986,18 @@ impl Open {
     /// tree row). `Need` names the tree blocks to fetch first, `Keys` the epochs whose keys to get first.
     fn collect(&mut self) -> Result<Step<Rows>, String> {
         // The key the tree is sealed with, first: without it no block of it can even be named.
-        if self.sealed_tree() && self.writer.body().root.is_some() && self.address_key().is_none() && !self.tree_from_before() {
+        if self.sealed_tree()
+            && self.writer.body().root.is_some()
+            && self.address_key().is_none()
+            && !self.tree_from_before()
+        {
             return match self.tree_key_ref() {
-                Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
-                _ => Err("its tree is sealed with a key this page does not hold".into()),
+                Some((KeyRef::Epoch(e), _))
+                    if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) =>
+                {
+                    Ok(Step::Keys(vec![e]))
+                }
+                _ => Err(self.sealed_why()),
             };
         }
         let body = self.writer.body();
@@ -794,10 +1007,18 @@ impl Open {
         }
         let mut all: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         let mut unreadable = 0usize;
-        let root = if self.tree_from_before() { None } else { body.root };
+        let root = if self.tree_from_before() {
+            None
+        } else {
+            body.root
+        };
         if let Some(root) = &root {
             let mut tree = BTreeMap::new();
-            let mut r = Range { max_entries: 4096, max_bytes: 4 << 20, ..Range::default() };
+            let mut r = Range {
+                max_entries: 4096,
+                max_bytes: 4 << 20,
+                ..Range::default()
+            };
             loop {
                 let page = match range(&self.blocks, root, &r) {
                     Ok(p) => p,
@@ -836,15 +1057,24 @@ impl Open {
             if e.value.is_none() {
                 continue;
             }
-            let older = self.writes.is_some_and(|w| KeyRef::of(k).map(|(by, _)| by) < Some(w));
+            let older = self
+                .writes
+                .is_some_and(|w| KeyRef::of(k).map(|(by, _)| by) < Some(w));
             match self.open_row_by(k, None) {
                 Some((pk, _, alt)) if older || alt => under.entry(pk).or_default().push(k.clone()),
                 Some(_) => {}
                 None => unreadable += 1,
             }
         }
-        let stale = under.into_iter().filter_map(|(pk, old)| all.get(&pk).map(|v| (pk, (old, v.clone())))).collect();
-        Ok(Step::Ready(Rows { rows: all, stale, unreadable }))
+        let stale = under
+            .into_iter()
+            .filter_map(|(pk, old)| all.get(&pk).map(|v| (pk, (old, v.clone()))))
+            .collect();
+        Ok(Step::Ready(Rows {
+            rows: all,
+            stale,
+            unreadable,
+        }))
     }
 
     /// A PAGE of rows in the clear (phase 3, Reads): those with keys from `lo` (inclusive) to `hi` (exclusive), at most
@@ -852,9 +1082,18 @@ impl Open {
     /// the page's path (its other blocks never fetched), the TAIL's over them in the span the page covers (a pending
     /// delete hides a tree row). With it, the key to continue from (`None`: the range is done). `Need`/`Keys` as for
     /// `rows`.
-    pub fn page(&mut self, lo: Option<Vec<u8>>, hi: Option<Vec<u8>>, reverse: bool, after: Option<Vec<u8>>, limit: usize) -> Result<Step<Page>, String> {
+    pub fn page(
+        &mut self,
+        lo: Option<Vec<u8>>,
+        hi: Option<Vec<u8>>,
+        reverse: bool,
+        after: Option<Vec<u8>>,
+        limit: usize,
+    ) -> Result<Step<Page>, String> {
         use std::ops::Bound;
-        let inside = |k: &[u8], lo: &Option<Vec<u8>>, hi: &Option<Vec<u8>>| lo.as_deref().is_none_or(|l| k >= l) && hi.as_deref().is_none_or(|h| k < h);
+        let inside = |k: &[u8], lo: &Option<Vec<u8>>, hi: &Option<Vec<u8>>| {
+            lo.as_deref().is_none_or(|l| k >= l) && hi.as_deref().is_none_or(|h| k < h)
+        };
         let body = self.writer.body();
         let (tail_rows, keys) = self.tail_rows(&body);
         if !keys.is_empty() {
@@ -862,12 +1101,20 @@ impl Open {
         }
         let mut rows: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         let mut next = None;
-        let root = if self.tree_from_before() { None } else { body.root };
+        let root = if self.tree_from_before() {
+            None
+        } else {
+            body.root
+        };
         if let Some(root) = root {
             if self.sealed_tree() && self.address_key().is_none() {
                 return match self.tree_key_ref() {
-                    Some((KeyRef::Epoch(e), _)) if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) => Ok(Step::Keys(vec![e])),
-                    _ => Err("its tree is sealed with a key this page does not hold".into()),
+                    Some((KeyRef::Epoch(e), _))
+                        if !self.epochs.contains_key(&e) && !self.no_key.contains(&e) =>
+                    {
+                        Ok(Step::Keys(vec![e]))
+                    }
+                    _ => Err(self.sealed_why()),
                 };
             }
             let r = Range {
@@ -902,10 +1149,20 @@ impl Open {
         }
         // The TAIL over the tree, in the SPAN this page covers: from where it started to where the tree page stopped
         // (the whole rest of the range when it did not stop).
-        let started = |k: &[u8]| after.as_deref().is_none_or(|a| if reverse { k < a } else { k > a });
+        let started = |k: &[u8]| {
+            after
+                .as_deref()
+                .is_none_or(|a| if reverse { k < a } else { k > a })
+        };
         let within = |k: &[u8]| match &next {
             None => true,
-            Some(n) => if reverse { k >= n.as_slice() } else { k <= n.as_slice() },
+            Some(n) => {
+                if reverse {
+                    k >= n.as_slice()
+                } else {
+                    k <= n.as_slice()
+                }
+            }
         };
         for (pk, _, pv) in tail_rows {
             if !inside(&pk, &lo, &hi) || !started(&pk) || !within(&pk) {
@@ -960,12 +1217,10 @@ impl Open {
     }
 }
 
-
 pub enum Send {
     Put(Vec<u8>),
     Update(Vec<u8>),
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -988,11 +1243,28 @@ mod tests {
         // (A public table: its rows as written, so the register's steps are what this checks.)
         let mut o = Open::new(CODE, &member, "notes");
         o.public = true;
-        let (seq, h) = o.prepare(vec![Op::Set { key: b"a".to_vec(), value: b"1".to_vec() }]).unwrap();
-        let Some(Send::Put(state)) = o.commit(sign(&key, &o, seq, h)) else { panic!("first write is a put") };
-        let (seq, h) = o.prepare(vec![Op::Set { key: b"b".to_vec(), value: b"2".to_vec() }]).unwrap();
-        assert!(matches!(o.commit(sign(&key, &o, seq, h)), Some(Send::Update(_))));
-        let Ok(Step::Ready(v)) = o.rows() else { panic!("no tree yet: nothing to fetch") };
+        let (seq, h) = o
+            .prepare(vec![Op::Set {
+                key: b"a".to_vec(),
+                value: b"1".to_vec(),
+            }])
+            .unwrap();
+        let Some(Send::Put(state)) = o.commit(sign(&key, &o, seq, h)) else {
+            panic!("first write is a put")
+        };
+        let (seq, h) = o
+            .prepare(vec![Op::Set {
+                key: b"b".to_vec(),
+                value: b"2".to_vec(),
+            }])
+            .unwrap();
+        assert!(matches!(
+            o.commit(sign(&key, &o, seq, h)),
+            Some(Send::Update(_))
+        ));
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!("no tree yet: nothing to fetch")
+        };
         assert_eq!(v["rows"].as_array().unwrap().len(), 2);
         // Another page of the same member reads the first state from the network.
         let mut other = Open::new(CODE, &member, "notes");
@@ -1013,11 +1285,28 @@ mod tests {
     fn net(o: &Open, id: &Cid) -> Vec<u8> {
         let by = o.writes.unwrap();
         let tk = o.key_for(by).unwrap();
-        seal_block(&tk, by, id, &contract_keys::block::block_state(id, o.blocks.0.get(id).expect("the writer made it")).unwrap())
+        seal_block(
+            &tk,
+            by,
+            id,
+            &contract_keys::block::block_state(id, o.blocks.0.get(id).expect("the writer made it"))
+                .unwrap(),
+        )
     }
 
     fn keys(v: &Value) -> Vec<String> {
-        v["rows"].as_array().unwrap().iter().map(|r| format!("{}={}", r["key"].as_str().unwrap(), r["value"].as_str().unwrap())).collect()
+        v["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                format!(
+                    "{}={}",
+                    r["key"].as_str().unwrap(),
+                    r["value"].as_str().unwrap()
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -1029,14 +1318,18 @@ mod tests {
         for (k, v) in [("a", "1"), ("b", "2"), ("c", "3")] {
             write(&key, &mut o, k, v);
         }
-        let Ok(Step::Ready(f)) = o.flush() else { panic!("a flush of held rows is ready") };
+        let Ok(Step::Ready(f)) = o.flush() else {
+            panic!("a flush of held rows is ready")
+        };
         assert!(!f.blocks.is_empty(), "the new tree's blocks go out first");
         o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
         assert_eq!(o.pending_rows(), 0, "the tail is empty after the flush");
         // After the flush: a new row in the tail, one tree row deleted from the tail.
         write(&key, &mut o, "d", "4");
         write(&key, &mut o, "b", "");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!("the writer holds its own blocks") };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!("the writer holds its own blocks")
+        };
         assert_eq!(keys(&v), ["a=1", "c=3", "d=4"]);
         // Another page: the state only. It walks tail -> tree root -> blocks it must fetch.
         let mut r = Open::new(CODE, &member, "notes");
@@ -1064,6 +1357,62 @@ mod tests {
         assert!(!r.absorb_block(&other, &net(&o, &id)));
     }
 
+    /// REPLACE (a repair): a table whose tree another BRANCH of the group sealed over (10-12: a second account group
+    /// re-sealed the account's directory with its epoch 1) cannot be read by the original branch — control — and is
+    /// replaced by it with exactly the rows it gives: then read under the original key, the other branch's rows gone.
+    #[test]
+    fn a_table_sealed_by_another_branch_is_replaced_whole_by_the_original() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        let (original, fork) = ([1u8; 32], [2u8; 32]);
+        // The FORK writes and flushes under its epoch 1.
+        let mut f = Open::new(CODE, &member, "tables");
+        f.epoch_key(1, Some(fork), true);
+        write(&key, &mut f, "node:fork", "1");
+        let Ok(Step::Ready(fl)) = f.flush() else {
+            panic!("the fork flushes")
+        };
+        f.commit(sign(&key, &f, fl.seq, fl.hash)).unwrap();
+        // The ORIGINAL: epoch 0 held, epoch 1 not (another branch's).
+        let mut o = Open::new(CODE, &member, "tables");
+        o.epoch_key(0, Some(original), true);
+        o.epoch_key(1, None, false);
+        assert!(o.absorb(&f.writer.state()));
+        let err = match o.rows() {
+            Err(e) => e,
+            Ok(_) => panic!("control: the original branch cannot read the fork's tree"),
+        };
+        assert!(
+            err.contains("epoch 1: no key here"),
+            "the reason names the epoch: {err}"
+        );
+        // REPLACED with the original's rows: a new tree under epoch 0, every fork row leaving.
+        let Ok(Step::Ready(r)) = o.replace(vec![(b"node:original".to_vec(), b"1".to_vec())]) else {
+            panic!("a replace needs nothing read")
+        };
+        o.commit(sign(&key, &o, r.seq, r.hash)).unwrap();
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!("the original reads its own new tree")
+        };
+        assert_eq!(keys(&v), ["node:original=1"]);
+        // Another page of the original branch, from the network state: it walks the new tree.
+        let mut n = Open::new(CODE, &member, "tables");
+        n.epoch_key(0, Some(original), true);
+        assert!(n.absorb(&o.writer.state()));
+        let v = loop {
+            match n.rows().unwrap() {
+                Step::Ready(v) => break v,
+                Step::Keys(k) => panic!("only epoch 0 is needed: {k:?}"),
+                Step::Need(ids) => {
+                    for id in ids {
+                        assert!(n.absorb_block(&id, &net(&o, &id)));
+                    }
+                }
+            }
+        };
+        assert_eq!(keys(&v), ["node:original=1"]);
+    }
+
     /// KEEP (phase 4): a READER — holding only what it fetched, no parity — lists the table's asset (every group its
     /// tree reaches) and makes every block of it AS STORED: members from what it holds, parity coded again from them.
     /// Each is byte for byte what the writer put, so re-publishing and repair need nothing the reader does not have.
@@ -1074,7 +1423,12 @@ mod tests {
         let mut o = Open::new(CODE, &member, "chat");
         o.set_table_key([7; 32]);
         for i in 0..300 {
-            write(&key, &mut o, &format!("t{i:05}"), &format!("{i}-{}", "x".repeat(900)));
+            write(
+                &key,
+                &mut o,
+                &format!("t{i:05}"),
+                &format!("{i}-{}", "x".repeat(900)),
+            );
             if i % 50 == 49 {
                 flush(&key, &mut o);
             }
@@ -1101,27 +1455,45 @@ mod tests {
         for g in &groups {
             for c in &g.slots[..g.k] {
                 if !r.blocks.0.contains_key(c) {
-                    assert!(r.absorb_block(c, &o.sent[c]), "a value block the writer put");
+                    assert!(
+                        r.absorb_block(c, &o.sent[c]),
+                        "a value block the writer put"
+                    );
                 }
             }
         }
         for g in &groups {
             for (i, c) in g.slots.iter().enumerate() {
-                if i < g.k { members += 1 } else { parity += 1 }
-                let (sealed, st) = r.stored(c, &groups).unwrap_or_else(|| panic!("block {} could not be made", hex(c)));
+                if i < g.k {
+                    members += 1
+                } else {
+                    parity += 1
+                }
+                let (sealed, st) = r
+                    .stored(c, &groups)
+                    .unwrap_or_else(|| panic!("block {} could not be made", hex(c)));
                 assert!(sealed);
                 if let Some(sent) = o.sent.get(c) {
                     assert_eq!(&st, sent, "block {} as the writer put it", hex(c));
                     made += 1;
                 } else {
-                    assert_eq!(*c, root, "only the latest root may be absent from what the helper recorded");
+                    assert_eq!(
+                        *c, root,
+                        "only the latest root may be absent from what the helper recorded"
+                    );
                 }
             }
         }
-        assert!(parity > 0 && members > parity, "members {members}, parity {parity}");
+        assert!(
+            parity > 0 && members > parity,
+            "members {members}, parity {parity}"
+        );
         assert!(made >= members + parity - 1);
         // Control: a parity block whose group is not all held cannot be made.
-        let g = groups.iter().find(|g| g.k > 1 && g.slots.len() > g.k).unwrap();
+        let g = groups
+            .iter()
+            .find(|g| g.k > 1 && g.slots.len() > g.k)
+            .unwrap();
         let mut short = Open::new(CODE, &member, "chat");
         short.set_table_key([7; 32]);
         assert!(short.stored(&g.slots[g.k], &groups).is_none());
@@ -1136,7 +1508,12 @@ mod tests {
         let mut o = Open::new(CODE, &member, "chat");
         o.set_table_key([7; 32]);
         for i in 0..600 {
-            write(&key, &mut o, &format!("t{i:05}"), &format!("{i}-{}", "x".repeat(900)));
+            write(
+                &key,
+                &mut o,
+                &format!("t{i:05}"),
+                &format!("{i}-{}", "x".repeat(900)),
+            );
             if i % 40 == 39 {
                 flush(&key, &mut o);
             }
@@ -1145,7 +1522,9 @@ mod tests {
         write(&key, &mut o, "t00600", "newest");
         write(&key, &mut o, "t00598", "");
         write(&key, &mut o, "t00597", "changed");
-        let fetches = |o: &Open, mut f: Box<dyn FnMut(&mut Open) -> Result<Step<Page>, String>>| -> (Page, usize) {
+        let fetches = |o: &Open,
+                       mut f: Box<dyn FnMut(&mut Open) -> Result<Step<Page>, String>>|
+         -> (Page, usize) {
             let mut r = Open::new(CODE, &member, "chat");
             r.set_table_key([7; 32]);
             assert!(r.absorb(&o.writer.state()));
@@ -1164,22 +1543,43 @@ mod tests {
                 }
             }
         };
-        let (latest, few) = fetches(&o, Box::new(|r: &mut Open| r.page(Some(b"t".to_vec()), None, true, None, 20)));
-        let names = |p: &Page| p.rows.iter().map(|(k, _)| String::from_utf8_lossy(k).into_owned()).collect::<Vec<_>>();
-        assert_eq!(names(&latest)[..4], ["t00600", "t00599", "t00597", "t00596"], "newest first; the tail's new row in, its delete out");
-        assert_eq!(latest.rows[2].1, b"changed", "the tail's change over the tree's");
+        let (latest, few) = fetches(
+            &o,
+            Box::new(|r: &mut Open| r.page(Some(b"t".to_vec()), None, true, None, 20)),
+        );
+        let names = |p: &Page| {
+            p.rows
+                .iter()
+                .map(|(k, _)| String::from_utf8_lossy(k).into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(&latest)[..4],
+            ["t00600", "t00599", "t00597", "t00596"],
+            "newest first; the tail's new row in, its delete out"
+        );
+        assert_eq!(
+            latest.rows[2].1, b"changed",
+            "the tail's change over the tree's"
+        );
         // CONTROL: a whole read of the same table fetches more blocks.
         let (_, all) = fetches(
             &o,
             Box::new(|r: &mut Open| {
                 Ok(match r.rows()? {
-                    Step::Ready(_) => Step::Ready(Page { rows: vec![], next: None }),
+                    Step::Ready(_) => Step::Ready(Page {
+                        rows: vec![],
+                        next: None,
+                    }),
                     Step::Need(x) => Step::Need(x),
                     Step::Keys(k) => Step::Keys(k),
                 })
             }),
         );
-        assert!(few < all, "the latest page fetched {few} blocks, a whole read {all}");
+        assert!(
+            few < all,
+            "the latest page fetched {few} blocks, a whole read {all}"
+        );
         println!("READS: the latest 20 of 600 rows fetched {few} blocks; a whole read {all}");
         // Pages chain back to the start: every row, once, newest first.
         let mut r = Open::new(CODE, &member, "chat");
@@ -1188,9 +1588,14 @@ mod tests {
         let (mut seen, mut after) = (Vec::new(), None);
         loop {
             let p = loop {
-                match r.page(Some(b"t".to_vec()), None, true, after.clone(), 50).unwrap() {
+                match r
+                    .page(Some(b"t".to_vec()), None, true, after.clone(), 50)
+                    .unwrap()
+                {
                     Step::Ready(p) => break p,
-                    Step::Need(ids) => ids.iter().for_each(|id| assert!(r.absorb_block(id, &net(&o, id)))),
+                    Step::Need(ids) => ids
+                        .iter()
+                        .for_each(|id| assert!(r.absorb_block(id, &net(&o, id)))),
                     Step::Keys(k) => panic!("no epochs: {k:?}"),
                 }
             };
@@ -1222,7 +1627,9 @@ mod tests {
             for i in 0..n {
                 write(&key, o, &format!("{round:02}-{i:03}"), &"x".repeat(size));
             }
-            let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+            let Ok(Step::Ready(f)) = o.flush() else {
+                panic!("ready")
+            };
             put.extend(f.blocks.iter().map(|(c, _)| *c));
             o.commit(sign(&key, o, f.seq, f.hash)).unwrap();
         };
@@ -1230,7 +1637,11 @@ mod tests {
         flush(&mut o, 0, 3, 10);
         let root = o.writer.body().root.unwrap();
         let node = freenet_prolly::store::load(&o.blocks, &root).unwrap();
-        assert_eq!((node.level(), node.parity_count()), (0, 0), "control: a one-leaf tree has no parity");
+        assert_eq!(
+            (node.level(), node.parity_count()),
+            (0, 0),
+            "control: a one-leaf tree has no parity"
+        );
         // Past one leaf.
         for round in 1..6 {
             flush(&mut o, round, FLUSH_AT, 200);
@@ -1238,9 +1649,16 @@ mod tests {
         let root = o.writer.body().root.unwrap();
         let node = freenet_prolly::store::load(&o.blocks, &root).unwrap();
         assert!(node.level() >= 1, "the tree grew a branch");
-        assert!(node.parity_count() >= freenet_prolly::parity::PARITY, "the root's children are coded");
+        assert!(
+            node.parity_count() >= freenet_prolly::parity::PARITY,
+            "the root's children are coded"
+        );
         for p in node.parity() {
-            assert!(put.contains(&p), "parity block {} was put by a flush", hex(&p));
+            assert!(
+                put.contains(&p),
+                "parity block {} was put by a flush",
+                hex(&p)
+            );
         }
     }
 
@@ -1287,27 +1705,47 @@ mod tests {
         for (k, v) in [("a", "1"), ("b", "2")] {
             write(&key, &mut o, k, v);
         }
-        let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+        let Ok(Step::Ready(f)) = o.flush() else {
+            panic!("ready")
+        };
         o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
         let root = o.writer.body().root.unwrap();
         let ids = o.root_parity_ids();
-        assert_eq!(ids.len(), freenet_prolly::parity::PARITY, "the tail names the root's parity");
+        assert_eq!(
+            ids.len(),
+            freenet_prolly::parity::PARITY,
+            "the tail names the root's parity"
+        );
         let put: std::collections::HashSet<Cid> = f.blocks.iter().map(|(c, _)| *c).collect();
-        assert!(ids.iter().all(|i| put.contains(i)), "and the flush put every one");
-        assert_eq!(o.pending_rows(), 0, "the root-parity row is not a pending row");
+        assert!(
+            ids.iter().all(|i| put.contains(i)),
+            "and the flush put every one"
+        );
+        assert_eq!(
+            o.pending_rows(),
+            0,
+            "the root-parity row is not a pending row"
+        );
         // The control: with the root there, no repair.
         let (rows, repaired) = read_without(&o, &member, [9; 32]);
-        assert_eq!((rows.clone(), repaired), (vec!["a=1".to_string(), "b=2".to_string()], false));
+        assert_eq!(
+            (rows.clone(), repaired),
+            (vec!["a=1".to_string(), "b=2".to_string()], false)
+        );
         // The root lost: rebuilt from its parity, verified, and the rows are whole.
         let (rows2, repaired) = read_without(&o, &member, root);
         assert!(repaired, "the root was rebuilt");
         assert_eq!(rows2, rows);
         // A second flush clears the old row and names the new root's; the old parity never reaches the tree.
         write(&key, &mut o, "c", "3");
-        let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+        let Ok(Step::Ready(f)) = o.flush() else {
+            panic!("ready")
+        };
         o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
         assert_ne!(o.root_parity_ids(), ids);
-        let Ok(Step::Ready(v)) = o.rows() else { panic!("held") };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!("held")
+        };
         assert_eq!(keys(&v), ["a=1", "b=2", "c=3"]);
     }
 
@@ -1319,9 +1757,16 @@ mod tests {
         o.set_table_key([7; 32]);
         for round in 0..6 {
             for i in 0..FLUSH_AT {
-                write(&key, &mut o, &format!("{round:02}-{i:03}"), &"x".repeat(200));
+                write(
+                    &key,
+                    &mut o,
+                    &format!("{round:02}-{i:03}"),
+                    &"x".repeat(200),
+                );
             }
-            let Ok(Step::Ready(f)) = o.flush() else { panic!("ready") };
+            let Ok(Step::Ready(f)) = o.flush() else {
+                panic!("ready")
+            };
             o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
         }
         let root = o.writer.body().root.unwrap();
@@ -1353,16 +1798,26 @@ mod tests {
         o.set_table_key([7; 32]);
         put_row(&key, &mut o, "shopping", "buy oat milk");
         put_row(&key, &mut o, "trip", "book the train");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
         assert_eq!(keys(&v), ["shopping=buy oat milk", "trip=book the train"]);
         // What the network holds: none of it in plaintext.
         let state = o.writer.state();
         for secret in ["shopping", "buy oat milk", "trip", "book the train"] {
-            assert!(!contains(&state, secret.as_bytes()), "{secret} is in the stored state");
+            assert!(
+                !contains(&state, secret.as_bytes()),
+                "{secret} is in the stored state"
+            );
         }
         // Control: the same rows written plaintext DO show — the check can see them.
         let mut plain = Open::new(CODE, &member, "plain");
-        let (seq, h) = plain.prepare(vec![Op::Set { key: b"shopping".to_vec(), value: b"buy oat milk".to_vec() }]).unwrap();
+        let (seq, h) = plain
+            .prepare(vec![Op::Set {
+                key: b"shopping".to_vec(),
+                value: b"buy oat milk".to_vec(),
+            }])
+            .unwrap();
         plain.commit(sign(&key, &plain, seq, h)).unwrap();
         assert!(contains(&plain.writer.state(), b"buy oat milk"));
         // Another reader: without the key, nothing; with the wrong key, nothing; with the key, all.
@@ -1372,7 +1827,9 @@ mod tests {
             if let Some(k) = seal {
                 r.set_table_key(k);
             }
-            let Ok(Step::Ready(v)) = r.rows() else { panic!() };
+            let Ok(Step::Ready(v)) = r.rows() else {
+                panic!()
+            };
             (keys(&v).len(), v["unreadable"].as_u64().unwrap())
         };
         assert_eq!(read(None), (0, 2));
@@ -1381,20 +1838,39 @@ mod tests {
         // Rewriting and deleting a row find it (the sealed key is the same every time).
         put_row(&key, &mut o, "trip", "booked");
         put_row(&key, &mut o, "shopping", "");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
         assert_eq!(keys(&v), ["trip=booked"]);
         // Through a flush and the tree: still sealed, still readable.
-        let Ok(Step::Ready(f)) = o.flush() else { panic!() };
+        let Ok(Step::Ready(f)) = o.flush() else {
+            panic!()
+        };
         o.commit(sign(&key, &o, f.seq, f.hash)).unwrap();
-        assert!(o.blocks.0.values().any(|b| contains(b, b"booked")), "control: the tree holds the row in the clear");
-        assert!(f.blocks.iter().all(|(_, b)| !contains(b, b"booked") && !contains(b, b"trip")), "no block the network gets does");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        assert!(
+            o.blocks.0.values().any(|b| contains(b, b"booked")),
+            "control: the tree holds the row in the clear"
+        );
+        assert!(
+            f.blocks
+                .iter()
+                .all(|(_, b)| !contains(b, b"booked") && !contains(b, b"trip")),
+            "no block the network gets does"
+        );
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
         assert_eq!(keys(&v), ["trip=booked"]);
     }
 
     /// Read `o`'s state as another page holding `table` and the keys of `epochs` (and none for any other): the rows,
     /// how many it could not read, and whether the tree would not read at all.
-    fn read_with(o: &Open, member: &[u8; 32], table: [u8; 32], epochs: &[(u64, [u8; 32])]) -> Result<(Vec<String>, u64), String> {
+    fn read_with(
+        o: &Open,
+        member: &[u8; 32],
+        table: [u8; 32],
+        epochs: &[(u64, [u8; 32])],
+    ) -> Result<(Vec<String>, u64), String> {
         let mut r = Open::new(CODE, member, "notes");
         r.set_table_key(table);
         assert!(r.absorb(&o.writer.state()));
@@ -1408,7 +1884,11 @@ mod tests {
                 }
                 Step::Keys(want) => {
                     for e in want {
-                        r.epoch_key(e, epochs.iter().find(|(x, _)| *x == e).map(|(_, k)| *k), false);
+                        r.epoch_key(
+                            e,
+                            epochs.iter().find(|(x, _)| *x == e).map(|(_, k)| *k),
+                            false,
+                        );
                     }
                 }
             }
@@ -1417,7 +1897,9 @@ mod tests {
     }
 
     fn flush(key: &SigningKey, o: &mut Open) {
-        let Ok(Step::Ready(f)) = o.flush() else { panic!("a flush of held rows is ready") };
+        let Ok(Step::Ready(f)) = o.flush() else {
+            panic!("a flush of held rows is ready")
+        };
         for (cid, state) in &f.blocks {
             o.sent.insert(*cid, state.clone());
         }
@@ -1439,13 +1921,33 @@ mod tests {
         o.epoch_key(2, Some(e2), true);
         put_row(&key, &mut o, "new", "after the removal");
         // The account's nodes: everything.
-        assert_eq!(read_with(&o, &member, table, &[(1, e1), (2, e2)]), Ok((vec!["new=after the removal".into(), "old=before the removal".into()], 0)));
+        assert_eq!(
+            read_with(&o, &member, table, &[(1, e1), (2, e2)]),
+            Ok((
+                vec![
+                    "new=after the removal".into(),
+                    "old=before the removal".into()
+                ],
+                0
+            ))
+        );
         // The removed node: the old row, and the new one counted unreadable, not shown.
-        assert_eq!(read_with(&o, &member, table, &[(1, e1)]), Ok((vec!["old=before the removal".into()], 1)));
+        assert_eq!(
+            read_with(&o, &member, table, &[(1, e1)]),
+            Ok((vec!["old=before the removal".into()], 1))
+        );
         // After a flush under epoch 2 the whole tree is sealed with it: the removed node reads none of it.
         flush(&key, &mut o);
-        assert!(read_with(&o, &member, table, &[(1, e1)]).is_err(), "the new tree does not open without epoch 2");
-        assert_eq!(read_with(&o, &member, table, &[(1, e1), (2, e2)]).unwrap().0, ["new=after the removal", "old=before the removal"]);
+        assert!(
+            read_with(&o, &member, table, &[(1, e1)]).is_err(),
+            "the new tree does not open without epoch 2"
+        );
+        assert_eq!(
+            read_with(&o, &member, table, &[(1, e1), (2, e2)])
+                .unwrap()
+                .0,
+            ["new=after the removal", "old=before the removal"]
+        );
         // Control: the table's own key alone opens nothing sealed with an epoch.
         assert!(read_with(&o, &member, table, &[]).is_err());
     }
@@ -1454,7 +1956,8 @@ mod tests {
     /// with the winner's key alone (the control) and opens with its own key held as an ALTERNATE of that epoch; the
     /// writer, moved onto the winner's key, seals its rows over to it — and then they open with the winner's key alone.
     #[test]
-    fn a_losing_branchs_rows_open_with_its_key_as_an_alternate_and_are_sealed_over_to_the_winners() {
+    fn a_losing_branchs_rows_open_with_its_key_as_an_alternate_and_are_sealed_over_to_the_winners()
+    {
         let key = SigningKey::from_bytes(&[5; 32]);
         let member = key.verifying_key().to_bytes();
         let (table, lost, won) = ([7; 32], [44; 32], [55; 32]);
@@ -1470,10 +1973,16 @@ mod tests {
         c.set_table_key(table);
         assert!(c.absorb(&o.writer.state()));
         c.epoch_key(2, Some(won), false);
-        assert!(c.rows().is_err(), "a tree under a key not held is refused, never fetched");
+        assert!(
+            c.rows().is_err(),
+            "a tree under a key not held is refused, never fetched"
+        );
         let root = o.writer.body().root.expect("a tree");
         let lost_at = c.block_params(&root);
-        assert!(lost_at.is_none(), "no address for a tree whose key is not held");
+        assert!(
+            lost_at.is_none(),
+            "no address for a tree whose key is not held"
+        );
         // With the losing key as an alternate of epoch 2: all of it.
         let mut r = Open::new(CODE, &member, "notes");
         r.set_table_key(table);
@@ -1495,29 +2004,58 @@ mod tests {
                 Step::Keys(k) => panic!("keys asked: {k:?}"),
             }
         }
-        assert_eq!(rows.unwrap(), ["a=on the losing branch", "b=still in the tail"]);
+        assert_eq!(
+            rows.unwrap(),
+            ["a=on the losing branch", "b=still in the tail"]
+        );
         // The writer healed: writes with the winner's key, the losing one kept as an alternate — its tail row is stale
         // and sealed over; after a flush, the winner's key alone opens everything.
         o.epoch_key(2, Some(won), true);
         o.epoch_key_also(2, lost);
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert!(v["legacy"].as_u64().unwrap() >= 1, "the losing branch's tail row is stale");
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
+        assert!(
+            v["legacy"].as_u64().unwrap() >= 1,
+            "the losing branch's tail row is stale"
+        );
         while let Some((seq, h)) = o.migrate(10) {
             o.commit(sign(&key, &o, seq, h)).unwrap();
             o.rows().unwrap();
         }
         // Where each block of the losing tree lives, as the tail names it.
-        let before: HashMap<Cid, [u8; 32]> = o.blocks.0.keys().filter_map(|c| Some((*c, o.block_params(c)?.1))).collect();
+        let before: HashMap<Cid, [u8; 32]> = o
+            .blocks
+            .0
+            .keys()
+            .filter_map(|c| Some((*c, o.block_params(c)?.1)))
+            .collect();
         flush(&key, &mut o);
         // Sealed over WHOLE under the winner's key, at the winner's addresses: a block whose bytes did not change is
         // never put where its losing copy is (a Sealed contract keeps the first state it is given).
         assert_eq!(o.address_key(), Some(won));
-        let same: Vec<Cid> = o.blocks.0.keys().filter(|c| before.contains_key(*c)).copied().collect();
-        assert!(!same.is_empty(), "blocks whose contents survive the heal (else this proves nothing)");
+        let same: Vec<Cid> = o
+            .blocks
+            .0
+            .keys()
+            .filter(|c| before.contains_key(*c))
+            .copied()
+            .collect();
+        assert!(
+            !same.is_empty(),
+            "blocks whose contents survive the heal (else this proves nothing)"
+        );
         for c in &same {
-            assert_ne!(o.block_params(c).unwrap().1, before[c], "an unchanged block moved to the winner's address");
+            assert_ne!(
+                o.block_params(c).unwrap().1,
+                before[c],
+                "an unchanged block moved to the winner's address"
+            );
         }
-        assert_eq!(read_with(&o, &member, table, &[(2, won)]).unwrap().0, ["a=on the losing branch", "b=still in the tail"]);
+        assert_eq!(
+            read_with(&o, &member, table, &[(2, won)]).unwrap().0,
+            ["a=on the losing branch", "b=still in the tail"]
+        );
     }
 
     /// A TREE FROM BEFORE the fresh start (it names no key): read as no tree — the tail's rows are the table — and
@@ -1533,22 +2071,33 @@ mod tests {
         put_row(&key, &mut o, "old", "in the tree");
         flush(&key, &mut o);
         // Its key named no more: as a tree written before the fresh start.
-        let (seq, h) = o.prepare(vec![Op::Delete { key: SEALED_TREE.to_vec() }]).unwrap();
+        let (seq, h) = o
+            .prepare(vec![Op::Delete {
+                key: SEALED_TREE.to_vec(),
+            }])
+            .unwrap();
         o.commit(sign(&key, &o, seq, h)).unwrap();
         put_row(&key, &mut o, "new", "in the tail");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!("a tree from before reads as none") };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!("a tree from before reads as none")
+        };
         assert_eq!(keys(&v), ["new=in the tail"]);
         assert!(o.rekey(), "built again by the next flush");
         flush(&key, &mut o);
         assert!(o.tree_key_ref().is_some() && !o.rekey());
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
         assert_eq!(keys(&v), ["new=in the tail"]);
         // The control: a current tree, its key not held here — refused.
         let mut r = Open::new(CODE, &member, "notes");
         r.set_table_key([7; 32]);
         assert!(r.absorb(&o.writer.state()));
         r.epoch_key(1, Some([99; 32]), false);
-        assert!(r.rows().is_err(), "a current tree under a key not held is never read as empty");
+        assert!(
+            r.rows().is_err(),
+            "a current tree under a key not held is never read as empty"
+        );
     }
 
     /// Rows are sealed over UPWARD only: under the table's key, then an epoch arrives — sealed over to it; a page that
@@ -1562,23 +2111,49 @@ mod tests {
         put_row(&key, &mut o, "a", "1");
         put_row(&key, &mut o, "b", "2");
         o.epoch_key(3, Some([33; 32]), true);
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=1".into(), "b=2".into()], Some(2)));
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
+        assert_eq!(
+            (keys(&v), v["legacy"].as_u64()),
+            (vec!["a=1".into(), "b=2".into()], Some(2))
+        );
         while let Some((seq, h)) = o.migrate(1) {
             o.commit(sign(&key, &o, seq, h)).unwrap();
             o.rows().unwrap();
         }
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
-        assert_eq!((keys(&v), v["legacy"].as_u64()), (vec!["a=1".into(), "b=2".into()], Some(0)));
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
+        assert_eq!(
+            (keys(&v), v["legacy"].as_u64()),
+            (vec!["a=1".into(), "b=2".into()], Some(0))
+        );
         // Under the table's key only deletions remain (they reach the tree at the next flush).
-        assert!(o.writer.body().entries.iter().all(|(k, e)| k.first() != Some(&SEALED) || e.value.is_none()), "no value left under the table's key");
+        assert!(
+            o.writer
+                .body()
+                .entries
+                .iter()
+                .all(|(k, e)| k.first() != Some(&SEALED) || e.value.is_none()),
+            "no value left under the table's key"
+        );
         // A page with no epoch: it reads nothing of them and seals nothing down.
         let mut low = Open::new(CODE, &member, "notes");
         low.set_table_key([7; 32]);
         low.absorb(&o.writer.state());
         low.epoch_key(3, None, false);
-        let Ok(Step::Ready(v)) = low.rows() else { panic!() };
-        assert_eq!((keys(&v).len(), v["legacy"].as_u64(), v["unreadable"].as_u64()), (0, Some(0), Some(2)));
+        let Ok(Step::Ready(v)) = low.rows() else {
+            panic!()
+        };
+        assert_eq!(
+            (
+                keys(&v).len(),
+                v["legacy"].as_u64(),
+                v["unreadable"].as_u64()
+            ),
+            (0, Some(0), Some(2))
+        );
         assert!(low.migrate(10).is_none());
     }
 
@@ -1588,7 +2163,10 @@ mod tests {
     #[test]
     fn two_nodes_feeds_merge_causally_through_the_tree() {
         use craftworks_feed::{envelope, merge};
-        let (ka, kb) = (SigningKey::from_bytes(&[5; 32]), SigningKey::from_bytes(&[6; 32]));
+        let (ka, kb) = (
+            SigningKey::from_bytes(&[5; 32]),
+            SigningKey::from_bytes(&[6; 32]),
+        );
         let (wa, wb) = (ka.verifying_key().to_bytes(), kb.verifying_key().to_bytes());
         let open = |w: &[u8; 32]| {
             let mut o = Open::new(CODE, w, "notes");
@@ -1598,11 +2176,17 @@ mod tests {
         };
         let (mut a, mut b) = (open(&wa), open(&wb));
         let merged = |a: &mut Open, b: &mut Open| {
-            let (Ok(Step::Ready(ra)), Ok(Step::Ready(rb))) = (a.opened(), b.opened()) else { panic!("held") };
+            let (Ok(Step::Ready(ra)), Ok(Step::Ready(rb))) = (a.opened(), b.opened()) else {
+                panic!("held")
+            };
             merge(&[(a.writer_key, &ra), (b.writer_key, &rb)])
         };
         let put = |key: &SigningKey, o: &mut Open, k: &str, v: Option<&str>, after| {
-            let ver = envelope((o.writer_key, o.writer.seq() + 1), after, v.map(str::as_bytes));
+            let ver = envelope(
+                (o.writer_key, o.writer.seq() + 1),
+                after,
+                v.map(str::as_bytes),
+            );
             let (seq, h) = o.prepare_row(k.as_bytes(), &ver).unwrap();
             o.commit(sign(key, o, seq, h)).unwrap();
         };
@@ -1612,19 +2196,32 @@ mod tests {
         assert_eq!(seen, (wa, 1));
         put(&kb, &mut b, "n", Some("b edits it"), Some(seen));
         let m = merged(&mut a, &mut b);
-        assert_eq!(String::from_utf8_lossy(&m[&b"n".to_vec()].value), "b edits it");
+        assert_eq!(
+            String::from_utf8_lossy(&m[&b"n".to_vec()].value),
+            "b edits it"
+        );
         // A flushes its feed into its tree: the versions go with it.
         for i in 0..3 {
             put(&ka, &mut a, &format!("x{i}"), Some("filler"), None);
         }
-        let Ok(Step::Ready(f)) = a.flush() else { panic!("ready") };
+        let Ok(Step::Ready(f)) = a.flush() else {
+            panic!("ready")
+        };
         a.commit(sign(&ka, &a, f.seq, f.hash)).unwrap();
         let m = merged(&mut a, &mut b);
-        assert_eq!(String::from_utf8_lossy(&m[&b"n".to_vec()].value), "b edits it", "b's version still replaces a's from a's tree");
+        assert_eq!(
+            String::from_utf8_lossy(&m[&b"n".to_vec()].value),
+            "b edits it",
+            "b's version still replaces a's from a's tree"
+        );
         // A deletes what it now sees (b's): gone.
         put(&ka, &mut a, "n", None, Some((wb, 1)));
         assert!(!merged(&mut a, &mut b).contains_key(&b"n".to_vec()));
-        assert_eq!(merged(&mut a, &mut b).len(), 3, "control: the other rows are there");
+        assert_eq!(
+            merged(&mut a, &mut b).len(),
+            3,
+            "control: the other rows are there"
+        );
     }
 
     /// A PUBLIC tail (a person's card): its rows are in the clear in what the network holds, anyone reads them with no
@@ -1637,14 +2234,25 @@ mod tests {
         o.public = true;
         put_row(&key, &mut o, "handle", "alice");
         put_row(&key, &mut o, "kp/node", "abcdef");
-        assert!(contains(&o.writer.state(), b"alice"), "in the clear, by design");
+        assert!(
+            contains(&o.writer.state(), b"alice"),
+            "in the clear, by design"
+        );
         let mut r = Open::new(CODE, &owner, "card");
         r.public = true;
         r.absorb(&o.writer.state());
-        let Ok(Step::Ready(v)) = r.rows() else { panic!() };
-        assert_eq!(keys(&v), ["handle=alice", "kp/node=abcdef"], "no key needed to read");
+        let Ok(Step::Ready(v)) = r.rows() else {
+            panic!()
+        };
+        assert_eq!(
+            keys(&v),
+            ["handle=alice", "kp/node=abcdef"],
+            "no key needed to read"
+        );
         put_row(&key, &mut o, "kp/node", "");
-        let Ok(Step::Ready(v)) = o.rows() else { panic!() };
+        let Ok(Step::Ready(v)) = o.rows() else {
+            panic!()
+        };
         assert_eq!(keys(&v), ["handle=alice"]);
         // FLUSHED into a tree in the clear (it grows past one tail): the blocks hold the rows readable, and a reader
         // with no key walks tail -> root -> blocks to the same rows.
@@ -1654,7 +2262,10 @@ mod tests {
         flush(&key, &mut o);
         assert_eq!(o.pending_rows(), 0, "the tail is emptied");
         assert!(!o.sealed_tree(), "the tree is not marked sealed");
-        assert!(o.sent.values().any(|b| contains(b, b"alice")), "its blocks are in the clear");
+        assert!(
+            o.sent.values().any(|b| contains(b, b"alice")),
+            "its blocks are in the clear"
+        );
         let mut r = Open::new(CODE, &owner, "card");
         r.public = true;
         assert!(r.absorb(&o.writer.state()));
@@ -1667,14 +2278,22 @@ mod tests {
                     rounds += 1;
                     assert!(rounds < 10, "the walk ends");
                     for id in ids {
-                        assert_eq!(r.block_params(&id), Some((false, id)), "a Block contract named by its id");
+                        assert_eq!(
+                            r.block_params(&id),
+                            Some((false, id)),
+                            "a Block contract named by its id"
+                        );
                         assert!(r.absorb_block(&id, &o.sent[&id]));
                     }
                 }
             }
         };
         assert!(rounds >= 1, "control: the reader fetched the tree");
-        assert_eq!(v["rows"].as_array().unwrap().len(), 41, "the card's row and the 40 posts");
+        assert_eq!(
+            v["rows"].as_array().unwrap().len(),
+            41,
+            "the card's row and the 40 posts"
+        );
         // Control: the same rows in a sealed tail do not show.
         let mut sealed = Open::new(CODE, &owner, "card");
         sealed.set_table_key([7; 32]);
@@ -1693,7 +2312,7 @@ mod tests {
         o.public = true;
         put_row(&key, &mut o, "kp/node", "abc");
         let held = o.writer.state(); // what the network holds: step 1
-        // A page that read step 1 prepares step 2; the identity says it signed through 3.
+                                     // A page that read step 1 prepares step 2; the identity says it signed through 3.
         let mut w = Open::new(CODE, &owner, "card");
         w.public = true;
         assert!(w.absorb(&held));
@@ -1701,14 +2320,21 @@ mod tests {
         assert_eq!(seq, 2);
         let (seq, h) = w.skip_to(3).expect("moved past 3");
         assert_eq!(seq, 4);
-        let Some(Send::Put(state)) = w.commit(sign(&key, &w, seq, h)) else { panic!("a whole state") };
+        let Some(Send::Put(state)) = w.commit(sign(&key, &w, seq, h)) else {
+            panic!("a whole state")
+        };
         assert_eq!(w.writer.seq(), 4);
         // The network (a reader holding step 1) takes it, as the contract does.
         let mut r = Open::new(CODE, &owner, "card");
         r.public = true;
         assert!(r.absorb(&held));
-        assert!(r.absorb(&state), "a higher whole state replaces the lower one");
-        let Ok(Step::Ready(v)) = r.rows() else { panic!() };
+        assert!(
+            r.absorb(&state),
+            "a higher whole state replaces the lower one"
+        );
+        let Ok(Step::Ready(v)) = r.rows() else {
+            panic!()
+        };
         assert_eq!(keys(&v), ["handle=alice", "kp/node=abc"]);
         // Control: nothing to skip when the pending step is past `last` already.
         let mut d = Open::new(CODE, &owner, "card");
@@ -1723,11 +2349,22 @@ mod tests {
     fn a_wrong_signature_sends_nothing() {
         let key = SigningKey::from_bytes(&[5; 32]);
         let mut o = Open::new(CODE, &key.verifying_key().to_bytes(), "notes");
-        let (seq, h) = o.prepare(vec![Op::Set { key: b"a".to_vec(), value: b"1".to_vec() }]).unwrap();
+        let (seq, h) = o
+            .prepare(vec![Op::Set {
+                key: b"a".to_vec(),
+                value: b"1".to_vec(),
+            }])
+            .unwrap();
         let wrong = SigningKey::from_bytes(&[6; 32]);
         assert!(o.commit(sign(&wrong, &o, seq, h)).is_none());
         assert_eq!(o.writer.seq(), 0);
-        let _ = S { terminal: false, seq: 0, value_hash: [0; 32], bitmap: 0, sigs: vec![] };
+        let _ = S {
+            terminal: false,
+            seq: 0,
+            value_hash: [0; 32],
+            bitmap: 0,
+            sigs: vec![],
+        };
     }
 }
 
@@ -1743,9 +2380,16 @@ impl Open {
     /// ITS HISTORY: the roots it had, each with when it was replaced, oldest first (`ROOT_LOG`).
     pub fn root_log(&self) -> Vec<(u64, Cid)> {
         let body = self.writer.body();
-        let Some(raw) = body.entries.get(ROOT_LOG).and_then(|e| e.value.clone()) else { return Vec::new() };
+        let Some(raw) = body.entries.get(ROOT_LOG).and_then(|e| e.value.clone()) else {
+            return Vec::new();
+        };
         raw.chunks_exact(40)
-            .filter_map(|c| Some((u64::from_be_bytes(c[..8].try_into().ok()?), c[8..].try_into().ok()?)))
+            .filter_map(|c| {
+                Some((
+                    u64::from_be_bytes(c[..8].try_into().ok()?),
+                    c[8..].try_into().ok()?,
+                ))
+            })
             .collect()
     }
 
@@ -1753,7 +2397,14 @@ impl Open {
     /// was BEFORE that flush (a flush keeps only the tail's entries newer than itself: it drops the log, so it is read
     /// first and written again here): entries before `keep_after_ms` dropped (the retention), and at most `max` kept
     /// (the newest). `None`: nothing to log (already its last).
-    pub fn prepare_root_log(&mut self, prior: &[(u64, Cid)], root: Cid, at_ms: u64, keep_after_ms: u64, max: usize) -> Option<(u64, [u8; 32])> {
+    pub fn prepare_root_log(
+        &mut self,
+        prior: &[(u64, Cid)],
+        root: Cid,
+        at_ms: u64,
+        keep_after_ms: u64,
+        max: usize,
+    ) -> Option<(u64, [u8; 32])> {
         let mut log = prior.to_vec();
         if log.last().map(|x| x.1) == Some(root) {
             return None;
@@ -1761,8 +2412,14 @@ impl Open {
         log.retain(|(t, _)| *t >= keep_after_ms);
         log.push((at_ms, root));
         let skip = log.len().saturating_sub(max);
-        let value: Vec<u8> = log[skip..].iter().flat_map(|(t, r)| [t.to_be_bytes().as_slice(), r.as_slice()].concat()).collect();
-        self.prepare(vec![Op::Set { key: ROOT_LOG.to_vec(), value }])
+        let value: Vec<u8> = log[skip..]
+            .iter()
+            .flat_map(|(t, r)| [t.to_be_bytes().as_slice(), r.as_slice()].concat())
+            .collect();
+        self.prepare(vec![Op::Set {
+            key: ROOT_LOG.to_vec(),
+            value,
+        }])
     }
 
     /// A row's VALUE in the tree at `root` (one the table had: its history) — `Need` names the blocks to fetch first
@@ -1788,30 +2445,47 @@ impl Open {
             Step::Ready(g) => g,
             other => return Ok(other),
         };
-        let mut seen: BTreeSet<Cid> = current.iter().flat_map(|g| g.slots.iter().copied()).collect();
+        let mut seen: BTreeSet<Cid> = current
+            .iter()
+            .flat_map(|g| g.slots.iter().copied())
+            .collect();
         let (mut groups, mut need) = (Vec::new(), Vec::new());
         for (_, root) in self.root_log() {
             if !seen.insert(root) {
                 continue;
             }
-            groups.push(AssetGroup { slots: vec![root], k: 1 });
+            groups.push(AssetGroup {
+                slots: vec![root],
+                k: 1,
+            });
             let mut stack = vec![root];
             while let Some(cid) = stack.pop() {
                 let Some(bytes) = self.blocks.0.get(&cid) else {
                     need.push(cid);
                     continue;
                 };
-                let node = freenet_prolly::node::Node::parse(bytes).map_err(|e| format!("tree node {} does not parse: {e:?}", hex(&cid)))?;
+                let node = freenet_prolly::node::Node::parse(bytes)
+                    .map_err(|e| format!("tree node {} does not parse: {e:?}", hex(&cid)))?;
                 let ids: Vec<Cid> = node.parity().collect();
                 let pn = freenet_prolly::parity::PARITY;
-                for (g, (_, members)) in freenet_prolly::parity::group_members(&node).into_iter().enumerate() {
-                    let new: Vec<Cid> = members.iter().copied().filter(|m| !seen.contains(m)).collect();
+                for (g, (_, members)) in freenet_prolly::parity::group_members(&node)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let new: Vec<Cid> = members
+                        .iter()
+                        .copied()
+                        .filter(|m| !seen.contains(m))
+                        .collect();
                     if new.is_empty() {
                         continue;
                     }
                     let par = ids.get(pn * g..pn * (g + 1)).unwrap_or(&[]);
                     seen.extend(new.iter().copied());
-                    groups.push(AssetGroup { slots: [members.clone(), par.to_vec()].concat(), k: members.len() });
+                    groups.push(AssetGroup {
+                        slots: [members.clone(), par.to_vec()].concat(),
+                        k: members.len(),
+                    });
                     if !node.is_leaf() {
                         stack.extend(new);
                     }
@@ -1840,14 +2514,21 @@ mod history_tests {
 
     const CODE: &[u8] = b"\0asm\x01\0\0\0";
     fn sign(key: &SigningKey, o: &Open, seq: u64, hash: [u8; 32]) -> [u8; 64] {
-        key.sign(&Params::parse(&o.params).unwrap().signed_message(false, seq, &hash)).to_bytes()
+        key.sign(
+            &Params::parse(&o.params)
+                .unwrap()
+                .signed_message(false, seq, &hash),
+        )
+        .to_bytes()
     }
     fn write(key: &SigningKey, o: &mut Open, k: &str, v: &str) {
         let (seq, h) = o.prepare_row(k.as_bytes(), v.as_bytes()).unwrap();
         o.commit(sign(key, o, seq, h)).unwrap();
     }
     fn flush(key: &SigningKey, o: &mut Open) -> Vec<(Cid, Vec<u8>)> {
-        let Ok(Step::Ready(f)) = o.flush() else { panic!("a flush of held rows is ready") };
+        let Ok(Step::Ready(f)) = o.flush() else {
+            panic!("a flush of held rows is ready")
+        };
         o.commit(sign(key, o, f.seq, f.hash)).unwrap();
         f.blocks
     }
@@ -1870,11 +2551,20 @@ mod history_tests {
         net.extend(flush(&key, &mut o));
         let r2 = o.root().unwrap();
         assert_ne!(r1, r2);
-        assert!(o.root_log().is_empty(), "a flush keeps none of the tail's older entries");
-        let (seq, h) = o.prepare_root_log(&prior, r1, 1_000, 0, 20).expect("the replaced root is logged");
+        assert!(
+            o.root_log().is_empty(),
+            "a flush keeps none of the tail's older entries"
+        );
+        let (seq, h) = o
+            .prepare_root_log(&prior, r1, 1_000, 0, 20)
+            .expect("the replaced root is logged");
         o.commit(sign(&key, &o, seq, h)).unwrap();
         assert_eq!(o.root_log(), vec![(1_000, r1)]);
-        assert_eq!(o.pending_rows(), 0, "the log is no row: no flush is owed to it");
+        assert_eq!(
+            o.pending_rows(),
+            0,
+            "the log is no row: no flush is owed to it"
+        );
         // A reader with the state only.
         let mut r = Open::new(CODE, &member, "notes");
         r.set_table_key([7; 32]);
@@ -1884,22 +2574,42 @@ mod history_tests {
             for _ in 0..10 {
                 match r.value_at(&root, k.as_bytes()).unwrap() {
                     Step::Ready(v) => return v,
-                    Step::Need(ids) => ids.iter().for_each(|id| assert!(r.absorb_block(id, &net[id]))),
+                    Step::Need(ids) => ids
+                        .iter()
+                        .for_each(|id| assert!(r.absorb_block(id, &net[id]))),
                     Step::Keys(k) => panic!("no epochs here: {k:?}"),
                 }
             }
             panic!("the read did not finish")
         };
-        assert_eq!(at(logged, "a").as_deref(), Some(b"v1".as_slice()), "as it was then");
-        assert_eq!(at(r2, "a").as_deref(), Some(b"v2".as_slice()), "as it is now");
+        assert_eq!(
+            at(logged, "a").as_deref(),
+            Some(b"v1".as_slice()),
+            "as it was then"
+        );
+        assert_eq!(
+            at(r2, "a").as_deref(),
+            Some(b"v2".as_slice()),
+            "as it is now"
+        );
         assert_eq!(at(logged, "zz"), None, "control: a row that never was");
         // ITS HISTORY's asset: the old root and what only it reaches — none of the current tree's blocks.
-        let Ok(Step::Ready(now)) = o.asset() else { panic!("the writer holds its tree") };
+        let Ok(Step::Ready(now)) = o.asset() else {
+            panic!("the writer holds its tree")
+        };
         let current: BTreeSet<Cid> = now.iter().flat_map(|g| g.slots.clone()).collect();
-        let Ok(Step::Ready(old)) = o.history_asset() else { panic!("the writer holds its old tree") };
+        let Ok(Step::Ready(old)) = o.history_asset() else {
+            panic!("the writer holds its old tree")
+        };
         let older: BTreeSet<Cid> = old.iter().flat_map(|g| g.slots[..g.k].to_vec()).collect();
         assert!(older.contains(&r1), "the logged root is kept");
-        assert!(older.is_disjoint(&current), "nothing the current tree already keeps");
-        assert!(!current.contains(&r1), "control: the current tree does not reach the old root");
+        assert!(
+            older.is_disjoint(&current),
+            "nothing the current tree already keeps"
+        );
+        assert!(
+            !current.contains(&r1),
+            "control: the current tree does not reach the old root"
+        );
     }
 }

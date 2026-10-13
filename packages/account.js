@@ -164,6 +164,35 @@ export async function mount(ctx, el) {
           escrowed === null ? null : `${escrowed} epoch${escrowed === 1 ? "" : "s"} kept in escrow for your recovery words: with the words alone, every one of them opens again.`,
         ].filter(Boolean);
         sec.querySelector(".facts").replaceChildren(...facts.map(t => Object.assign(document.createElement("li"), { textContent: t })));
+        // REPAIR (owner 10-13): where this login HOLDS the account's keys — the one to run it on when a recovery on
+        // another device started a second set of keys (that device's spaces and tables then read empty).
+        sec.querySelector(".repair")?.remove();
+        if (!st || st.removed) return;
+        const repair = Object.assign(document.createElement("div"), { className: "repair" });
+        const said = Object.assign(document.createElement("ul"), { className: "facts" });
+        const btn = Object.assign(document.createElement("button"), { type: "button", textContent: "Repair account keys" });
+        repair.append(
+          Object.assign(document.createElement("p"), {
+            className: "note",
+            textContent:
+              "Another device of yours shows no spaces after logging in with your recovery words? An earlier recovery may have started a second set of keys. Repair makes THIS login's keys the account's again: your other devices then log in with the recovery words once more and see everything.",
+          }),
+          btn,
+          said,
+        );
+        btn.onclick = async () => {
+          if (!confirm("Make this login's keys the account's? Your other devices log in with the recovery words again afterwards.")) return;
+          btn.disabled = true;
+          const line = t => said.append(Object.assign(document.createElement("li"), { textContent: t }));
+          try {
+            const r = await keys.repairAccount(line);
+            line(`Done: the account's keys are this login's (epoch ${r.epoch}). Log in with your recovery words on your other devices.`);
+          } catch (e) {
+            line(`Not repaired: ${ctx.say(e)}`);
+            btn.disabled = false;
+          }
+        };
+        sec.append(repair);
       }
       drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${e?.message ?? e}`));
 

@@ -338,12 +338,15 @@ export async function start(ctx) {
     // The WALK, with the words: from the channel's pointer, every epoch's commit and escrowed next secret, to the
     // present — each epoch's secret kept here on the way (this node then reads what was written before it joined).
     async function walk() {
-      let e = 0;
+      // From the channel's START (an account repaired after a second group sealed over its first epoch's pointer: the
+      // epoch its keys were made the account's again — every table sealed under it since), else the first epoch.
+      let e = Math.max(0, Number(channel.rows().find(x => x.key === "start")?.value ?? 0) || 0);
       let info = channel.rows().find(x => x.key === "info")?.value;
       walked.info = !!info;
       const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
       walked.escrow0 = !!first;
-      if (!first) return ((walked.stop = "no escrow for epoch 0 in the channel"), { e, info, secret: null });
+      walked.start = e;
+      if (!first) return ((walked.stop = `no escrow for epoch ${e} in the channel`), { e, info, secret: null });
       let secret = mlsGlue.Mls.open_escrow(entropy, bytes(first));
       for (;;) {
         if (!kept.has(e) && (await auth.identity.epochKeep(e, secret)).mlsSaved) kept.add(e);
@@ -416,6 +419,32 @@ export async function start(ctx) {
       return;
     }
     throw new Error("the account's group kept moving: joining it again next time");
+  }
+
+  // REPAIR (owner 10-13): THIS LOGIN's keys made the account's again. 10-12 a words login on a slow node read the
+  // account's channel empty and made a SECOND group: it wrote its own first escrow and group info over the channel's,
+  // so every words login since joins that second group — and it sealed the account's directory over with its own key,
+  // so not even the first group reads it. Run where the first group's keys are (the original login, its own PIN):
+  // the directory made again (`storage.repairDirectory`), every table this node writes sealed under the current epoch
+  // (`storage.resealOwn`), and the channel pointed at this group from that epoch (`start`, its escrow, its group
+  // info) — a words login anywhere then joins this group and reads everything. `say(line)`: each step, as it goes.
+  async function repairAccount(say = () => {}) {
+    const held = await ready();
+    if (!held) throw new Error("this login holds no keys of the account's group here: log in where its keys are (the original login, its own PIN)");
+    const st = mls.status();
+    say(`this login's group: epoch ${st.epoch}, ${st.members.length} node(s)`);
+    const listed = await storage.repairDirectory();
+    say(`the directory made again: ${listed.length} row(s)`);
+    const sealed = await storage.resealOwn();
+    say(`${sealed.length} table(s) of this node sealed under epoch ${st.epoch}`);
+    const channel = await storage.table(CHANNEL);
+    await channel.put(escrowKey(st.epoch), hexOf(st.escrow));
+    await channel.put("info", hexOf(st.info));
+    await channel.put("start", String(st.epoch));
+    say(`the account's channel points at this group from epoch ${st.epoch}: a words login now joins it`);
+    await keyEvent("repaired", { epoch: st.epoch, tables: sealed.length });
+    dispatchEvent(new CustomEvent("craftworks:keys"));
+    return { epoch: st.epoch, directory: listed.length, tables: sealed.length };
   }
 
   // NEW WORDS: every escrow sealed again for them (the old words open nothing after the change), and from now on escrows
@@ -1313,5 +1342,5 @@ export async function start(ctx) {
     return { batches: batches.length, offers, held };
   }
 
-  return { ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
+  return { repairAccount, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, keyPackages, answers, holdsTag, welcomeFor, packageCounts, event: keyEvent, events: keyEvents, onChange: f => watchers.push(f) };
 }
