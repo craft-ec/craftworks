@@ -2350,6 +2350,17 @@ of the DID's log; merge = union; nobody can delete one) — readers count those 
   place. Proven on fx/fy (fresh account with a handle, its own space, a chat message): joined + 1 earlier epoch
   recovered, handle, space, message — no manual reload; also on the release tree itself before publishing.
   Also carries 8c2d17e (reports name the site; members-only refusal not a fault). 1179/1263 pieces.
+- Live v387 (2026-10-13, loader v42): release7 = main 6161bac, token off, every wasm = v384's but core (repair).
+  v385 had reload-looped on the owner's slow node (resume guard < load time) and was reverted (v386 = v384 content).
+  Carries v385's content + the visit resume fix, ACCOUNT REPAIR (a forked account: the owner's 10-12 words login on a
+  slow node made a second group, overwrote the channel's e/0+info and sealed the directory over — Settings > Security
+  > Repair account keys on the ORIGINAL login; guarded to logins whose directory does not read), slow-node fixes
+  (identity registration 3 min, earlier builds asked patiently, reconnect reload once/10 min, single draft flush,
+  re-send on reconnect, …) and a 3-reviewer audit's fixes. Proven on fx/fy on the release tree: a v384 account
+  upgraded (space, message, desktop, paste, frame, secret, bundles, recovery), and a reproduced fork repaired (fork
+  login refused; after the original's repair a new device's words login joined the original group: space + message).
+  Live manifest = the fx-proven one (139 packages, 0 differ). Old Mac node runs on 127.0.0.1:7511 for the owner's
+  repair (old PIN there → Repair; then words on Hetzner).
 - Live v385 (2026-10-13, loader v40): release6 = main c2b0a8e, token off, contracts/devices + packages/build (core,
   mls, identity …) = release5's bytes — every wasm package identical to v384 (no PIN prompt). Carries FOUNDATION 1-8,
   the desktop (dock, app viewer, Space app), apps in frames (Paste, sample), bundles (public, with editions when the
