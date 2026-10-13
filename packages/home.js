@@ -84,7 +84,10 @@ export async function mount(ctx, el) {
     const icons = await ctx.require("app-icons");
     // Only the apps INSTALLED (`installed`: the App Store's; every app until it is removed).
     const installed = await ctx.require("installed");
-    let have = new Set((await installed.list().catch(() => ctx.apps)).map(a => a.route));
+    // Drawn AT ONCE with every app; the removed ones leave when the list is read (never a blank Home while it is —
+    // 10-13: the desk waited for the installed list, up to its table's long read).
+    let have = new Set(ctx.apps.map(a => a.route));
+    installed.list().then(l => ((have = new Set(l.map(a => a.route))), desk.redraw()), ctx.quiet(() => {}));
     const personal = () => ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal") && have.has(a.route));
     const desk = icons.desk(el.querySelector(".desk"), {
       items: () => personal().map(a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0 })),

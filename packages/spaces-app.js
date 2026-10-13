@@ -66,7 +66,7 @@ export async function mount(ctx, el) {
       }
     };
     root.replaceChildren(
-      h("h2", { textContent: "Spaces" }),
+      h("h2", { textContent: "Your spaces" }),
       mine.length ? h("ul", {}, ...mine.map(s => h("li", {}, h("a", { href: `#/spaces/${s.id}`, textContent: space.shown(s) }), h("a", { href: `#/s/${s.id}`, textContent: "Open" })))) : h("p", { textContent: "You are in no shared space yet." }),
       h("h3", { textContent: "Make one" }),
       make,
@@ -106,7 +106,7 @@ export async function mount(ctx, el) {
     });
     const apps = (ctx.apps ?? []).filter(a => r.apps().includes(a.route.slice(1)));
     root.replaceChildren(
-      h("p", {}, h("a", { href: "#/spaces", textContent: "← Spaces" })),
+      h("p", {}, h("a", { href: "#/spaces", textContent: "← Your spaces" })),
       h("h2", { textContent: space.shown(sp) }),
       h("h3", { textContent: "What it enables" }),
       h("p", { textContent: may ? "Every app composes from this list: an app shows the space when what it needs is on." : "Its owner and admins keep this list." }),
