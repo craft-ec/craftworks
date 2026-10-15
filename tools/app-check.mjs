@@ -9,16 +9,23 @@ import { join } from "node:path";
 
 const root = process.argv[2] ?? new URL("..", import.meta.url).pathname;
 const pkgs = join(root, "packages");
+const bad = [];
+const bad0 = s => bad.push(s);
 // THE OS: what every app stands on (FOUNDATION §3) — stays in the page.
 const OS = new Set(["places-side", "home", "settings", "account", "spaces-app", "space-home", "store", "tag", "contact", "chat", "mail", "wallet-app", "nodes-app", "explorer-app"]);
 // APPS NOT YET IN THEIR FRAMES (10-15): only ever shorter.
-const NOT_YET = new Set(["wiki", "vote", "form", "note", "board", "blog", "media", "caption", "drive", "bundle-app"]);
-const bad = [];
+const NOT_YET = new Set(["wiki", "form", "note", "board", "blog", "media", "caption", "drive", "bundle-app"]);
+// FRAMED BY THE FRAME RUNTIME (FOUNDATION §3): the manifest's `framed` (the publisher's) — the app keeps its
+// `mount(ctx, el)`, run in its frame with its grants.
+const pub = readFileSync(join(root, "publish/src/main.rs"), "utf8");
+const framedSrc = pub.match(/\\"framed\\": \{\{(.*?)\}\}/)?.[1] ?? "";
+const FRAMED = new Set([...framedSrc.matchAll(/\\"([a-z0-9-]+)\\": \[/g)].map(m => m[1]));
+if (!FRAMED.size) bad0("publish/src/main.rs: no `framed` map found (the check must see one)");
 for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {
   const name = f.slice(0, -3);
   const src = readFileSync(join(pkgs, f), "utf8");
   if (!/export\s+async\s+function\s+mount\s*\(\s*ctx\b/.test(src)) continue;
-  if (OS.has(name) || NOT_YET.has(name)) continue;
+  if (OS.has(name) || NOT_YET.has(name) || FRAMED.has(name)) continue;
   bad.push(`packages/${f}: a page mounted with the page's ctx — an app runs in its own frame (\`mount(api, el)\`), or it is the OS's`);
 }
 // A name on the NOT-YET list that is framed now (or gone): take it off.
@@ -33,4 +40,4 @@ if (bad.length) {
   console.error(`app-check: ${bad.length} site(s)\n${bad.join("\n")}`);
   process.exit(1);
 }
-console.log(`app-check: ok (${NOT_YET.size} app(s) not yet framed)`);
+console.log(`app-check: ok (${FRAMED.size} framed: ${[...FRAMED].join(", ")}; ${NOT_YET.size} not yet)`);

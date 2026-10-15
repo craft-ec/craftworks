@@ -25,10 +25,10 @@
 //
 //   const V = await ctx.require("vote-tally");
 //   const place = await V.of(at)     // `where.of(…)`'s place: yours, a person's, a space's
-//   await place.polls()  await place.proposals()          // the items, newest first
+//   place.polls  place.proposals     // the items, newest first (a space's, as read: data, as the bridge carries)
 //   await place.pollView(poll)       // { meta, tally, mine, may, records }
 //   await place.vote(poll, choice)   // a ballot: a poll's options (a list) or a proposal's "yes" | "no" | "abstain" | null
-//   await place.proposalView(p)      // { tally, resolution, final, verified, mine, participation, outcome, … }
+//   await place.proposalView(p)      // { tally, resolution, final, verified, mine, outcome, … }
 //   await place.delegate(did | null) // this person's delegation in the space (null: revoked)
 //   await place.finalize(p)  await place.applyOutcome(p)
 // Pure parts (exported; `node --test tools/vote-tally.test.mjs`): normalizePoll, recordOf, recordHash, withHashes,
@@ -344,6 +344,12 @@ export function delegationChains(electorate, delegations) {
 }
 
 // ── THE SERVICE ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the pure parts beside the host's proxy — the tally itself
+// runs in the host, over the space's roles, counted the same for everyone.
+export function frame() {
+  return { normalizePoll, outcomeText, outcomeProblem, participation, graphOf, delegationChains, DEPTH, CHOICES };
+}
+
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
   const me = async () => space.me.strict();
@@ -428,7 +434,6 @@ export async function start(ctx) {
         electorate: E,
         mine: t.direct.get(self) ?? null,
         myDelegate: t.delegations.get(self) ?? null,
-        participation: name => participation(self, t.resolution, name),
         outcome,
         applied,
         mayApply: !!(outcome && need && (need === "owner" ? r.role(self) === "owner" : r.can(self, need))),
@@ -464,21 +469,24 @@ export async function start(ctx) {
       await r.act({ ...v.outcome, proposal: p.ref });
       return null;
     }
+    // (What was read is DATA — members, polls, proposals, the delegations, whether this person may propose — and the
+    // steps are calls: an app in its frame gets the one as values and the other across the bridge, FOUNDATION §3.)
     return {
-      r,
       sp,
       records,
-      members,
-      electorate,
-      polls: () => all.filter(x => x.kind === POLL).sort((a, b) => b.at - a.at),
-      proposals: () => all.filter(x => x.kind === PROPOSAL).sort((a, b) => b.at - a.at),
+      members: members(),
+      // (Its own roles and domains, for a proposal's act.)
+      roles: r.roles(),
+      domains: r.domains(),
+      polls: all.filter(x => x.kind === POLL).sort((a, b) => b.at - a.at),
+      proposals: all.filter(x => x.kind === PROPOSAL).sort((a, b) => b.at - a.at),
       proposalView,
-      delegation,
-      delegations: () => new Map([...newest(records.filter(x => x.kind === DELEGATION && r.role(x.by)))].map(([by, x]) => [by, x.to ?? null])),
+      delegation: delegation(),
+      delegations: new Map([...newest(records.filter(x => x.kind === DELEGATION && r.role(x.by)))].map(([by, x]) => [by, x.to ?? null])),
       delegate,
       finalize,
       applyOutcome,
-      mayPropose: () => r.allowsIn("post", self, "vote"),
+      mayPropose: r.allowsIn("post", self, "vote"),
       async propose({ title, body, action = null, quorum = 1, audience = "members", write = null }) {
         if (!String(title ?? "").trim()) throw new Error("a proposal needs a title");
         const why = outcomeProblem(action);

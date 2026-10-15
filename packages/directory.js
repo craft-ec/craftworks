@@ -22,6 +22,26 @@
 //   directory.onDevices(did, fn)              // their devices changed (their card moved)
 //   await directory.listMe(on)   directory.isListed()   // shown in DISCOVER (Contacts' public view), or not
 //   await directory.listed()                  // the people shown in Discover: [did] (each one's card says so)
+// How a person is SHOWN, everywhere: their handle and the start of their id — `pat#8r4orC` (handles are not unique;
+// the id is). Without a handle: `#8r4orC`.
+const shown = (did, handle) => `${handle ?? ""}#${String(did).replace(/^did:craftec:/, "").slice(0, 6)}`;
+// A person's NAME ON A PAGE — the one way one is drawn: an element showing what is known now (never waited on),
+// its text replaced when their card is read.
+// With their BADGE (rewards §5a): ⭐ PRO, 💎 VIP — their level now, from their public contributions.
+const BADGE = { pro: " ⭐ PRO", vip: " 💎 VIP" };
+const nameElOf =
+  (ctx, { name, levelOf, known = () => null }) =>
+  (did, tag = "span", props = {}) => {
+    const e = Object.assign(document.createElement(tag), props, { textContent: shown(did, known(did)) });
+    ctx.background("directory: Promise.all", Promise.all([name(did), ctx.optional("directory: levelOf", levelOf(did), () => null)]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? ""))));
+    return e;
+  };
+// IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the same helpers over the host's proxy (`cap`) — a name
+// shown at once by its id, then as read.
+export function frame(cap, ctx) {
+  return { shown, nameEl: nameElOf(ctx, { name: cap.name, levelOf: cap.levelOf }) };
+}
+
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
@@ -184,19 +204,8 @@ export async function start(ctx) {
     return handles.get(did);
   }
 
-  // How a person is SHOWN, everywhere: their handle and the start of their id — `pat#8r4orC` (handles are not unique;
-  // the id is). Without a handle: `#8r4orC`.
-  const shown = (did, handle) => `${handle ?? ""}#${String(did).replace(/^did:craftec:/, "").slice(0, 6)}`;
   const name = async did => shown(did, await handle(did));
-  // A person's NAME ON A PAGE — the one way one is drawn: an element showing what is known now (never waited on),
-  // its text replaced when their card is read.
-  // With their BADGE (rewards §5a): ⭐ PRO, 💎 VIP — their level now, from their public contributions.
-  const BADGE = { pro: " ⭐ PRO", vip: " 💎 VIP" };
-  const nameEl = (did, tag = "span", props = {}) => {
-    const e = Object.assign(document.createElement(tag), props, { textContent: shown(did, knownHandles.get(did)) });
-    ctx.background("directory: Promise.all", Promise.all([name(did), ctx.optional("directory: levelOf", levelOf(did), () => null)]).then(([t, lv]) => (e.textContent = t + (BADGE[lv?.id] ?? ""))));
-    return e;
-  };
+  const nameEl = nameElOf(ctx, { name, levelOf, known: did => knownHandles.get(did) });
 
   // A person's DATA key, from their key log (once per page): what signs their member's credential in a space.
   const dataKeys = new Map();

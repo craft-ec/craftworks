@@ -35,6 +35,14 @@
 // server's access has no group of its own — its group, scope and keys are the server's, and its messages are its own
 // table in the server. (A channel that narrows access — private, a moderators' room — gets its own members and group:
 // with roles.)
+// How a space is SHOWN, everywhere: its name and the start of its id — `Makers#30fe18` (names are not unique; the id
+// is), as people are (`pat#8r4orC`).
+const shown = sp => `${String(sp?.name ?? "").trim() || "space"}#${String(sp?.id ?? "").slice(0, 6)}`;
+// IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the same pure helpers beside the host's proxy.
+export function frame() {
+  return { shown };
+}
+
 export async function start(ctx) {
   const { Fault } = await ctx.require("fault");
   const auth = await ctx.require("auth");
@@ -200,9 +208,6 @@ export async function start(ctx) {
     ctx.log("space", { what: `removed from ${sp.kind} “${sp.name}”: no longer listed` });
   }
 
-  // How a space is SHOWN, everywhere: its name and the start of its id — `Makers#30fe18` (names are not unique; the id
-  // is), as people are (`pat#8r4orC`).
-  const shown = sp => `${String(sp?.name ?? "").trim() || "space"}#${String(sp?.id ?? "").slice(0, 6)}`;
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
   const isGroup = sp => !!(sp?.circle || sp?.group);

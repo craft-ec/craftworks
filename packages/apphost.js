@@ -254,7 +254,7 @@ export async function start(ctx) {
   // THE TRUST CORE stays here (the node, the keys, the tables, the identity, the spaces and their items): a frame gets
   // it only as proxies, each call checked. EVERYTHING ELSE — UI, pure libraries, an app's own logic — is loaded into the
   // frame by its hash (as a phone's frameworks into an app's process), its own requires resolved the same way there.
-  const HOST = new Set(["node", "storage", "identity", "auth", "keys", "access", "index", "files", "membership", "conversation", "space", "items", "roles", "directory", "lifecycle", "activity", "usage", "upkeep", "edge", "drafts", "installed", "apphost", "places", "login", "blocks", "account", "ordering", "statement", "tokens", "beacon", "keeper", "witness", "signals"]);
+  const HOST = new Set(["node", "storage", "identity", "auth", "keys", "access", "index", "files", "membership", "conversation", "space", "items", "roles", "directory", "lifecycle", "activity", "usage", "upkeep", "edge", "drafts", "installed", "apphost", "places", "login", "blocks", "account", "ordering", "statement", "tokens", "beacon", "keeper", "witness", "vote-tally"]);
   const FRAME_LOCAL = { has: name => !HOST.has(name) };
   const { SOURCE: RUNTIME_CTX } = await ctx.require("frame-runtime");
   // (`bytes`: a module given as it is — a probe's — in place of a package by name.)
@@ -262,8 +262,45 @@ export async function start(ctx) {
     if (!KEY.test(app)) throw new Error(`an app's name is a-z, 0-9 and "-": ${app}`);
     const granted = new Set(uses);
     const { clicked, gesture } = gestures();
-    // A call that WRITES (by its name): only on the person's gesture.
-    const WRITES = /^(submit|edit|remove|put|set|create|send|join|leave|delete|add|move|rename|revoke|publish|vote|act|make|drop|write|post|accept|ban|invite|grant)/i;
+    // WHAT CROSSES THE BRIDGE (as a phone's IPC parcel): DATA BY VALUE — structured clone, so a Map, a Set, bytes stay
+    // what they are; a read's state (a total read's \`.state\`) kept with it — and a FUNCTION BY REFERENCE: a handle
+    // whose calls come back here (a place's steps, an unsubscribe), each a write only on a gesture, as any call. A live
+    // object (an element, a binding's handle) is not sent. The frame's own functions (a callback it passes) come here
+    // as handles too, called back in the frame.
+    const handles = new Map(); // id → { f, name }
+    let handleN = 0;
+    const OPEN = v => ArrayBuffer.isView(v) || v instanceof ArrayBuffer || v instanceof Date || v instanceof Blob;
+    const marshal = (v, name, depth = 0) => {
+      if (typeof v === "function") {
+        handles.set(++handleN, { f: v, name });
+        if (handles.size > 4000) handles.delete(handles.keys().next().value);
+        return { __cwfn: handleN };
+      }
+      if (v == null || typeof v !== "object") return v;
+      if (depth > 16 || v instanceof Promise) return null;
+      if (OPEN(v)) return v;
+      let out;
+      if (Array.isArray(v)) out = v.map(x => marshal(x, name, depth + 1));
+      else if (v instanceof Map) out = new Map([...v].map(([k, x]) => [marshal(k, name, depth + 1), marshal(x, name, depth + 1)]));
+      else if (v instanceof Set) out = new Set([...v].map(x => marshal(x, name, depth + 1)));
+      else if ([Object.prototype, null].includes(Object.getPrototypeOf(v))) out = Object.fromEntries(Object.entries(v).map(([k, x]) => [k, marshal(x, k, depth + 1)]));
+      else return null;
+      return Object.getOwnPropertyDescriptor(v, "state")?.enumerable === false ? { __cwstate: plain(v.state), v: out } : out;
+    };
+    const callback = id => (...args) => void frame.contentWindow?.postMessage({ event: "cb", id, args: marshal(args, "callback") }, "*");
+    const unmarshal = v => {
+      if (v == null || typeof v !== "object" || OPEN(v)) return v;
+      if (Array.isArray(v)) return v.map(unmarshal);
+      if (v instanceof Map) return new Map([...v].map(([k, x]) => [unmarshal(k), unmarshal(x)]));
+      if (v instanceof Set) return new Set([...v].map(unmarshal));
+      if (typeof v.__cwcb === "number") return callback(v.__cwcb);
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unmarshal(x)]));
+    };
+    // A READ (by its exact name) needs no gesture; EVERY OTHER call — a capability's or a handle's (a step a call gave
+    // back, named by its key) — only on the person's gesture. Fails closed: a read not named here is refused until named
+    // (a visible refusal), never a write let through because its name was not on a list (fx 10-15: \`delegate\` was not).
+    const READS = new Set(["get", "list", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level"]);
+    const WRITES = { test: name => !READS.has(name) };
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";
     frame.title = app;
@@ -284,18 +321,29 @@ export async function start(ctx) {
           return { local: true, kind: p.kind, b64: b64(p.bytes) };
         }
         if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
-        return { local: false };
+        // A capability with SYNC HELPERS (its module's `frame` export): its bytes, so the frame runs the same helpers.
+        const p = await ctx.packageOf(name);
+        return /\bexport function frame\(/.test(new TextDecoder().decode(p.bytes)) ? { local: false, b64: b64(p.bytes) } : { local: false };
       },
       cap: async (name, method, args, strict) => {
         if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
         if (WRITES.test(method)) gesture(`${name}.${method}`);
         const c = await ctx.require(name);
-        const f = c?.[method];
+        const f = c && Object.hasOwn(c, method) ? c[method] : undefined; // (its own calls only: never its prototype's)
         if (typeof f !== "function") throw Object.assign(new Error(`${name} has no call "${method}"`), { kind: "refused" });
-        return plain(await (strict && typeof f.strict === "function" ? f.strict : f).apply(c, Array.isArray(args) ? args : []));
+        return marshal(await (strict && typeof f.strict === "function" ? f.strict : f).apply(c, unmarshal(Array.isArray(args) ? args : [])), method);
+      },
+      // A HANDLE called (a function a call gave back).
+      fn: async (id, args) => {
+        const h = handles.get(id);
+        if (!h) throw Object.assign(new Error("this step is gone: open it again"), { kind: "refused" });
+        if (WRITES.test(h.name)) gesture(h.name);
+        return marshal(await h.f(...unmarshal(Array.isArray(args) ? args : [])), h.name);
       },
       log: async (step, detail) => (ctx.log(`${app}: ${String(step).slice(0, 40)}`, detail), true),
       say: async (message, kind) => ctx.say(Object.assign(new Error(message), { kind })),
+      // ITS NAVIGATION: a place in this site (#/…), routed by the page.
+      go: async href => (/^#\/[^\s]*$/.test(href) && (location.hash = href), true),
       // ITS MENU (the frame's `where`): its entries, to the side panel through the one door (`where.menu`); an entry
       // that runs something is run in the frame (`run`: its number) when chosen here.
       actions: async entries => {

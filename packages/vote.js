@@ -130,7 +130,7 @@ export async function mount(ctx, el) {
     if (!sp) return root.replaceChildren(h("p", { className: "none", textContent: "A proposal is a space's: you are not in this one." }));
     const S = await V.inSpace(sp);
     let v = await S.proposalView(p);
-    await learnNames([...S.members(), p.by, ...(v.final ? [v.final.by] : []), ...(v.outcome?.did ? [v.outcome.did] : [])]);
+    await learnNames([...S.members, p.by, ...(v.final ? [v.final.by] : []), ...(v.outcome?.did ? [v.outcome.did] : [])]);
     // THE OUTCOME applied by the first page of one who may (`mayApply`) — once finalized PASSED and checked.
     if (v.outcome && v.final?.final.result.passed && !v.applied && v.mayApply && !["forged", "mismatch"].includes(v.verified?.status)) {
       await S.applyOutcome(p).catch(e => ctx.failed("vote", e, `applying ${p.ref}'s outcome: ${e.message}`));
@@ -146,7 +146,7 @@ export async function mount(ctx, el) {
       h("p", { className: "s" }, `${status} · by `, directory.nameEl(p.by), ` · ${v.electorate.length} member(s) may vote · quorum ${res.quorum}`),
       p.body ? h("p", { textContent: p.body, style: "white-space:pre-wrap" }) : null,
       h("p", { className: "s", textContent: `If it passes: ${V.outcomeText(v.outcome, nameOf)}.` }),
-      h("p", { className: "you", textContent: v.tally.resolution.has(me) ? v.participation(nameOf) : "You are not in this proposal's electorate." }),
+      h("p", { className: "you", textContent: v.tally.resolution.has(me) ? V.participation(me, v.tally.resolution, nameOf) : "You are not in this proposal's electorate." }),
     );
     if (v.mayVote) {
       const row = h("div", { className: "tools" });
@@ -191,12 +191,12 @@ export async function mount(ctx, el) {
   async function proposalMaker(at) {
     const sp = at.space;
     const S = await V.inSpace(sp);
-    if (!S.mayPropose()) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make proposals here (its policy).` }));
-    await learnNames(S.members());
+    if (!S.mayPropose) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make proposals here (its policy).` }));
+    await learnNames(S.members);
     const title = h("input", { type: "text", placeholder: "What is proposed", maxLength: 300 });
     const body = h("textarea", { rows: 5, placeholder: "Why (optional)" });
     const quorum = h("input", { type: "number", min: 1, value: 1, style: "width:6em" });
-    const memberSel = () => h("select", {}, ...S.members().map(d => h("option", { value: d, textContent: nameOf(d) })));
+    const memberSel = () => h("select", {}, ...S.members.map(d => h("option", { value: d, textContent: nameOf(d) })));
     const kind = h("select", {}, h("option", { value: "", textContent: "No outcome (a decision only)" }), h("option", { value: "grant", textContent: "Make a member an admin, or a member again" }), h("option", { value: "assign", textContent: "Give or take back one of the space's roles" }), h("option", { value: "policy", textContent: "Set who may do something (a policy)" }));
     const parts = h("div", { style: "display:grid;gap:6px" });
     let read = () => null;
@@ -210,15 +210,15 @@ export async function mount(ctx, el) {
         read = () => ({ act: "grant", did: who.value, role: role.value });
       } else if (k === "assign") {
         const who = memberSel();
-        const rs = S.r.roles();
+        const rs = S.roles;
         const role = h("select", {}, ...rs.map(x => h("option", { value: x.id, textContent: x.name })));
         const on = h("select", {}, h("option", { value: "1", textContent: "give it" }), h("option", { value: "", textContent: "take it back" }));
         parts.replaceChildren(rs.length ? h("div", {}, h("label", {}, "Member ", who), h("label", {}, "Role ", role), h("label", {}, on)) : h("p", { className: "none", textContent: "This space has no roles of its own yet (Settings → Roles)." }));
         read = () => (rs.length ? { act: "assign", did: who.value, role: role.value, on: !!on.value } : null);
       } else {
-        const path = h("select", {}, h("option", { value: "", textContent: "the whole space" }), ...S.r.domains().map(d => h("option", { value: d, textContent: d })));
+        const path = h("select", {}, h("option", { value: "", textContent: "the whole space" }), ...S.domains.map(d => h("option", { value: d, textContent: d })));
         const action = h("select", {}, ...["post", "comment", "vote", "edit", "read", "join", "invite"].map(a => h("option", { value: a, textContent: a })));
-        const who = h("select", {}, ...["members", "admins", "owner", "anyone", "nobody", ...S.r.roles().map(x => `role:${x.id}`)].map(w => h("option", { value: w, textContent: w })));
+        const who = h("select", {}, ...["members", "admins", "owner", "anyone", "nobody", ...S.roles.map(x => `role:${x.id}`)].map(w => h("option", { value: w, textContent: w })));
         parts.replaceChildren(h("label", {}, "Where ", path), h("label", {}, "Who may ", action), h("label", {}, "Becomes ", who), h("p", { className: "help", textContent: "Applied by a member who may change the space's apps and policies (who may read: the owner)." }));
         read = () => ({ act: "policy", path: path.value, action: action.value, who: who.value });
       }
@@ -234,11 +234,11 @@ export async function mount(ctx, el) {
   // ── DELEGATION ────────────────────────────────────────────────────────────────────────────────────────────────────
   async function delegationPage(at) {
     const S = await V.inSpace(at.space);
-    await learnNames(S.members());
-    const cur = S.delegation();
-    const dels = S.delegations();
+    await learnNames(S.members);
+    const cur = S.delegation;
+    const dels = S.delegations;
     const toMe = [...dels].filter(([, to]) => to === me).map(([by]) => by);
-    const sel = h("select", {}, ...S.members().filter(d => d !== me).map(d => h("option", { value: d, textContent: nameOf(d), selected: d === cur })));
+    const sel = h("select", {}, ...S.members.filter(d => d !== me).map(d => h("option", { value: d, textContent: nameOf(d), selected: d === cur })));
     const said = h("p", { className: "said" });
     const save = h("button", { type: "button", className: "cw-btn primary", textContent: cur ? "Change my delegate" : "Delegate" });
     const run = theme.action(save, () => S.delegate(sel.value), { busy: "Saving…" });
@@ -259,8 +259,8 @@ export async function mount(ctx, el) {
     const S = await V.inSpace(at.space);
     const p = ref ? await getItem(ref) : null;
     const v = p ? await S.proposalView(p) : null;
-    const dels = v ? v.tally.delegations : S.delegations();
-    const resolution = v ? v.tally.resolution : V.delegationChains(S.members(), dels);
+    const dels = v ? v.tally.delegations : S.delegations;
+    const resolution = v ? v.tally.resolution : V.delegationChains(S.members, dels);
     const g = V.graphOf(resolution, dels);
     await learnNames(g.nodes.map(n => n.did));
     const W = 150, H = 26, GX = 70, GY = 14, PAD = 12;
@@ -315,11 +315,11 @@ export async function mount(ctx, el) {
   };
   async function proposalCards(S, at, { openOnly = false } = {}) {
     const out = [];
-    for (const p of S.proposals()) {
+    for (const p of S.proposals) {
       const v = await S.proposalView(p);
       if (openOnly && v.final) continue;
       const r = v.result;
-      out.push(h("a", { className: "card", href: `#/s/${S.sp.id}/vote/p/${encodeURIComponent(p.ref)}` }, h("div", { className: "t", textContent: `🗳 ${p.title}` }), h("p", { className: "s", textContent: `${v.final ? `Finalized — ${r.passed ? "passed" : "not passed"}` : "Open"} · ${r.yes} yes · ${r.no} no · ${r.abstain} abstain${at.who === "mine" ? ` · ${space.shown(S.sp)}` : ""}` }), h("p", { className: "s", textContent: v.tally.resolution.has(me) ? v.participation(nameOf) : "Not in its electorate." })));
+      out.push(h("a", { className: "card", href: `#/s/${S.sp.id}/vote/p/${encodeURIComponent(p.ref)}` }, h("div", { className: "t", textContent: `🗳 ${p.title}` }), h("p", { className: "s", textContent: `${v.final ? `Finalized — ${r.passed ? "passed" : "not passed"}` : "Open"} · ${r.yes} yes · ${r.no} no · ${r.abstain} abstain${at.who === "mine" ? ` · ${space.shown(S.sp)}` : ""}` }), h("p", { className: "s", textContent: v.tally.resolution.has(me) ? V.participation(me, v.tally.resolution, nameOf) : "Not in its electorate." })));
     }
     return out;
   }
@@ -328,10 +328,10 @@ export async function mount(ctx, el) {
     root.replaceChildren(body);
     if (at.who === "space") {
       const S = await V.inSpace(at.space);
-      await learnNames([...S.members(), ...S.proposals().map(p => p.by)]);
-      const cur = S.delegation();
+      await learnNames([...S.members, ...S.proposals.map(p => p.by)]);
+      const cur = S.delegation;
       const props = await proposalCards(S, at);
-      const polls = S.polls();
+      const polls = S.polls;
       body.replaceChildren(
         h("h2", { textContent: `🗳 ${space.shown(at.space)}'s votes` }),
         // (Read from outside — not a member, a guest: nobody's vote here to delegate.)
@@ -363,7 +363,7 @@ export async function mount(ctx, el) {
       for (const sp of withVote) {
         const S = await ctx.optional("vote: V.inSpace", V.inSpace(sp), () => null);
         if (!S) continue;
-        await learnNames([...S.delegations().values()].filter(Boolean));
+        await learnNames([...S.delegations.values()].filter(Boolean));
         cards.push(...(await proposalCards(S, at, { openOnly: true })));
       }
       parts.push(h("h2", { textContent: "🗳 Open proposals in your spaces" }), cards.length ? h("div", { className: "list" }, ...cards) : h("p", { className: "none", textContent: withVote.length ? "None open." : "None of your spaces uses Vote yet (a space adds it on its Home)." }));

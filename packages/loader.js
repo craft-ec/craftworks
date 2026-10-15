@@ -414,7 +414,11 @@ export async function run(boot) {
     });
     for (const [i, name] of names.entries()) {
       const el = els[i];
-      let mod = await require(name);
+      // AN APP IN ITS OWN FRAME (the manifest's `framed`: its module and its GRANTS — FOUNDATION §3, "THE FRAME
+      // RUNTIME"): never loaded into this page; the app host runs it in a frame with the page's runtime, every
+      // capability it reaches checked against its grants.
+      const grants = manifest.framed?.[name];
+      let mod = grants ? { mount: async (c, host) => (await require("apphost")).mountCtx(host, { app: name, module: name, uses: grants }) } : await require(name);
       // AN APP NOT RUN HERE (a page published as BYTES, not a module): run in its OWN FRAME by the app host, with the
       // system API only (FOUNDATION.md §3, "Apps are installed").
       if (mod instanceof Uint8Array) {
