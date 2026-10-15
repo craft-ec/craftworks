@@ -207,6 +207,17 @@ The app machine makes each app what a separately published site already is, and 
   Paste (framed already), then Wiki, Vote, Forms, Notes, Board, Blog, Videos/Audio/Images/Books,
   Captions, Drive, Bundles. `tools/app-check.mjs` holds the line: an app module not framed fails the build unless it
   is on its NOT-YET list, which only shrinks (an app moved is taken off it in the same change).
+- **THE FRAME RUNTIME — one implementation, two hosts (10-15; as iOS/Android: the UI frameworks are shared libraries
+  loaded into every app's process, privileged work goes through system services checked against the app's permissions,
+  pickers run outside the app).** A frame runs the page's own loader and `ctx`: UI and PURE packages (theme, kinds,
+  cards, the editor and renderer, an item's pure helpers) are loaded into the frame by their hash — the same bytes as
+  the page's, never a frame version; STATEFUL capabilities (items, storage, space, files, identity, roles) stay in the
+  host and `ctx.require` in the frame returns a PROXY whose calls cross the bridge, each checked against the app's
+  grants (its manifest's `uses`). A capability's synchronous helpers are pure (split into a module both sides load) or
+  read a cache the bridge fills (names: a short id at once, the name when it arrives); a UI the host must draw (a
+  person's menu, the audience, files, the publish dialog) is a system picker. So an app's code moves into its frame
+  nearly unchanged. Steps: 8.1 the runtime (loader, ctx, proxies, grants); 8.2 the pure splits and the name cache;
+  8.3 the pickers; 8.4 the apps, one at a time (Vote first). A build check: a kit package has ONE hash, page and frame.
 - **System controls are SYSTEM PICKERS.** A frame cannot draw the host's elements, and a copy of a control inside the
   frame would be a second implementation. So an app ASKS (`api.pick("audience", { space, kind })`, `api.pick("files",
   …)`, `api.pick("sort")`): the system shows its own control above the frame, the person chooses, the value comes

@@ -50,6 +50,11 @@ Phases (each: build, fx probe with a control, commit):
       Order: the kit + bridge → Vote (smallest: audience picker only) → Forms → Wiki → Notes/Board/Blog → media/Drive.
 - HANDOVER 10-15: committed since v392 and not released — 4f6804d e3c7f83 72115b3 c8613f3 01499cd b75248f fb328b9
   df6018d 421535d. The identity build moved (762eb343…, 72115b3): a release asks everyone's PIN once. fx = v748.
+- [ ] 13 Phase 8 (frames), the plan (FOUNDATION §3 "THE FRAME RUNTIME"): 8.1 runtime (in-frame loader by hash, ctx,
+      host proxies, grants per app) · 8.2 pure splits (item helpers) + name cache · 8.3 pickers (person menu, audience,
+      files, publish) · 8.4 apps one at a time, Vote first. Measured: UI code's sync capability calls — space.shown 29,
+      directory.nameEl 19, kinds.* ~30, items pure helpers ~25, person.open 6; the rest async (proxied).
+- Live: v397 (ed44f42) — every screen a view, one menu door, side panel, Discover first.
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.
