@@ -16,7 +16,14 @@ Phases (each: build, fx probe with a control, commit):
       race 97/97; admission with A's page open + loop check pass. OPEN: A's node never let C in with A's page closed —
       the pre-door control fails the same on the crowded fx (≈ a dozen accounts), so not the door; whether 2de2571
       (live v392) or crowding: settle with a delegate test (N members on one node, wake-ups until each is served).
-- [ ] 7 R3: the 6 `location.reload`s retired (reopen on key arrival).
+- [x] 7 R3: no reload for keys or a reconnect. Tables opened before their keys reopen in place (`showAgain`); a node
+      that comes back has the door read each followed contract ONCE (re-subscribed, answer handed on as a push); a table
+      made here by a PUT is read once through the door so the page follows it. fx (drop.mjs): connection dropped, the
+      other page writes — new: no reload (window marker kept), 22 contracts read again once, the row arrives in 5 s;
+      old: the page reloaded (marker lost). Write race 97/97 again. Kept on purpose: log out, a login, a newer version,
+      the trace's "newest" button.
+- [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
+      live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.
 
 # Auth, identity and data — progress

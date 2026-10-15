@@ -18,8 +18,8 @@ export async function start(ctx) {
 
   // THE CONNECTION, and its RECOVERY: a socket that closes (the machine slept, the network changed, the node
   // restarted) is opened again, every 2 s until it is; a question asked meanwhile waits for it (its own deadline still
-  // runs). Once back, the page is told (`craftworks:node-back`): what it followed was the old socket's, so the loader
-  // loads the page again as soon as nothing would be lost.
+  // runs). Once back, the page is told (`craftworks:node-back`): what it followed was the old socket's — the door
+  // (below) follows each contract again, read once; the page stays.
   const waiters = [];
   const listeners = [];
   let ws = null;
@@ -252,9 +252,18 @@ export async function start(ctx) {
     if (r.s !== "ASKED") r.s = "HELD";
     for (const f of r.fns) f(said);
   });
-  // The connection lost and back: what was followed may have moved meanwhile — each read again once (and followed again).
+  // The connection lost and back: its subscriptions were the old socket's, and what was followed may have moved — each
+  // HELD contract read again ONCE (followed again), its answer handed on as a push is (its tables, bags, followers
+  // take it). No page reload (10-15).
   addEventListener("craftworks:node-back", () => {
-    for (const r of reads.values()) if (r.s === "HELD") r.s = "STALE";
+    const back = [...reads].filter(([, r]) => r.s === "HELD");
+    for (const [, r] of back) r.s = "STALE";
+    if (back.length) ctx.log("read", { what: `the node is back: ${back.length} followed contract(s) read again once` });
+    for (const [hexId, r] of back)
+      ctx.background("node: follow again", contract(hexId, r.what, r).then(said => {
+        if (said?.held || isAbsent(said)) return;
+        for (const f of listeners) f(said);
+      }));
   });
 
   // READ a contract (its 32-byte id) so the core holds its state (`held_state`): true when the node has it. Through the

@@ -668,6 +668,10 @@ export async function start(ctx) {
         const ok = k === "put" ? "put" : "updated";
         const said = await ask(frames, x => (x.kind === ok && x.key === name) || x.kind === "refused", `${doing} ${app}`, 60000);
         if (said.kind === "refused") refused = `the node said ${said.said}`;
+        // MADE HERE by a PUT (which does not subscribe): read once through the door, so this page follows it — another
+        // page's or device's writes then reach it (10-15: a table made here never heard of them, and after a reconnect
+        // nothing followed it again).
+        else if (k === "put") ctx.background("storage: follow what was made", read(wait, { again: true }));
       }
       ctx.log(refused ? "write refused" : "written", {
         what: `${app} seq ${p.seq}${refused ? `: ${refused}` : ` as ${kind === "put" ? "a PUT" : "an UPDATE (one delta)"}`}`,

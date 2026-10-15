@@ -750,20 +750,9 @@ export async function run(boot) {
     await check();
     // And the node's copy looked at again now and then, and when the page comes back into view: however it got there.
     const again = () => !told && check().catch(() => {});
-    // The node connection came back after a loss: what the page followed was on the old one — loaded again, the same
-    // careful way (nothing lost).
-    // At most ONCE in 10 minutes (remembered across the reload): a node whose connection keeps dropping — a slow one,
-    // a flapping link — reloaded the page at every return, a loop (audit 10-13). Within that, only the manifest looked at.
-    addEventListener("craftworks:node-back", () => {
-      if (Date.now() - (tabState().back ?? 0) < 10 * 60000) {
-        ctx.log("newest", { what: "the node is back: reloaded for that less than 10 minutes ago — only the version checked" });
-        return void check().catch(() => {});
-      }
-      ctx.log("newest", { what: "the node is back: loading the page again when nothing would be lost" });
-      tabSet("back", Date.now());
-      told = false;
-      newer();
-    });
+    // The node connection came back after a loss: what the page followed is followed again by the door (`node`), each
+    // contract read once — never a reload (10-15). Only the version looked at.
+    addEventListener("craftworks:node-back", () => void check().catch(() => {}));
     setInterval(again, 60000);
     addEventListener("focus", again);
   }
@@ -826,30 +815,9 @@ export async function run(boot) {
   window.visualViewport?.addEventListener("scroll", headerWatch);
   window.visualViewport?.addEventListener("resize", headerWatch);
   new ResizeObserver(headerWatch).observe(document.documentElement);
-  // WHAT A TAB REMEMBERS across its reloads (its frame's name: storage is refused here): when it last resumed, when it
-  // last reloaded for a node that came back. `cw:{json}` (an older `cw-resumed:<ms>` read as such).
-  const tabState = () => {
-    const n = String(window.name ?? "");
-    if (n.startsWith("cw-resumed:")) return { resumed: Number(n.slice(11)) || 0 };
-    try {
-      return n.startsWith("cw:") ? JSON.parse(n.slice(3)) ?? {} : {};
-    } catch {
-      return {};
-    }
-  };
-  const tabSet = (k, v) => (window.name = `cw:${JSON.stringify({ ...tabState(), [k]: v })}`);
-  addEventListener("craftworks:reopen", async () => {
-    // ONLY after a login made on this page (recovery words, a PIN, a registration), and ONCE per tab — remembered across
-    // the reload in the frame's name (its storage is refused here). A visit never reloads: on a slow node every load
-    // opens tables before its keys are held, and a resume there reloaded every load, forever (live v385, 10-13).
-    const auth = loaded.has("auth") ? await require("auth").catch(() => null) : null;
-    if (!auth?.loggedInHere?.()) return showAgain("tables opened again with their keys");
-    if (tabState().resumed) return showAgain("tables opened again (resumed once already: shown again instead)");
-    if (loaded.has("drafts") && !(await require("drafts").then(d => d.flush(), () => false))) return showAgain("tables opened again (a draft not saved: no resume)");
-    tabSet("resumed", Date.now());
-    ctx.log("page", { what: "resumed: tables opened before their key was held, opened again with it" });
-    location.reload();
-  });
+  // TABLES OPENED AGAIN WITH THEIR KEYS (FOUNDATION §2 R3): shown again in place — never a reload (10-15: a reload
+  // after a login made here read every contract again; the door's held copies are kept by staying).
+  addEventListener("craftworks:reopen", () => showAgain("tables opened again with their keys"));
   function fail(e) {
     // Whatever was thrown, said (a rejection with no Error showed "undefined").
     const said = e?.message ?? (typeof e === "string" ? e : (() => { try { return JSON.stringify(e); } catch { return String(e); } })());
