@@ -16,7 +16,7 @@ export async function mount(ctx, el) {
     if (!(await src.enabled())) {
       const p = say(`${sp.name} has no mail address yet.`);
       if ((await (await ctx.require("roles")).of(sp)).role((await (await ctx.require("space")).account()).id) === "owner")
-        p.append(" ", Object.assign(document.createElement("button"), { type: "button", textContent: "Turn on its mail", onclick: async e => ((e.target.disabled = true), await src.enable().then(() => mount(ctx, (el.replaceChildren(), el)), err => ((e.target.disabled = false), p.append(` ${err.message}`)))) }));
+        p.append(" ", Object.assign(document.createElement("button"), { type: "button", textContent: "Turn on its mail", onclick: async e => ((e.target.disabled = true), await src.enable().then(() => mount(ctx, (el.replaceChildren(), el)), err => ((e.target.disabled = false), p.append(` ${ctx.say(err)}`)))) }));
       return;
     }
   }

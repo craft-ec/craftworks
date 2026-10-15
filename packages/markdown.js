@@ -239,7 +239,7 @@ export async function start(ctx) {
       const ph = Object.assign(document.createElement("span"), { className: `cw-md-media cw-md-ph${kind === "audio" ? " audio" : ""}` });
       ctx.require(spec.view).then(
         mv => ph.replaceWith(mv.create({ file: ref, item, cover: true }).el),
-        e => ph.replaceWith(Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `${ref.name}: ${e.message ?? e}` })),
+        e => ph.replaceWith(Object.assign(document.createElement("span"), { className: "cw-md-missing", textContent: `${ref.name}: ${ctx.say(e)}` })),
       );
       return ph;
     }

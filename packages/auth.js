@@ -89,16 +89,8 @@ export async function start(ctx) {
   async function unlock_(pin) {
     const r = await id.unlock(pin);
     if (!r.wrongPin) return r;
-    // ONE ASK of an earlier build: a build the node is still loading answers nothing for a while — asked again at once
-    // a few times (the fault policy's `not-yet`); still silent is said as silent, never as a wrong PIN.
-    const askOnce = prior =>
-      fault
-        .attempt("earlier build", `asking ${prior.slice(0, 12)}…`, async () => {
-          const got = await id.handoverFrom(prior, pin);
-          if (got?.silent) throw new fault.Fault("not-yet", "an earlier build not answering yet", { d: { got } });
-          return got;
-        }, { policy: { "not-yet": { tries: 3, wait: () => 0, report: "never" } } })
-        .catch(e => (e?.kind === "not-yet" ? e.d.got : (ctx.failed("earlier build", e, `${prior.slice(0, 12)}…: ${e.message}`), null)));
+    // ONE ASK of an earlier build: what it said (`silent`: not answering yet — a build the node is still loading).
+    const askOnce = prior => ctx.optional("earlier build", id.handoverFrom(prior, pin), null);
     // The member an earlier build hands over, moved here with its keys (the account's group, the epochs it could read)
     // before anything reads a table.
     const moveIn = async (prior, h) => {
@@ -121,16 +113,22 @@ export async function start(ctx) {
       if (h?.handed) return moveIn(prior, h);
       if (h?.silent) silent.push(prior);
     }
-    for (let round = 0; round < 6 && silent.length; round++) {
-      ctx.log("earlier build", { what: `${silent.length} not answering yet: asked again in 10 s (${round + 1} of 6)` });
-      await new Promise(res => setTimeout(res, 10000));
-      const still = [];
-      for (const prior of silent) {
-        const h = await askOnce(prior);
-        if (h?.handed) return moveIn(prior, h);
-        if (h?.silent) still.push(prior);
-      }
-      silent = still;
+    // The silent ones asked again by the fault POLICY (one retry mechanism: `attempt`) — `not-yet`, 10 s apart, a minute.
+    if (silent.length) {
+      const got = await fault
+        .attempt("earlier build", "asking the earlier builds not answering yet", async () => {
+          const still = [];
+          for (const prior of silent) {
+            const h = await askOnce(prior);
+            if (h?.handed) return { prior, h };
+            if (h?.silent) still.push(prior);
+          }
+          silent = still;
+          if (silent.length) throw new fault.Fault("not-yet", `${silent.length} earlier build(s) not answering yet`, { d: { silent: silent.length } });
+          return null;
+        }, { policy: { "not-yet": { tries: 7, wait: () => 10000, report: "never" } } })
+        .catch(fault.absentOnly);
+      if (got) return moveIn(got.prior, got.h);
     }
     // Not "wrong": an earlier build never answered — the PIN may well be right.
     if (silent.length) return { slow: true };

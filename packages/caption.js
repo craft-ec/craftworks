@@ -192,7 +192,7 @@ export async function mount(ctx, el) {
     // THE TABS (`where`'s, in every app's order): Your captions · Discover.
     at.tabs([], { yoursOn: !!w.mine && !w.saved });
     root.replaceChildren(top, theme.loading("Reading…"));
-    const body = await (w.space ? inSpace(w.space) : w.discover ? inSpace(null) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : w.person ? mine(w.person) : w.saved ? mine(null, true) : mine()).catch(e => h("p", { className: "said", textContent: e.message ?? String(e) }));
+    const body = await (w.space ? inSpace(w.space) : w.discover ? inSpace(null) : w.for ? forItem(w.for, w.file) : w.edit ? editor(w.edit) : w.person ? mine(w.person) : w.saved ? mine(null, true) : mine()).catch(e => h("p", { className: "said", textContent: ctx.say(e) }));
     if (drawn === where.key()) root.replaceChildren(top, body);
   }
   await draw();

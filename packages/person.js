@@ -160,7 +160,7 @@ export async function start(ctx) {
               ? "Reputation: none yet — nobody reached from the roots has vouched for them"
               : `Reputation ${r.rep} · vouched by ${r.vouchedBy}${r.family ? " · heads a family" : ""} · of ${r.admitted} reached`;
         },
-        e => (rep.textContent = `Reputation: not read (${e.message ?? e})`),
+        e => (rep.textContent = `Reputation: not read (${ctx.say(e)})`),
       );
       box.replaceChildren(
         el("h3", { textContent: directory.shown(did, handle) }),

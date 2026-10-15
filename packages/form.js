@@ -465,7 +465,7 @@ export async function mount(ctx, el) {
     try {
       at = await (await ctx.require("where")).of({ kind: "form", app: "form", yours: "Your forms" });
     } catch (e) {
-      return root.replaceChildren(h("p", { className: "none", textContent: e.message }));
+      return root.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
     }
     const s = (shown = at.sub);
     const mayMake = at.who === "mine" || at.who === "space";

@@ -124,20 +124,20 @@ export async function start(ctx) {
         h("h4", { textContent: "Channels" }),
         h("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:var(--cw-space-2);align-items:center;overflow-x:auto" }, ...["Channel", "Post", "Read", ""].map(t => h("b", { textContent: t })), ...channels.list().flatMap(c => {
           const name = h("input", { value: c.name, ariaLabel: "Channel name" });
-          const acts = h("span", { className: "row" }, h("button", { type: "button", textContent: "Rename", onclick: () => channels.rename(c, name.value.trim()).then(draw, e => say(e.message)) }), h("button", { type: "button", textContent: "Delete", onclick: () => channels.remove(c).then(draw, e => say(e.message)) }));
+          const acts = h("span", { className: "row" }, h("button", { type: "button", textContent: "Rename", onclick: () => channels.rename(c, name.value.trim()).then(draw, e => say(ctx.say(e))) }), h("button", { type: "button", textContent: "Delete", onclick: () => channels.remove(c).then(draw, e => say(ctx.say(e))) }));
           // WHO MAY POST in it: the channel item's own rule (none: as Chat's), saved as chosen.
           const own = c.item?.meta?.write?.post ?? "";
           const sel = h("select", { ariaLabel: `Who may post in ${c.name}` }, h("option", { value: "", textContent: `As Chat: ${NAMES[r.policyIn("chat", "post")] ?? r.policyIn("chat", "post")}` }), ...["anyone", "members", "admins", "owner"].map(w => h("option", { value: w, textContent: NAMES[w] })));
           sel.value = own;
-          sel.onchange = () => channels.setPost(c, sel.value || null).then(draw, e => say(e.message));
+          sel.onchange = () => channels.setPost(c, sel.value || null).then(draw, e => say(ctx.say(e)));
           // WHO MAY READ it: its space's members, or fewer (a role, the admins, the owner) — then it is sealed to them
           // alone (its own group, kept in step).
           const readSel = h("select", { ariaLabel: `Who may read ${c.name}` }, h("option", { value: "", textContent: "Members" }), ...["admins", "owner", ...(r.roles?.() ?? []).map(ro => `role:${ro.id}`), ...Object.keys(r.lists?.() ?? {}).map(id => `list:${id}`)].map(w => h("option", { value: w, textContent: `${w.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name}` : w.startsWith("list:") ? `${(r.lists?.()[w.slice(5)]?.people ?? []).length} chosen people` : NAMES[w]}` })));
           readSel.value = c.item?.meta?.read ?? "";
-          readSel.onchange = () => channels.setRead(c, readSel.value || null).then(draw, e => say(e.message));
+          readSel.onchange = () => channels.setRead(c, readSel.value || null).then(draw, e => say(ctx.say(e)));
           return [name, sel, readSel, acts];
         })),
-        h("div", { className: "row" }, add, h("button", { type: "button", textContent: "Add", onclick: () => add.value.trim() && channels.add(add.value.trim()).then(draw, e => say(e.message)) })),
+        h("div", { className: "row" }, add, h("button", { type: "button", textContent: "Add", onclick: () => add.value.trim() && channels.add(add.value.trim()).then(draw, e => say(ctx.say(e))) })),
       );
     };
     draw();

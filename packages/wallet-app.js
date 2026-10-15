@@ -101,7 +101,7 @@ export async function mount(ctx, el) {
     const box = h("a", { className: "tok", href: `#/wallet/t/${id}` }, h("span", { className: "note", textContent: "reading…" }));
     viewOf(id, me).then(
       v => box.replaceChildren(h("div", { className: "top" }, h("span", { className: "name", textContent: v.name || "a token" }), h("span", { className: "bal", textContent: shown(v.total, v.decimals) }), h("span", { className: "note", textContent: whereOf(v) || "nothing held" }))),
-      e => box.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${e.message ?? e}` })),
+      e => box.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${ctx.say(e)}` })),
     );
     return box;
   }
@@ -196,11 +196,11 @@ export async function mount(ctx, el) {
               if (s?.stage === "missing") ctx.log("wallet", { what: `${what}: not seen — ${s.why}` });
               st.replaceChildren(chip(s));
             },
-            e => st.replaceChildren(h("span", { className: "said", textContent: e.message ?? String(e) })),
+            e => st.replaceChildren(h("span", { className: "said", textContent: ctx.say(e) })),
           );
         }
       },
-      e => head.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${e.message ?? e}` })),
+      e => head.replaceChildren(h("span", { className: "said", textContent: `${id.slice(0, 12)}… could not be read: ${ctx.say(e)}` })),
     );
     return out;
   }

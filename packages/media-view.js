@@ -76,7 +76,7 @@ export async function start(ctx) {
       try {
         await player.play(media, file, { onNote: t => ((note.textContent = t), onNote?.(t)), onLevel: onLevel ?? undefined, onLevels: onLevels ?? undefined });
       } catch (e) {
-        note.textContent = `${file?.name ?? "it"}: ${e.message ?? e}`;
+        note.textContent = `${file?.name ?? "it"}: ${ctx.say(e)}`;
       }
       await prepare();
     }

@@ -375,7 +375,7 @@ export async function mount(ctx, el) {
     try {
       at = await (await ctx.require("where")).of({ kind: "poll", kinds: ["poll", "proposal"], app: "vote", yours: "Your votes" });
     } catch (e) {
-      return root.replaceChildren(h("p", { className: "none", textContent: e.message }));
+      return root.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
     }
     const s = (shown = at.sub);
     // A space this person is IN (read from outside: its public polls and proposals, nothing of a member's to do).

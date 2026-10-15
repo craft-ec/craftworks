@@ -179,7 +179,7 @@ export async function mount(ctx, el) {
         .upload(file, { space: sp, public: who.public, audience: who.audience, write: who.write, folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
           () => (line.remove(), draw()),
-          e => (line.textContent = `${file.name}: not uploaded — ${e.message ?? e}`),
+          e => (line.textContent = `${file.name}: not uploaded — ${ctx.say(e)}`),
         );
     }
   }

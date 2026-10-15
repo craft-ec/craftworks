@@ -511,7 +511,7 @@ export async function mount(ctx, el) {
     const said = Object.assign(document.createElement("span"), { className: "note" });
     box_.onchange = async () => {
       box_.disabled = true;
-      await prefs.set("nsfw", box_.checked).then(() => (said.textContent = box_.checked ? " Shown." : " Hidden."), e => (said.textContent = ` Not saved: ${e.message ?? e}`));
+      await prefs.set("nsfw", box_.checked).then(() => (said.textContent = box_.checked ? " Shown." : " Hidden."), e => (said.textContent = ` Not saved: ${ctx.say(e)}`));
       box_.disabled = false;
     };
     const label = document.createElement("label");
@@ -522,7 +522,7 @@ export async function mount(ctx, el) {
     const dsaid = Object.assign(document.createElement("span"), { className: "note" });
     dbg.onchange = async () => {
       dbg.disabled = true;
-      await prefs.set("diagnostics", dbg.checked).then(() => (dsaid.textContent = dbg.checked ? " Shown." : " Hidden."), e => (dsaid.textContent = ` Not saved: ${e.message ?? e}`));
+      await prefs.set("diagnostics", dbg.checked).then(() => (dsaid.textContent = dbg.checked ? " Shown." : " Hidden."), e => (dsaid.textContent = ` Not saved: ${ctx.say(e)}`));
       dbg.disabled = false;
     };
     const dlabel = document.createElement("label");

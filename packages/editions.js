@@ -151,7 +151,7 @@ export async function start(ctx) {
             ].filter(Boolean),
           );
         },
-        err => row.replaceChildren(h("span", { className: "said", textContent: `an edition could not be read: ${err.message ?? err}` })),
+        err => row.replaceChildren(h("span", { className: "said", textContent: `an edition could not be read: ${ctx.say(err)}` })),
       );
     }
     if (author) box.append(form(it, changed));

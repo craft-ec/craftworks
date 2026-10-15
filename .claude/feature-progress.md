@@ -36,6 +36,11 @@ Phases (each: build, fx probe with a control, commit):
       update waits for no save owed. Found: a merged table's put dropped `user` (a space's saves never said "Saving…"
       unless the click was still live) — carried through now. caption + app-settings on theme.action (the one button
       feedback). fx v747: a refused save → "Not saved: …" in the pill, owed 0, refused 1, page RUNNING.
+- [x] 11 Phase 7: the named private loops (§4) — statement's 40 rounds are a step loop (kept), files' rounds a race,
+      keep's `tries` a record, keys already on `attempt`; auth's earlier-build ask had TWO retry layers (attempt ×3 inside
+      a 6 × 10 s loop) → one `attempt` with the `not-yet` policy, `.catch(fault.absentOnly)`. 19 places showed a fault's
+      raw message to people → `ctx.say` (its kind's words); failure-check fails a raw message shown (HEAD: 19). fx v748:
+      13 changed pages open with no error.
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.
