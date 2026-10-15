@@ -10,7 +10,7 @@ import { join } from "node:path";
 const root = process.argv[2] ?? new URL("..", import.meta.url).pathname;
 const pkgs = join(root, "packages");
 // The two homes: the job's own timer, and the view clock's.
-const HOMES = { "lifecycle.js": 1, "loader.js": 1 };
+const HOMES = { "lifecycle.js": 1, "runtime.js": 1 };
 const bad = [];
 const code = src => src.replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
 for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {

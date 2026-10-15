@@ -756,6 +756,8 @@ async fn main() -> Result<()> {
     let sdk = app.join("loader/sdk");
     let loader_web = wire::webapp::app_web(&[
         ("loader.js", &read(&app.join("packages/loader.js"))?),
+        // THE RUNTIME's helpers: the page's loader installs them, and an app's frame the same file (FOUNDATION §3).
+        ("runtime.js", &read(&app.join("packages/runtime.js"))?),
         ("trace.js", &read(&app.join("packages/trace.js"))?),
         // The racing parts, the SDK's own (tools/sdk-racing-parts.sh).
         ("served.js", &read(&sdk.join("served.js"))?),
