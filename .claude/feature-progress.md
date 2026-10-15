@@ -41,6 +41,15 @@ Phases (each: build, fx probe with a control, commit):
       a 6 × 10 s loop) → one `attempt` with the `not-yet` policy, `.catch(fault.absentOnly)`. 19 places showed a fault's
       raw message to people → `ctx.say` (its kind's words); failure-check fails a raw message shown (HEAD: 19). fx v748:
       13 changed pages open with no error.
+- [~] 12 Phase 8 (apps in their own frames): DRAWN (421535d) — FOUNDATION §3 says which pages are the OS and which
+      are apps; system controls are SYSTEM PICKERS; tools/app-check.mjs ratchet (10 apps not yet framed). NOT BUILT: a
+      rich app (wiki, notes, board, blog, forms, media, drive) builds on `md-editor`/`markdown` (files, cards, mentions,
+      the publisher dialog — host capabilities a sandboxed frame cannot reach: no host blobs, no host elements). Moving
+      them needs a FRAME-SIDE KIT first: rich text, file views and embeds that work inside a frame (data URLs, a host
+      bridge for capability calls per the app's declared `uses` — where per-app GRANTS live, an identity-build change).
+      Order: the kit + bridge → Vote (smallest: audience picker only) → Forms → Wiki → Notes/Board/Blog → media/Drive.
+- HANDOVER 10-15: committed since v392 and not released — 4f6804d e3c7f83 72115b3 c8613f3 01499cd b75248f fb328b9
+  df6018d 421535d. The identity build moved (762eb343…, 72115b3): a release asks everyone's PIN once. fx = v748.
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.
