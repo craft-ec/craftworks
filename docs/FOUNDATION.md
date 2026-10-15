@@ -216,13 +216,15 @@ The app machine makes each app what a separately published site already is, and 
   grants (the manifest's `framed`: module → grants; `packages/apphost.js mountCtx`, `packages/frame-runtime.js`). THE
   BRIDGE carries what a phone's IPC parcel does: data by value (structured clone — a Map stays a Map, a total read's
   `.state` kept) and a function by reference, both ways (a handle whose calls come back to the host — a place's steps;
-  a callback the frame passes, called back there). A capability's SYNC helpers are its module's own `frame(cap, ctx)`
-  export — the same bytes the host runs (directory: a name shown by its id at once, then as read). A DOMAIN RULE every
-  reader must apply the same (vote-tally's count over a space's roles) is the host's; its results come as data. A
-  WRITE only on the person's gesture, FAIL-CLOSED: an exact set of read names passes, every other call needs a click.
-  The frame's navigation is the host's. A UI the host must draw (a person's menu, the audience, files, the publish
-  dialog) is a system picker. Steps: 8.1 the runtime ✓; 8.2 the sync helpers, per app as it moves; 8.3 the pickers;
-  8.4 the apps, one at a time — Vote ✓ (10-15). A build check: a kit package has ONE hash, page and frame.
+  a callback the frame passes, called back there; a Promise; an element as a place on the page). ONE CALL PATH: host
+  data is an awaited call — a caller never uses a host answer as a value; PURE code (a capability's helpers, its
+  constants) runs in the frame from the module's own bytes (`frame(cap, ctx)`) — never a second implementation. A
+  SHARED RULE (vote-tally, wiki-pages, blog-press, editions, moderation) and BACKGROUND WORK (keep, video-studio) are
+  the host's. A WRITE only on the person's gesture, FAIL-CLOSED: an exact set of read names passes. SYSTEM SURFACES the
+  host draws: an app's settings in a space (in its place), an item's editions (a sheet: money never in a frame), the
+  person menu; `theme.ask` is the one way to ask (no browser dialogs — a frame has none). GRANTS are what the code
+  reaches (`tools/app-check.mjs`, `--fix`). Done 10-16: all ten apps framed. Open: narrowing grants a kit part widens
+  (keep, video-studio, index); the audience and publish pickers still draw inside the frame.
 - **System controls are SYSTEM PICKERS.** A frame cannot draw the host's elements, and a copy of a control inside the
   frame would be a second implementation. So an app ASKS (`api.pick("audience", { space, kind })`, `api.pick("files",
   …)`, `api.pick("sort")`): the system shows its own control above the frame, the person chooses, the value comes
