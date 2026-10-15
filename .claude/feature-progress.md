@@ -54,6 +54,10 @@ Phases (each: build, fx probe with a control, commit):
       host proxies, grants per app) · 8.2 pure splits (item helpers) + name cache · 8.3 pickers (person menu, audience,
       files, publish) · 8.4 apps one at a time, Vote first. Measured: UI code's sync capability calls — space.shown 29,
       directory.nameEl 19, kinds.* ~30, items pure helpers ~25, person.open 6; the rest async (proxied).
+      DONE 10-15: 645940a runtime.js (helpers, both hosts) · 5137525 frame runtime (mountCtx, proxies, grants) ·
+      3f65f98 trust split · 38bb7d4 menu + gesture · 62ce196 Vote framed (bridge parcel, frame() helpers, fail-closed
+      gestures, vote-tally host-side). NEXT: Forms, Wiki, Notes/Board/Blog, Media/Drive, Captions, Bundles; the
+      pickers (audience/files/publish/person menu still draw inside the frame); release (identity unchanged).
 - Live: v397 (ed44f42) — every screen a view, one menu door, side panel, Discover first.
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.

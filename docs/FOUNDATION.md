@@ -213,11 +213,16 @@ The app machine makes each app what a separately published site already is, and 
   cards, the editor and renderer, an item's pure helpers) are loaded into the frame by their hash — the same bytes as
   the page's, never a frame version; STATEFUL capabilities (items, storage, space, files, identity, roles) stay in the
   host and `ctx.require` in the frame returns a PROXY whose calls cross the bridge, each checked against the app's
-  grants (its manifest's `uses`). A capability's synchronous helpers are pure (split into a module both sides load) or
-  read a cache the bridge fills (names: a short id at once, the name when it arrives); a UI the host must draw (a
-  person's menu, the audience, files, the publish dialog) is a system picker. So an app's code moves into its frame
-  nearly unchanged. Steps: 8.1 the runtime (loader, ctx, proxies, grants); 8.2 the pure splits and the name cache;
-  8.3 the pickers; 8.4 the apps, one at a time (Vote first). A build check: a kit package has ONE hash, page and frame.
+  grants (the manifest's `framed`: module → grants; `packages/apphost.js mountCtx`, `packages/frame-runtime.js`). THE
+  BRIDGE carries what a phone's IPC parcel does: data by value (structured clone — a Map stays a Map, a total read's
+  `.state` kept) and a function by reference, both ways (a handle whose calls come back to the host — a place's steps;
+  a callback the frame passes, called back there). A capability's SYNC helpers are its module's own `frame(cap, ctx)`
+  export — the same bytes the host runs (directory: a name shown by its id at once, then as read). A DOMAIN RULE every
+  reader must apply the same (vote-tally's count over a space's roles) is the host's; its results come as data. A
+  WRITE only on the person's gesture, FAIL-CLOSED: an exact set of read names passes, every other call needs a click.
+  The frame's navigation is the host's. A UI the host must draw (a person's menu, the audience, files, the publish
+  dialog) is a system picker. Steps: 8.1 the runtime ✓; 8.2 the sync helpers, per app as it moves; 8.3 the pickers;
+  8.4 the apps, one at a time — Vote ✓ (10-15). A build check: a kit package has ONE hash, page and frame.
 - **System controls are SYSTEM PICKERS.** A frame cannot draw the host's elements, and a copy of a control inside the
   frame would be a second implementation. So an app ASKS (`api.pick("audience", { space, kind })`, `api.pick("files",
   …)`, `api.pick("sort")`): the system shows its own control above the frame, the person chooses, the value comes
