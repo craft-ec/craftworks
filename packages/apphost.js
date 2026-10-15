@@ -74,6 +74,21 @@ export async function start(ctx) {
     import(document.currentScript.dataset.src).then(m => m.mount(api, appEl)).catch(e => words(e).then(t => (appEl.textContent = "This app did not start: " + t)));
   `;
 
+  // A WRITE ONLY ON THE PERSON's GESTURE — one rule for every framed app, either mode: this page's user activation (a
+  // click or a key inside the frame activates its ancestors too, so the app cannot fake it). A GESTURE'S CREDIT: a call
+  // that arrived while the person had just clicked or typed leaves ONE write for the next 2 minutes — a click that saves
+  // after a slow read is still the person's (audit 10-13). A second write needs another gesture.
+  function gestures() {
+    let credit = 0;
+    return {
+      clicked: () => navigator.userActivation?.isActive && (credit = Date.now()),
+      gesture: what => {
+        if (navigator.userActivation?.isActive) return void (credit = 0);
+        if (credit && Date.now() - credit < 120000) return void (credit = 0);
+        throw Object.assign(new Error(`${what}: only when you click or type in the app`), { kind: "refused" });
+      },
+    };
+  }
   function mount(el, { app, bytes, kinds: own = [] }) {
     if (!KEY.test(app)) throw new Error(`an app's name is a-z, 0-9 and "-": ${app}`);
     const prefix = `${app}/`;
@@ -112,13 +127,7 @@ export async function start(ctx) {
     // A GESTURE'S CREDIT: a call that arrived while the person had just clicked or typed (`clicked`, below) leaves ONE
     // write for the next 2 minutes — a click that saves after a slow read (a slow node: 30-60 s) is still the person's
     // (audit 10-13: the 5 s activation had run out). Used by the write; a second write needs another gesture.
-    let credit = 0;
-    const clicked = () => navigator.userActivation?.isActive && (credit = Date.now());
-    const gesture = what => {
-      if (navigator.userActivation?.isActive) return void (credit = 0);
-      if (credit && Date.now() - credit < 120000) return void (credit = 0);
-      throw Object.assign(new Error(`${what}: only when you click or type in the app`), { kind: "refused" });
-    };
+    const { clicked, gesture } = gestures();
     // What an app may set on an item: its own fields — never a level, a gate or write rules (the system's).
     const META_DENY = new Set(["level", "gate", "write", "editions", "members"]);
     const cleanMeta = m => Object.fromEntries(Object.entries(m && typeof m === "object" ? m : {}).filter(([k]) => !META_DENY.has(k)).slice(0, 32));
@@ -252,6 +261,9 @@ export async function start(ctx) {
   function mountCtx(el, { app, module = null, bytes = null, uses = [] }) {
     if (!KEY.test(app)) throw new Error(`an app's name is a-z, 0-9 and "-": ${app}`);
     const granted = new Set(uses);
+    const { clicked, gesture } = gestures();
+    // A call that WRITES (by its name): only on the person's gesture.
+    const WRITES = /^(submit|edit|remove|put|set|create|send|join|leave|delete|add|move|rename|revoke|publish|vote|act|make|drop|write|post|accept|ban|invite|grant)/i;
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";
     frame.title = app;
@@ -263,7 +275,8 @@ export async function start(ctx) {
     el.replaceChildren(frame);
     const whereNow = () => ({ route: ctx.route, sub: ctx.sub ?? "", space: ctx.space ?? null });
     const ops = {
-      boot: async () => ({ where: whereNow(), runtime: b64(await ctx.runtimeBytes()), app: b64(bytes ?? (await ctx.packageOf(module)).bytes) }),
+      // (The site's apps, as data: what `where` reads to know an app's places — its public side, its views.)
+      boot: async () => ({ where: { ...whereNow(), apps: plain(ctx.apps ?? []) }, runtime: b64(await ctx.runtimeBytes()), app: b64(bytes ?? (await ctx.packageOf(module)).bytes) }),
       // A SYSTEM package (the same bytes as the page's) loaded in the frame; a capability the app is granted: a proxy.
       pkg: async name => {
         if (FRAME_LOCAL.has(name)) {
@@ -275,6 +288,7 @@ export async function start(ctx) {
       },
       cap: async (name, method, args, strict) => {
         if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
+        if (WRITES.test(method)) gesture(`${name}.${method}`);
         const c = await ctx.require(name);
         const f = c?.[method];
         if (typeof f !== "function") throw Object.assign(new Error(`${name} has no call "${method}"`), { kind: "refused" });
@@ -282,6 +296,20 @@ export async function start(ctx) {
       },
       log: async (step, detail) => (ctx.log(`${app}: ${String(step).slice(0, 40)}`, detail), true),
       say: async (message, kind) => ctx.say(Object.assign(new Error(message), { kind })),
+      // ITS MENU (the frame's `where`): its entries, to the side panel through the one door (`where.menu`); an entry
+      // that runs something is run in the frame (`run`: its number) when chosen here.
+      actions: async entries => {
+        const list = (Array.isArray(entries) ? entries : []).slice(0, 16).map(e => ({
+          label: String(e?.label ?? "").slice(0, 40),
+          href: /^#\//.test(e?.href) ? e.href : undefined,
+          on: !!e?.on,
+          end: !!e?.end,
+          role: ["discover", "feed", "you", "create"].includes(e?.role) ? e.role : undefined,
+          ...(Number.isInteger(e?.run) ? { run: () => frame.contentWindow?.postMessage({ event: "run", i: e.run }, "*") } : {}),
+        }));
+        (await ctx.require("where")).menu(list);
+        return true;
+      },
       failed: async (step, message, kind, what) => (ctx.failed(`${app}: ${String(step).slice(0, 40)}`, Object.assign(new Error(message), { kind }), what), true),
     };
     let budget = 60;
@@ -290,6 +318,7 @@ export async function start(ctx) {
       if (!frame.isConnected) return (removeEventListener("message", onMessage), removeEventListener("craftworks:data", onData), removeEventListener("craftworks:route", onRoute));
       if (e.source !== frame.contentWindow) return;
       const m = e.data ?? {};
+      clicked();
       if (m.event === "height") return void (frame.style.height = `${Math.max(120, Math.min(Number(m.h) || 0, 20000))}px`);
       const { id, op, args = [] } = m;
       if (typeof id !== "number") return;

@@ -10,6 +10,7 @@ export const SOURCE = `
       if (e.source !== parent) return;
       const m = e.data ?? {};
       if (m.event === "data") return dispatchEvent(new CustomEvent("craftworks:data"));
+      if (m.event === "run") return runs[m.i]?.();
       if (m.event === "route") return Object.assign(ctx, m.where), dispatchEvent(new CustomEvent("craftworks:route"));
       const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id);
       m.ok ? w.resolve(m.value) : w.reject(Object.assign(new Error(m.error), { kind: m.kind }));
@@ -39,6 +40,13 @@ export const SOURCE = `
       failed: (step, e, what = "") => call("failed", step, String(e && e.message ? e.message : e), e && e.kind, what).catch(() => {}),
       say: e => String(e && e.message ? e.message : e) };
     globalThis.app = ctx;
+    // ITS MENU: what its where.tabs / where.menu set, handed to the host (an entry's run kept here by number).
+    let runs = [];
+    addEventListener("craftworks:actions", () => {
+      runs = [];
+      const entries = (ctx.actions[ctx.route] ?? []).map(e => { const x = { label: e.label, href: e.href, on: e.on, end: e.end, role: e.role }; if (typeof e.run === "function") (x.run = runs.length), runs.push(e.run); return x; });
+      call("actions", entries).catch(() => {});
+    });
     const appEl = document.getElementById("cw-app");
     const tell = () => parent.postMessage({ event: "height", h: Math.ceil(appEl.getBoundingClientRect().height) + 8 }, "*");
     new ResizeObserver(tell).observe(appEl);
