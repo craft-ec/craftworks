@@ -301,12 +301,10 @@ export async function mount(ctx, el) {
   // THE TABS: Tokens (balances, a token's page), Contribute (what you give: your level, its split), Earnings (the
   // contribution ledger's lines for you) — every one money.
   const tab = ctx.sub === "contribute" || ctx.sub === "earnings" ? ctx.sub : "";
-  ctx.actions[ctx.route] = [["", "Tokens"], ["contribute", "Contribute"], ["earnings", "Earnings"]].map(([k, label]) => ({ label, href: k ? `#/wallet/${k}` : "#/wallet", on: k === tab }));
-  dispatchEvent(new CustomEvent("craftworks:actions"));
-  const draw = async () => body.replaceChildren(tab === "contribute" ? await contribute() : tab === "earnings" ? await earnings() : opened ? detail(opened, me) : await list(me));
-  purse.onChange(() => el.isConnected && draw());
-  await draw();
-  table.onChange(() => el.isConnected && draw());
+  (await ctx.require("where")).menu([["", "Tokens"], ["contribute", "Contribute"], ["earnings", "Earnings"]].map(([k, label]) => ({ label, href: k ? `#/wallet/${k}` : "#/wallet", on: k === tab })));
+  // A VIEW (`ctx.view`, render form): built again when the purse or the table change, put in place only when it differs.
+  const view = ctx.view(body, { render: async () => (tab === "contribute" ? await contribute() : tab === "earnings" ? await earnings() : opened ? detail(opened, me) : await list(me)) });
+  const draw = () => view.refresh();
   // RECEIVE now, and again EACH TIME THE BEACON ADVANCES while the Wallet is open: a payment that arrives with the page
   // open is found (it was found only on opening), one waiting out its margin or its witnesses taken once it may be.
   // (Overlapping runs skipped; the subscription ends with the page.)

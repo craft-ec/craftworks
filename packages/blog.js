@@ -71,7 +71,9 @@ export async function mount(ctx, el) {
       .bl .tools { display: flex; gap: var(--cw-space-2); flex-wrap: wrap; align-items: center; }
     }</style>
     <div class="bl"></div>`;
-  const root = el.querySelector(".bl");
+  const outer = el.querySelector(".bl");
+  // Where a page draws: the view's box being built (`ctx.view` render), or the page itself for one drawn once.
+  let root = outer;
   const ago = cards.ago;
   const day = at => new Date(at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
   const fail = (host, e) => host.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }));
@@ -383,7 +385,7 @@ export async function mount(ctx, el) {
     at = await whereCap.of({ kind: "post", app: "blog", yours: "Your blog" });
     drawn = whereCap.key();
     // ITS OWN SETTINGS (a space's, for who may manage its apps): drawn here, in the app.
-    if (at.sub === "settings") return void (at.tabs([]), await at.settings(root));
+    if (at.sub === "settings") return void (view?.stop(), (view = null), (root = outer), at.tabs([]), await at.settings(outer));
     const s = at.sub;
     const mine = at.who === "mine";
     const editor = at.space ? await ctx.optional("blog: press.mayEdit", press.mayEdit(at.space), () => false) : false;
@@ -395,26 +397,38 @@ export async function mount(ctx, el) {
       ],
       { yoursOn: mine && (!s || s.startsWith("t/")), create: { label: "Write", href: at.space ? at.href("write") : "#/blog/write", on: s === "write" || s.startsWith("write/") } },
     );
-    try {
-      if (at.saved) {
-        const list = (await at.read()).filter(press.isArticle);
-        return root.replaceChildren(h("h2", { textContent: "★ Saved articles" }), h("div", { className: "list" }, ...(list.length ? list.map(it => row(it, { href: `${placeBase(it)}/p/${it.ref}` })) : [h("p", { className: "none", textContent: "Nothing saved: “Save” on an article keeps it here." })])));
-      }
-      if (s.startsWith("p/")) return await article(decodeURIComponent(s.slice(2)));
-      if (s.startsWith("t/")) return await home(decodeURIComponent(s.slice(2)));
-      if (s === "drafts" && mine) return await draftsPage();
-      if (s === "review" && at.space) return await reviewPage();
-      if (s === "write" && !at.others) return await writePage();
-      if (s.startsWith("write/") && mine) return await writePage({ draftRef: decodeURIComponent(s.slice(6)) });
-      if (s.startsWith("edit/") && !at.others) return await writePage({ editRef: decodeURIComponent(s.slice(5)) });
-      return await home();
-    } catch (e) {
-      fail(root, e);
-    }
+    view?.stop();
+    view = null;
+    // WRITING (a new article, a draft, an edit) and an ARTICLE's page: drawn once — never again under its writer.
+    const once = s.startsWith("p/")
+      ? () => article(decodeURIComponent(s.slice(2)))
+      : s === "write" && !at.others
+        ? () => writePage()
+        : s.startsWith("write/") && mine
+          ? () => writePage({ draftRef: decodeURIComponent(s.slice(6)) })
+          : s.startsWith("edit/") && !at.others
+            ? () => writePage({ editRef: decodeURIComponent(s.slice(5)) })
+            : null;
+    if (once) return void ((root = outer), await once().catch(e => fail(outer, e)));
+    // THE BLOG, its DRAFTS, REVIEW and SAVED: a VIEW (`ctx.view`, render form) — built again when what it reads changes
+    // (your private posts arrive after the public ones), put in place only when it differs.
+    view = ctx.view(outer, {
+      render: async () => {
+        const box = h("div", { style: "display:contents" });
+        root = box;
+        if (at.saved) {
+          const list = (await at.read()).filter(press.isArticle);
+          box.replaceChildren(h("h2", { textContent: "★ Saved articles" }), h("div", { className: "list" }, ...(list.length ? list.map(it => row(it, { href: `${placeBase(it)}/p/${it.ref}` })) : [h("p", { className: "none", textContent: "Nothing saved: “Save” on an article keeps it here." })])));
+        } else if (s.startsWith("t/")) await home(decodeURIComponent(s.slice(2)));
+        else if (s === "drafts" && mine) await draftsPage();
+        else if (s === "review" && at.space) await reviewPage();
+        else await home();
+        return box;
+      },
+    });
   }
+  let view = null;
   await draw();
-  // Drawn again when what it reads changes (your private posts arrive after the public ones) — never under someone writing.
-  items.onChange(() => el.isConnected && !/^(write|edit)/.test(at?.sub ?? "") && whereCap.key() === drawn && !/^p\//.test(at?.sub ?? "") && draw());
   addEventListener("craftworks:route", () => {
     if (!el.isConnected || ctx.route !== "/blog" || whereCap.key() === drawn) return;
     months = 1;

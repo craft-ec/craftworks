@@ -59,6 +59,8 @@ export async function mount(ctx, el) {
     return core.held_state(idHex) ?? null;
   };
 
+  // A VIEW (`ctx.view`, render form): built again on each data change and each beacon height, put in place only when
+  // it differs.
   async function draw() {
     const h = beaconSvc.status().height;
     if (h == null) return (said.textContent = "Reading the beacon…");
@@ -113,19 +115,17 @@ export async function mount(ctx, el) {
     parts.push(section("Registries", "What the network keeps, and who keeps it (this epoch and the last).", table([["Files listed", "num"], ["Bytes", "num"], ["Keepers", "num"]], net ? [[cell(String(net.files), "num"), cell(`${(net.bytes / 1e6).toFixed(1)} MB`, "num"), cell(String(net.keepers), "num")]] : [])));
 
     said.textContent = `At height ${h}.`;
-    body.replaceChildren(...parts);
+    const box = document.createElement("div");
+    box.append(...parts);
+    return box;
   }
 
-  let drawing = false;
+  const view = ctx.view(body, { render: async () => (await draw()) ?? document.createTextNode("") });
+  // (The beacon's clock: a new height is what this page shows — every 8 heights at most.)
   let drawnAt = -Infinity;
-  const refresh = async h => {
-    if (drawing || !el.isConnected || (h != null && h - drawnAt < 8)) return;
-    drawing = true;
+  beaconSvc.onHeight(h => {
+    if (!el.isConnected || (h != null && h - drawnAt < 8)) return;
     drawnAt = h ?? drawnAt;
-    await draw().catch(e => (said.textContent = `Could not read: ${ctx.say(e)}`));
-    drawing = false;
-  };
-  beaconSvc.onHeight(refresh);
-  said.textContent = "Reading…";
-  await refresh(beaconSvc.status().height);
+    view.refresh();
+  });
 }

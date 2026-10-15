@@ -20,12 +20,11 @@ export async function mount(ctx, el) {
       return;
     }
   }
-  ctx.actions["/mail"] = [
+  (await ctx.require("where")).menu([
     { label: "Inbox", href: base, on: box === "in" },
     { label: "Sent", href: `${base}/sent`, on: box === "sent" },
     { label: "＋ Compose", run: () => compose(), end: true },
-  ];
-  dispatchEvent(new CustomEvent("craftworks:actions"));
+  ], "/mail");
   // WHO a mail is from or to: a person (their name, their menu), or a space (its name).
   const spaceName = (m, ref) => (m.space?.id && ref === `space:${m.space.id}` ? m.space.name : sp && ref === `space:${sp.id}` ? sp.name : "a space");
   const nameOf = (m, ref, props) => (String(ref).startsWith("space:") ? Object.assign(document.createElement("span"), { textContent: `🏠 ${spaceName(m, ref)}` }) : directory.nameEl(ref, ...(props ? ["a", props(ref)] : [])));
@@ -82,14 +81,14 @@ export async function mount(ctx, el) {
   const node = (tag, props) => Object.assign(document.createElement(tag), props);
   let open = null;
 
-  async function draw() {
-    const mails = await src.list(box);
-    if (!mails.length) {
-      list.replaceChildren(node("p", { className: "empty", textContent: box === "sent" ? "Nothing sent yet." : "No mail yet." }));
-      return;
-    }
+  // THE LIST: a VIEW (`ctx.view` — loading, empty, redrawn when mail arrives or is sent); the one open marked.
+  let listView = null;
+  const draw = () => listView?.refresh();
+  const drawList = ({ mails }) => {
     const toNames = m => m.to.flatMap((d, i) => [...(i ? [", "] : []), nameOf(m, d)]);
-    list.replaceChildren(
+    const ul = document.createElement("div");
+    ul.style.display = "contents";
+    ul.append(
       ...mails.map((m, i) => {
         const b = node("button", { type: "button" });
         b.setAttribute("aria-current", String(open?.id === m.id));
@@ -100,7 +99,8 @@ export async function mount(ctx, el) {
         return b;
       }),
     );
-  }
+    return ul;
+  };
 
   async function show(m) {
     open = m;
@@ -213,14 +213,16 @@ export async function mount(ctx, el) {
     else toInput.focus();
   }
 
-  list.replaceChildren(theme.loading(box === "sent" ? "Loading sent mail…" : "Loading your mail…"));
-  await draw();
+  listView = ctx.view(list, {
+    read: async () => ({ mails: await src.list(box), open: open?.id ?? null }),
+    draw: drawList,
+    empty: d => !d.mails.length,
+    looks: { empty: () => node("p", { className: "empty", textContent: box === "sent" ? "Nothing sent yet." : "No mail yet." }), loading: () => theme.loading(box === "sent" ? "Loading sent mail…" : "Loading your mail…") },
+  });
   // WRITE TO someone named in the address (`…/mail/to/<did | space:id>`: a card's ✉ Mail): the composer opened to them.
   if (String(ctx.sub ?? "").startsWith("to/")) compose(null, decodeURIComponent(ctx.sub.slice(3)));
-  src.onChange(() => el.isConnected && draw());
   if (box === "in") {
     // New mail pointed to in the inbox: opened and kept (the list redraws as it arrives).
-    list.append(theme.loading("Checking your inbox…", 1));
     src
       .fetch()
       .catch(e => ctx.log("mail", { what: e?.message ?? String(e) }))

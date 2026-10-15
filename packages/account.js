@@ -68,10 +68,22 @@ export async function mount(ctx, el) {
       dev.innerHTML = `<h3>Your nodes</h3><p class="line">Reading your account from the network…</p>
         <p class="note">Remove a node you lost or no longer use: it will not be able to read anything written after.</p>`;
       box.append(dev);
-      const drawNodes = () =>
-        membership.nodes.strict().then(
-          list => {
-            const at = dev.querySelector(".line, ul");
+      // A VIEW (`ctx.view`): the account's nodes, drawn again when they change — held while a removal asks for the words.
+      const slot = document.createElement("div");
+      dev.querySelector(".line").replaceWith(slot);
+      let asking = false;
+      const nodesView = ctx.view(slot, {
+        read: async () => {
+          const list = await membership.nodes.strict();
+          return list === "removed" || list === null ? list : list.map(m => ({ key: m.key, me: !!m.me, index: m.index }));
+        },
+        hold: () => asking,
+        empty: () => false,
+        draw: list => {
+          const box = document.createElement("div");
+          const at = Object.assign(document.createElement("p"), { className: "line" });
+          box.append(at);
+          (() => {
             if (list === "removed") {
               dev.querySelector(".note")?.remove();
               at.replaceWith(Object.assign(document.createElement("p"), { className: "line",
@@ -96,6 +108,7 @@ export async function mount(ctx, el) {
                 // WITH THE WORDS (owner 10-09): removing rotates the account's key, so a removed — or stolen — device
                 // is cut off for real, and nothing it holds can put it back.
                 rm.onclick = () => {
+                  asking = true;
                   rm.hidden = true;
                   const words = Object.assign(document.createElement("textarea"), { rows: 2, placeholder: "Your recovery words", autocomplete: "off", spellcheck: false });
                   const go = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove this device", className: "remove" });
@@ -104,7 +117,7 @@ export async function mount(ctx, el) {
                   const form = document.createElement("div");
                   form.append(said, words, " ", go, " ", back);
                   li.append(form);
-                  back.onclick = () => (form.remove(), (rm.hidden = false));
+                  back.onclick = () => (form.remove(), (rm.hidden = false), (asking = false));
                   go.onclick = async () => {
                     const glue = (await ctx.require("node")).glue.CraftworksCore;
                     let entropy = null;
@@ -132,7 +145,8 @@ export async function mount(ctx, el) {
                     } finally {
                       entropy.fill(0);
                     }
-                    drawNodes();
+                    asking = false;
+                    nodesView.refresh();
                   };
                 };
                 li.append(" ", rm);
@@ -140,10 +154,10 @@ export async function mount(ctx, el) {
               ul.append(li);
             }
             at.replaceWith(ul);
-          },
-          e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${ctx.say(e)}`),
-        );
-      drawNodes();
+          })();
+          return box;
+        },
+      });
     },
 
     async security() {
@@ -151,19 +165,27 @@ export async function mount(ctx, el) {
       const sec = document.createElement("section");
       sec.innerHTML = `<ul class="facts"><li>Reading…</li></ul>`;
       box.append(sec);
-      async function drawSecurity() {
-        const [log, st, escrowed] = await Promise.all([
-          auth.identity.keyLogInfo(s.didBytes),
-          keys.ready(),
-          keys.escrowed(),
-        ]);
-        const facts = [
+      // THE FACTS: a VIEW (`ctx.view`) — read, drawn, drawn again when the keys change. The repair: drawn once.
+      const factsOf = ({ log, st, escrowed }) => [
           log ? `Recovery words changed ${log.changes} time${log.changes === 1 ? "" : "s"} (your key log has ${log.events} event${log.events === 1 ? "" : "s"}).` : "Your key log is not on the network yet.",
           st?.removed ? "This node was removed from your account: it holds no keys for anything written since." :
           st ? `Your data is sealed with the keys of epoch ${st.epoch}; ${st.members.length} ${st.members.length === 1 ? "node holds" : "nodes hold"} them.` : "This site does not hold your account's keys.",
           escrowed === null ? null : `${escrowed} epoch${escrowed === 1 ? "" : "s"} kept in escrow for your recovery words: with the words alone, every one of them opens again.`,
         ].filter(Boolean);
-        sec.querySelector(".facts").replaceChildren(...facts.map(t => Object.assign(document.createElement("li"), { textContent: t })));
+      ctx.view(sec.querySelector(".facts"), {
+        read: async () => {
+          const [log, st, escrowed] = await Promise.all([auth.identity.keyLogInfo(s.didBytes), keys.ready(), keys.escrowed()]);
+          return factsOf({ log, st: st ? { removed: !!st.removed, epoch: st.epoch, members: st.members ?? [] } : null, escrowed });
+        },
+        draw: facts => {
+          const frag = document.createElement("div");
+          frag.style.display = "contents";
+          frag.append(...facts.map(t => Object.assign(document.createElement("li"), { textContent: t })));
+          return frag;
+        },
+      });
+      async function drawSecurity() {
+        const st = await keys.ready();
         // REPAIR (owner 10-13): where this login HOLDS the account's keys — the one to run it on when a recovery on
         // another device started a second set of keys (that device's spaces and tables then read empty).
         sec.querySelector(".repair")?.remove();
@@ -194,7 +216,7 @@ export async function mount(ctx, el) {
         };
         sec.append(repair);
       }
-      drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${ctx.say(e)}`));
+      ctx.background("account: repair", drawSecurity());
 
     },
 
@@ -276,32 +298,33 @@ export async function mount(ctx, el) {
       access.innerHTML = `<h3>Apps with access</h3><p class="note">Your data belongs to your account. These sites may
         change it; any site can be removed, and will ask again next time.</p><ul class="grants"><li>Reading…</li></ul>`;
       box.append(access);
-      const drawGrants = async () => {
-        const ul = access.querySelector(".grants");
-        const list = await grantsOf.grants();
-        ul.replaceChildren();
-        if (!list.length) ul.append(Object.assign(document.createElement("li"), { textContent: "None yet." }));
-        const here = location.pathname.split("/")[4];
-        // One line per SITE, with the kinds of data it may change; each can be removed on its own.
-        const bySite = new Map();
-        for (const g of list) bySite.set(g.app, [...(bySite.get(g.app) ?? []), g.table]);
-        for (const [app, tables] of bySite) {
-          const li = document.createElement("li");
-          const code = document.createElement("code");
-          code.textContent = `${app.slice(0, 10)}…`;
-          li.append(app === here ? "This app " : "Site ", code, app === here ? "" : "", ": ");
-          tables.forEach((table, i) => {
-            const chip = Object.assign(document.createElement("button"), { type: "button", textContent: `${table} ✕`, title: `Remove its access to your ${table}` });
-            chip.onclick = async () => {
-              await grantsOf.revoke(app, table);
-              drawGrants();
-            };
-            li.append(i ? " " : "", chip);
-          });
-          ul.append(li);
-        }
-      };
-      drawGrants().catch(e => (access.querySelector(".grants").textContent = `Could not read: ${ctx.say(e)}`));
+      // A VIEW (`ctx.view`): the grants read, drawn, drawn again when they change (here or on another device).
+      const grantsView = ctx.view(access.querySelector(".grants"), {
+        read: async () => (await grantsOf.grants()).map(g => [g.app, g.table]),
+        draw: list => {
+          const frag = document.createElement("div");
+          frag.style.display = "contents";
+          const here = location.pathname.split("/")[4];
+          // One line per SITE, with the kinds of data it may change; each can be removed on its own.
+          const bySite = new Map();
+          for (const [app, table] of list) bySite.set(app, [...(bySite.get(app) ?? []), table]);
+          for (const [app, tables] of bySite) {
+            const li = document.createElement("li");
+            const code = document.createElement("code");
+            code.textContent = `${app.slice(0, 10)}…`;
+            li.append(app === here ? "This app " : "Site ", code, ": ");
+            tables.forEach((table, i) => {
+              const chip = Object.assign(document.createElement("button"), { type: "button", textContent: `${table} ✕`, title: `Remove its access to your ${table}` });
+              chip.onclick = async () => (await grantsOf.revoke(app, table), grantsView.refresh());
+              li.append(i ? " " : "", chip);
+            });
+            frag.append(li);
+          }
+          return frag;
+        },
+        looks: { empty: () => Object.assign(document.createElement("li"), { textContent: "None yet." }) },
+      });
+
     },
 
     async recovery() {
@@ -535,10 +558,10 @@ export async function mount(ctx, el) {
   const [subName, focus] = String(ctx.sub ?? "").split("/");
   const sub = sections[subName] ? subName : "card";
   // The top bar: the sub-pages, and Log out.
-  ctx.actions[ctx.route] = [
+  (await ctx.require("where")).menu([
     ...Object.entries(titles).map(([k, label]) => ({ label, href: k === "card" ? "#/settings" : `#/settings/${k}`, on: k === sub })),
     { label: "Log out", run: () => auth.logout(), end: true },
-  ];
+  ]);
   dispatchEvent(new CustomEvent("craftworks:actions"));
   box.innerHTML = `<h2>${titles[sub]}</h2>`;
   el.append(box);

@@ -10,7 +10,7 @@
 //   read({ saved })               → the place's items of the app's kinds (plain data)
 //   get(ref) / submit(item) / edit(ref, body, meta) / remove(ref) — items OF THE APP'S KINDS only (manifest `kinds`)
 //   pageOf(ref) / linkOf(ref)     → its page here / its link to share
-//   tabs([{ label, href, on, end }]) — the app's menu; go(hash); copy(text); say(error) → the words for a failure
+//   tabs(extra, { create, yoursOn }) — its own entries and its create (Yours, Saved, Discover: the system's); go(hash); copy(text); say(error) → the words for a failure
 //   rows() / put(key, value) / remove… its OWN rows (`appdata`, keys `<app>/…`)
 //   lib(name)                     → a pure library's DATA (an allowlist: `highlight`'s languages …)
 //   onRoute(fn), onChange(fn)
@@ -59,7 +59,7 @@ export async function start(ctx) {
     const api = {
       where: () => call("where"), read: o => call("read", o ?? {}), get: r => call("get", r), submit: it => call("submit", it),
       edit: (r, b, m) => call("edit", r, b, m), remove: r => call("removeItem", r), pageOf: r => call("pageOf", r), linkOf: r => call("linkOf", r),
-      tabs: t => call("tabs", t), go: h => call("go", h), copy: t => call("copy", String(t)), say: e => call("say", String(e?.message ?? e)),
+      tabs: (t, o) => call("tabs", t, o ?? {}), go: h => call("go", h), copy: t => call("copy", String(t)), say: e => call("say", String(e?.message ?? e)),
       rows: () => call("rows"), put: (k, v) => call("put", k, v), removeRow: k => call("remove", k), lib: n => call("lib", n),
       onRoute: f => routeFns.push(f), onChange: f => changeFns.push(f), ui,
     };
@@ -162,9 +162,12 @@ export async function start(ctx) {
       },
       pageOf: async ref => items.pageOf(ref, [...mine][0]),
       linkOf: async ref => items.linkOf(ref, app),
-      tabs: async entries => {
-        ctx.actions[ctx.route] = (Array.isArray(entries) ? entries : []).slice(0, 12).map(e => ({ label: String(e.label ?? "").slice(0, 40), href: /^#\//.test(e.href) ? e.href : undefined, on: !!e.on, end: !!e.end }));
-        dispatchEvent(new CustomEvent("craftworks:actions"));
+      // THE APP's ENTRIES: through `where.tabs` — the ONE builder (yours, Saved, Discover and the roles the side panel
+      // places them by are the system's); the app gives only its extras and its create.
+      tabs: async (extra, opts = {}) => {
+        const link = e => ({ label: String(e?.label ?? "").slice(0, 40), href: /^#\//.test(e?.href) ? e.href : undefined, on: !!e?.on });
+        const { at } = await where();
+        at.tabs((Array.isArray(extra) ? extra : []).slice(0, 10).map(link), { yoursOn: opts.yoursOn !== false, create: opts.create ? link(opts.create) : null });
         return true;
       },
       go: async hash => {

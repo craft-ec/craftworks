@@ -21,8 +21,7 @@ export async function mount(ctx, el) {
   const body = el.querySelector('[data-x="body"]');
   const PAGES = [["", "Nodes"], ["keeper", "Keeper"], ["data", "Data used"]];
   const page = PAGES.some(([k]) => k === (ctx.sub ?? "")) ? (ctx.sub ?? "") : "";
-  ctx.actions[ctx.route] = PAGES.map(([k, label]) => ({ label, href: k ? `#/nodes/${k}` : "#/nodes", on: k === page }));
-  dispatchEvent(new CustomEvent("craftworks:actions"));
+  (await ctx.require("where")).menu(PAGES.map(([k, label]) => ({ label, href: k ? `#/nodes/${k}` : "#/nodes", on: k === page })));
   const size = b => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`);
   const craft = n => (Number(BigInt(n ?? "0") / 1000000n) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });
   const cell = (t, cls) => Object.assign(document.createElement("td"), { textContent: t ?? "—", className: cls ?? "" });
@@ -150,10 +149,13 @@ export async function mount(ctx, el) {
     return [pick, section("Data used", "What the account watched, listened to and opened, and the data it took.", table([["What"], ["Time", "num"], ["Data", "num"], ["Opened", "num"]], trs, [cell("Total"), cell(clock(sum("s")), "num"), cell(size(sum("b")), "num"), cell(String(sum("n")), "num")]))];
   }
 
-  async function show() {
-    body.replaceChildren(Object.assign(document.createElement("p"), { className: "note", textContent: "Reading…" }));
-    const parts = await (page === "keeper" ? keeper() : page === "data" ? data() : nodes()).catch(e => [Object.assign(document.createElement("p"), { className: "note", textContent: `Could not read: ${ctx.say(e)}` })]);
-    body.replaceChildren(...parts);
-  }
-  await show();
+  // A VIEW (`ctx.view`, render form): built again when what it reads changes, put in place only when it differs.
+  const view = ctx.view(body, {
+    render: async () => {
+      const box = document.createElement("div");
+      box.append(...(await (page === "keeper" ? keeper() : page === "data" ? data() : nodes())));
+      return box;
+    },
+  });
+  const show = () => view.refresh();
 }

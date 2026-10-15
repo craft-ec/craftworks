@@ -282,26 +282,39 @@ export async function mount(ctx, el) {
     rs = null;
     channel = null;
     sideName.textContent = "Your conversations";
-    const draw = async () => {
-      const list = await conversation.list();
-      const name = sp => (sp.kind === "group" ? `👥 ${sp.name}` : sp.with ? directory.nameEl(sp.with) : sp.name);
-      chans.replaceChildren(
-        ...list.map(sp => {
-          const b = Object.assign(document.createElement("button"), { type: "button", title: sp.with ?? "" });
-          b.append(name(sp));
-          const n = activity.unread(sp.id);
-          if (n) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(n) }));
-          b.setAttribute("aria-current", String(shownConv?.id === sp.id));
-          b.onclick = () => (location.hash = `#/chat/${sp.id}`);
-          return b;
-        }),
-        ...(accepted ? [] : [theme.loading("Checking your inbox…", 1)]),
-        Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ New conversation", onclick: start }),
-      );
-      return list;
-    };
-    const list = await draw();
-    accepted ??= conversation.accept().catch(e => ctx.log("conversation", { what: e?.message ?? String(e) })).then(() => el.isConnected && !ctx.space && draw().then(openAt));
+    // YOUR CONVERSATIONS: a VIEW (`ctx.view`) — read, drawn, drawn again when they change, their unread counts move,
+    // or another one opens.
+    let inboxRead = !!accepted;
+    personalView?.stop();
+    personalView = ctx.view(chans, {
+      read: async () => ({
+        list: (await conversation.list()).map(sp => ({ id: sp.id, kind: sp.kind, name: sp.name, with: sp.with ?? null, unread: activity.unread(sp.id) })),
+        open: shownConv?.id ?? null,
+        inboxRead,
+      }),
+      empty: () => false,
+      draw: ({ list: l, open, inboxRead: read }) => {
+        const name = sp => (sp.kind === "group" ? `👥 ${sp.name}` : sp.with ? directory.nameEl(sp.with) : sp.name);
+        const box = document.createElement("div");
+        box.style.display = "contents";
+        box.append(
+          ...l.map(sp => {
+            const b = Object.assign(document.createElement("button"), { type: "button", title: sp.with ?? "" });
+            b.append(name(sp));
+            if (sp.unread) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(sp.unread) }));
+            b.setAttribute("aria-current", String(open === sp.id));
+            b.onclick = () => (location.hash = `#/chat/${sp.id}`);
+            return b;
+          }),
+          ...(read ? [] : [theme.loading("Checking your inbox…", 1)]),
+          Object.assign(document.createElement("button"), { type: "button", className: "new", textContent: "+ New conversation", onclick: start }),
+        );
+        return box;
+      },
+    });
+    const draw = () => personalView.refresh();
+    const list = await conversation.list();
+    accepted ??= conversation.accept().catch(e => ctx.log("conversation", { what: ctx.say(e) })).then(() => ((inboxRead = true), el.isConnected && !ctx.space && draw().then(() => openAt())));
     const openAt = async (l = list) => {
       const sp = (ctx.sub && (await conversation.list()).find(c => c.id === ctx.sub)) || null;
       showOpen(!!sp);
@@ -319,7 +332,7 @@ export async function mount(ctx, el) {
     personalDraw = draw;
     await openAt();
   }
-  let shownConv = null, personalDraw = null;
+  let shownConv = null, personalDraw = null, personalView = null;
   // A NEW conversation: one person (direct) or several (a group), each welcomed.
   function start() {
     const d = $(".start");
@@ -366,8 +379,7 @@ export async function mount(ctx, el) {
   };
   const menu = () => {
     // ITS SETTINGS (its channels — the app's own): a link in its menu, for who may manage the space's apps.
-    ctx.actions["/chat"] = server && rs?.can?.(account?.id, "apps") ? [{ label: "Settings", href: `#/s/${server.id}/chat/settings`, on: ctx.sub === "settings" }] : [];
-    dispatchEvent(new CustomEvent("craftworks:actions"));
+    ctx.background("chat: menu", ctx.require("where").then(w => w.menu(server && rs?.can?.(account?.id, "apps") ? [{ label: "Settings", href: `#/s/${server.id}/chat/settings`, on: ctx.sub === "settings" }] : [], "/chat")));
   };
   menu();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/chat" && at());
@@ -399,8 +411,7 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  ctx.actions["/chat"] = [];
-  dispatchEvent(new CustomEvent("craftworks:actions"));
+  (await ctx.require("where")).menu([], "/chat");
   grid.replaceChildren(theme.loading("Finding open spaces…"));
   const joins = await ctx.require("join-button");
   const cards = [];

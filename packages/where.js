@@ -137,5 +137,12 @@ export async function start(ctx) {
     };
     return { settings, who, saved, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
   }
-  return { of, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
+  // A MENU of an OS page's own (Settings' sections, Mail's folders, the token pages): the ONE door for an app's entries
+  // besides `tabs` — each its ROLE (`you`, or `create` for an ending action), told to the header and the side panel.
+  // `route`: the page's (default: the one open).
+  function menu(entries, route = ctx.route) {
+    ctx.actions[route] = (entries ?? []).map(e => ({ role: e.end ? "create" : "you", ...e }));
+    dispatchEvent(new CustomEvent("craftworks:actions"));
+  }
+  return { of, menu, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

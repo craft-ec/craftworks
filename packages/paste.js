@@ -117,12 +117,8 @@ export async function mount(api, el) {
     w ??= await api.where();
     const s = w.sub;
     const home_ = w.who === "mine" || w.who === "discover";
-    await api.tabs([
-      ...(home_ ? [{ label: "Your pastes", href: "#/paste", on: w.who === "mine" && !s }] : []),
-      ...(home_ ? [{ label: "Saved", href: "#/paste/saved", on: w.saved }] : []),
-      ...(home_ ? [{ label: "Discover", href: "#/discover/paste", on: w.who === "discover" }] : []),
-      { label: "＋ New paste", href: "#/paste/new", on: s === "new", end: true },
-    ]);
+    // (Yours, Saved and Discover are the system's — every app's, in one order; this app gives its extras and its create.)
+    await api.tabs([], { create: { label: "New paste", href: "#/paste/new", on: s === "new" }, yoursOn: !s });
     if (s.startsWith("r/")) return raw(decodeURIComponent(s.slice(2)));
     const m = /(?:^|\/)p\/(.+)$/.exec(s);
     if (m) return page(decodeURIComponent(m[1]), w.base);
