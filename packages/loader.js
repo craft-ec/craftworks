@@ -810,14 +810,16 @@ export async function run(boot) {
     const top = Math.round(h.getBoundingClientRect().top);
     const vv = window.visualViewport;
     const vvTop = vv ? Math.round(vv.offsetTop) : 0;
-    if (top >= 0 && vvTop <= 0) return void (headerSaid = null);
+    // (A header COLLAPSED is cut off too: its bar shorter than its own height says.)
+    const short = Math.round(h.getBoundingClientRect().height) < 24;
+    if (top >= 0 && vvTop <= 0 && !short) return void (headerSaid = null);
     const name = e => `${e.tagName.toLowerCase()}${e.id ? `#${e.id}` : ""}${typeof e.className === "string" && e.className ? `.${e.className.split(" ")[0]}` : ""}`;
     const scrolled = [document.scrollingElement, ...document.querySelectorAll("*")].filter(e => e && e.scrollTop > 0 && e.contains(h)).map(e => `${name(e)} ${Math.round(e.scrollTop)}px`).slice(0, 4);
-    const why = `the header's top at ${top}px${vvTop > 0 ? `, the visual viewport moved ${vvTop}px (zoom ${vv?.scale?.toFixed?.(2) ?? "?"}, focus on ${document.activeElement ? name(document.activeElement) : "nothing"})` : ""}${scrolled.length ? `; scrolled: ${scrolled.join(", ")}` : ""}`;
+    const why = `the header's top at ${top}px${short ? `, its height ${Math.round(h.getBoundingClientRect().height)}px (--cw-bar ${getComputedStyle(document.documentElement).getPropertyValue("--cw-bar").trim() || "?"})` : ""}${vvTop > 0 ? `, the visual viewport moved ${vvTop}px (zoom ${vv?.scale?.toFixed?.(2) ?? "?"}, focus on ${document.activeElement ? name(document.activeElement) : "nothing"})` : ""}${scrolled.length ? `; scrolled: ${scrolled.join(", ")}` : ""}`;
     if (why === headerSaid) return;
     headerSaid = why;
     ctx.log("layout", { what: `header cut off — ${why}` });
-    report("header-cut", ctx.route, why, { innerH: innerHeight, docH: document.documentElement.scrollHeight, pill: !!pill?.isConnected });
+    report("header-cut", ctx.route, why, { innerH: innerHeight, docH: document.documentElement.scrollHeight, pill: !!pill?.isConnected, bar: Math.round(h.getBoundingClientRect().height) });
   };
   addEventListener("scroll", headerWatch, true);
   addEventListener("resize", headerWatch);

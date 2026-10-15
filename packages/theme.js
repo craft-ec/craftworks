@@ -123,7 +123,7 @@ export async function start() {
     /* On a phone the side (a layout's side slot, when one has any) folds away: the page has the whole width. */
     @media (max-width: 600px) {
       #app { grid-template: "head" auto "body" minmax(0, 1fr) "foot" auto / minmax(0, 1fr); }
-      #app > .slot-side { position: fixed; top: var(--cw-bar); bottom: 0; left: 0; z-index: 40; background: var(--cw-bg); box-shadow: var(--cw-shadow-lg);
+      #app > .slot-side { position: fixed; top: var(--cw-bar-now, var(--cw-bar)); bottom: 0; left: 0; z-index: 40; background: var(--cw-bg); box-shadow: var(--cw-shadow-lg);
         transform: translateX(-110%); transition: transform .18s ease-out; }
       #app > .slot-side.open { transform: none; }
     }

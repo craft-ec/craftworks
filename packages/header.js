@@ -298,9 +298,17 @@ export function mount(ctx, el) {
   }
 
   // THE SPACE you are in: its name (logged in); a click opens the spaces panel. What is unread in your other spaces on it.
-  // THE HEADER's HEIGHT, as it is (two rows on a phone when the app has actions): what panels below it place by.
+  // THE HEADER's HEIGHT, as it is (two rows on a phone when the app has actions): what panels below it place by —
+  // `--cw-bar-now`, never `--cw-bar` (the bar's own height: 10-15, measured while a remount had it collapsed, it wrote
+  // `--cw-bar: 1px` and the bar locked itself at 1px — the header cut off). A detached bar (an older mount) stops.
   const barEl = el.querySelector(".bar");
-  if (barEl && typeof ResizeObserver === "function") new ResizeObserver(() => document.documentElement.style.setProperty("--cw-bar", `${barEl.offsetHeight}px`)).observe(barEl);
+  if (barEl && typeof ResizeObserver === "function") {
+    const ro = new ResizeObserver(() => {
+      if (!barEl.isConnected) return void ro.disconnect();
+      if (barEl.offsetHeight > 0) document.documentElement.style.setProperty("--cw-bar-now", `${barEl.offsetHeight}px`);
+    });
+    ro.observe(barEl);
+  }
   // The app's tabs: `more` while some are past the right edge (faded there, on a phone: there is more to scroll to).
   const tabsEl = el.querySelector(".actions");
   const more = () => tabsEl.classList.toggle("more", tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 1);
