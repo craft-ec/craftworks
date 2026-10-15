@@ -108,8 +108,8 @@ export async function start(ctx) {
     join: {
       initial: "NONE",
       journal: true,
-      progress: { ASKED: (_, d) => `Asking to join${d?.name ? ` ${String(d.name).slice(0, 40)}` : ""}…`, WAITING: (_, d) => `Waiting to be let in${d?.name ? ` to ${String(d.name).slice(0, 40)}` : ""}…` },
-      after: 4000,
+      // (No progress line: WAITING to be let in is someone else's to answer — it may take days, and this device does
+      // nothing meanwhile (10-15: three "Asking to join …" lines never went away). The Spaces app says "Requested".)
       ended: { FAILED: { text: "Joining stopped (the trace says why) — it asks again with a new key", ms: 15000 } },
       events: {
         ask: { from: "*", to: "ASKED" },

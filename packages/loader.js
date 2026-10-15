@@ -799,6 +799,31 @@ export async function run(boot) {
     pill.replaceChildren(...lines.map(t => Object.assign(document.createElement("div"), { textContent: `⏳ ${t}` })));
     if (!pill.isConnected) document.body.append(pill);
   });
+  // THE HEADER's PLACE, WATCHED (owner 10-15: "the header is still cut off" — never reproduced on a test node, so the
+  // page that meets it says how): whenever anything scrolls, the page resizes, or the browser's visual viewport moves,
+  // a header whose top is off the screen is said in the trace and reported — with what moved: the document or an
+  // element holding the header scrolled (by how much), or the visual viewport (a focused field, a zoom). Once per cause.
+  let headerSaid = null;
+  const headerWatch = () => {
+    const h = document.querySelector("header");
+    if (!h) return;
+    const top = Math.round(h.getBoundingClientRect().top);
+    const vv = window.visualViewport;
+    const vvTop = vv ? Math.round(vv.offsetTop) : 0;
+    if (top >= 0 && vvTop <= 0) return void (headerSaid = null);
+    const name = e => `${e.tagName.toLowerCase()}${e.id ? `#${e.id}` : ""}${typeof e.className === "string" && e.className ? `.${e.className.split(" ")[0]}` : ""}`;
+    const scrolled = [document.scrollingElement, ...document.querySelectorAll("*")].filter(e => e && e.scrollTop > 0 && e.contains(h)).map(e => `${name(e)} ${Math.round(e.scrollTop)}px`).slice(0, 4);
+    const why = `the header's top at ${top}px${vvTop > 0 ? `, the visual viewport moved ${vvTop}px (zoom ${vv?.scale?.toFixed?.(2) ?? "?"}, focus on ${document.activeElement ? name(document.activeElement) : "nothing"})` : ""}${scrolled.length ? `; scrolled: ${scrolled.join(", ")}` : ""}`;
+    if (why === headerSaid) return;
+    headerSaid = why;
+    ctx.log("layout", { what: `header cut off — ${why}` });
+    report("header-cut", ctx.route, why, { innerH: innerHeight, docH: document.documentElement.scrollHeight, pill: !!pill?.isConnected });
+  };
+  addEventListener("scroll", headerWatch, true);
+  addEventListener("resize", headerWatch);
+  window.visualViewport?.addEventListener("scroll", headerWatch);
+  window.visualViewport?.addEventListener("resize", headerWatch);
+  new ResizeObserver(headerWatch).observe(document.documentElement);
   // WHAT A TAB REMEMBERS across its reloads (its frame's name: storage is refused here): when it last resumed, when it
   // last reloaded for a node that came back. `cw:{json}` (an older `cw-resumed:<ms>` read as such).
   const tabState = () => {
