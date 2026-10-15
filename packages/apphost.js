@@ -237,5 +237,74 @@ export async function start(ctx) {
     return frame;
   }
 
-  return { mount };
+  // THE FRAME RUNTIME (FOUNDATION §3): an app whose module mounts with a `ctx` — `mount(ctx, el)`, as every page here —
+  // run in ITS OWN FRAME with the page's own runtime: the same `runtime.js` installed on the frame's ctx (view, cache,
+  // total, background, optional, every); `require` gives the SYSTEM's pure and UI packages loaded into the frame by
+  // their hash (the same bytes as the page's: `FRAME_LOCAL`), and every other capability as a PROXY whose calls cross
+  // here, each refused unless the app's grants name it (`uses`). The page's data signal is relayed in.
+  const FRAME_LOCAL = new Set(["theme", "kinds", "fault"]);
+  const { SOURCE: RUNTIME_CTX } = await ctx.require("frame-runtime");
+  // (`bytes`: a module given as it is — a probe's — in place of a package by name.)
+  function mountCtx(el, { app, module = null, bytes = null, uses = [] }) {
+    if (!KEY.test(app)) throw new Error(`an app's name is a-z, 0-9 and "-": ${app}`);
+    const granted = new Set(uses);
+    const frame = document.createElement("iframe");
+    frame.sandbox = "allow-scripts allow-forms";
+    frame.title = app;
+    frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
+    const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";
+    frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
+      <style>html,body{height:auto!important;min-height:0!important;margin:0;background:transparent}#cw-app{display:flow-root}</style></head>
+      <body><div id="cw-app"></div><script>${RUNTIME_CTX}</script></body></html>`;
+    el.replaceChildren(frame);
+    const whereNow = () => ({ route: ctx.route, sub: ctx.sub ?? "", space: ctx.space ?? null });
+    const ops = {
+      boot: async () => ({ where: whereNow(), runtime: b64(await ctx.runtimeBytes()), app: b64(bytes ?? (await ctx.packageOf(module)).bytes) }),
+      // A SYSTEM package (the same bytes as the page's) loaded in the frame; a capability the app is granted: a proxy.
+      pkg: async name => {
+        if (FRAME_LOCAL.has(name)) {
+          const p = await ctx.packageOf(name);
+          return { local: true, kind: p.kind, b64: b64(p.bytes) };
+        }
+        if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
+        return { local: false };
+      },
+      cap: async (name, method, args, strict) => {
+        if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
+        const c = await ctx.require(name);
+        const f = c?.[method];
+        if (typeof f !== "function") throw Object.assign(new Error(`${name} has no call "${method}"`), { kind: "refused" });
+        return plain(await (strict && typeof f.strict === "function" ? f.strict : f).apply(c, Array.isArray(args) ? args : []));
+      },
+      log: async (step, detail) => (ctx.log(`${app}: ${String(step).slice(0, 40)}`, detail), true),
+      say: async (message, kind) => ctx.say(Object.assign(new Error(message), { kind })),
+      failed: async (step, message, kind, what) => (ctx.failed(`${app}: ${String(step).slice(0, 40)}`, Object.assign(new Error(message), { kind }), what), true),
+    };
+    let budget = 60;
+    ctx.every(frame, 1000, () => (budget = 60));
+    const onMessage = async e => {
+      if (!frame.isConnected) return (removeEventListener("message", onMessage), removeEventListener("craftworks:data", onData), removeEventListener("craftworks:route", onRoute));
+      if (e.source !== frame.contentWindow) return;
+      const m = e.data ?? {};
+      if (m.event === "height") return void (frame.style.height = `${Math.max(120, Math.min(Number(m.h) || 0, 20000))}px`);
+      const { id, op, args = [] } = m;
+      if (typeof id !== "number") return;
+      const reply = r => frame.contentWindow?.postMessage({ id, ...r }, "*");
+      if (budget-- <= 0) return reply({ ok: false, error: "too many calls", kind: "refused" });
+      if (!Object.hasOwn(ops, op)) return reply({ ok: false, error: `no such call: ${op}`, kind: "refused" });
+      try {
+        reply({ ok: true, value: await ops[op](...args) });
+      } catch (err) {
+        reply({ ok: false, error: String(err?.message ?? err), kind: err?.kind ?? "refused" });
+      }
+    };
+    const onData = () => frame.contentWindow?.postMessage({ event: "data" }, "*");
+    const onRoute = () => frame.contentWindow?.postMessage({ event: "route", where: whereNow() }, "*");
+    addEventListener("message", onMessage);
+    addEventListener("craftworks:data", onData);
+    addEventListener("craftworks:route", onRoute);
+    return frame;
+  }
+
+  return { mount, mountCtx };
 }

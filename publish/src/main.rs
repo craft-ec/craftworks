@@ -409,7 +409,7 @@ async fn main() -> Result<()> {
         std::fs::write(&off_config, b"{}").context("writing the token-off config")?;
         println!("token: OFF (no beacon, no tokens; Nodes, Wallet and Network left out)");
     }
-    let packages: [(&str, &str, PathBuf); 139] = [
+    let packages: [(&str, &str, PathBuf); 140] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -435,6 +435,8 @@ async fn main() -> Result<()> {
         // APPS IN THEIR OWN FRAMES: the host (the system API) — what runs an app published as BYTES framed (FOUNDATION.md
         // §3, "Apps are installed").
         ("apphost", "service", app.join("packages/apphost.js")),
+        // THE FRAME RUNTIME's bootstrap: the script an app's frame starts with (FOUNDATION §3).
+        ("frame-runtime", "module", app.join("packages/frame-runtime.js")),
         // BUNDLES: a set that is an item of its own (any kinds, across capabilities), and the app that keeps them.
         ("bundles", "service", app.join("packages/bundles.js")),
         ("bundle-app", "module", app.join("packages/bundle-app.js")),

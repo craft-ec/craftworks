@@ -11,7 +11,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const dir = process.argv[2] ?? new URL("../packages", import.meta.url).pathname;
-const MACHINERY = new Set(["loader.js", "runtime.js"]);
+const MACHINERY = new Set(["loader.js", "runtime.js", "frame-runtime.js"]);
 const RULES = [
   [/\bctx\.quiet\b/, "ctx.quiet is retired: ctx.total / ctx.background / ctx.optional"],
   [/\.catch\(\s*(?:\(\s*\)|_\w*)\s*=>/, "a fallback catch: make the read total, or ctx.background / ctx.optional"],

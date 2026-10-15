@@ -1,0 +1,59 @@
+// THE FRAME RUNTIME's BOOTSTRAP (FOUNDATION §3): the script an app's frame starts with — the machinery of the frame as
+// the loader is the page's: it asks the host for the RUNTIME (`runtime.js`, installed on the frame's ctx) and the app's
+// module, gives `require` (the system's packages loaded by hash, every other capability a proxy to the host), relays
+// the host's data and route signals, and mounts the app with `mount(ctx, el)`. Its own calls home (a log line, a report)
+// never stop the frame. Run as an inline script of the frame (`apphost.mountCtx`).
+export const SOURCE = `
+    const waiting = new Map(); let n = 0;
+    const call = (op, ...args) => new Promise((resolve, reject) => { const id = ++n; waiting.set(id, { resolve, reject }); parent.postMessage({ id, op, args }, "*"); });
+    addEventListener("message", e => {
+      if (e.source !== parent) return;
+      const m = e.data ?? {};
+      if (m.event === "data") return dispatchEvent(new CustomEvent("craftworks:data"));
+      if (m.event === "route") return Object.assign(ctx, m.where), dispatchEvent(new CustomEvent("craftworks:route"));
+      const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id);
+      m.ok ? w.resolve(m.value) : w.reject(Object.assign(new Error(m.error), { kind: m.kind }));
+    });
+    const fromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
+    const importB64 = b => import("data:text/javascript;base64," + b);
+    const loaded = new Map();
+    // A CAPABILITY's PROXY: each method a call to the host (its .strict too).
+    const proxy = name => new Proxy({}, { get: (_, m) => {
+      if (m === "then" || typeof m === "symbol") return undefined;
+      const f = (...args) => call("cap", name, m, args, false);
+      f.strict = (...args) => call("cap", name, m, args, true);
+      return f;
+    } });
+    const require = name => {
+      if (!loaded.has(name)) loaded.set(name, (async () => {
+        const p = await call("pkg", name);
+        if (!p.local) return proxy(name);
+        if (p.kind === "bytes") return fromB64(p.b64);
+        const mod = await importB64(p.b64);
+        return p.kind === "service" ? mod.start(ctx) : mod;
+      })().catch(e => (loaded.delete(name), Promise.reject(e))));
+      return loaded.get(name);
+    };
+    const ctx = { params: new URLSearchParams(), route: "", sub: "", space: null, actions: {}, apps: [], require,
+      log: (step, detail = {}) => call("log", step, JSON.parse(JSON.stringify(detail ?? {}))).catch(() => {}),
+      failed: (step, e, what = "") => call("failed", step, String(e && e.message ? e.message : e), e && e.kind, what).catch(() => {}),
+      say: e => String(e && e.message ? e.message : e) };
+    globalThis.app = ctx;
+    const appEl = document.getElementById("cw-app");
+    const tell = () => parent.postMessage({ event: "height", h: Math.ceil(appEl.getBoundingClientRect().height) + 8 }, "*");
+    new ResizeObserver(tell).observe(appEl);
+    (async () => {
+      const boot = await call("boot");
+      Object.assign(ctx, boot.where);
+      const rt = await importB64(boot.runtime);
+      const QUIET = new Set(["absent", "not-yet", "login-needed", "cancelled", "refused-expected", "extension", "transient"]);
+      rt.install(ctx, {
+        handled: (source, e) => { const kind = (e && e.kind) || "bug"; if (!QUIET.has(kind)) call("failed", source, String(e && e.message ? e.message : e), kind, "").catch(() => {}); return kind; },
+        stateOf: kind => (kind === "sealed" ? "unreadable" : ["absent", "not-yet", "transient", "cancelled", "login-needed", "refused-expected"].includes(kind) ? "unknown" : "failed"),
+        theme: () => require("theme"),
+      });
+      await require("theme");
+      const m = await importB64(boot.app);
+      await m.mount(ctx, appEl);
+    })().catch(e => call("say", String(e && e.message ? e.message : e), e && e.kind).then(t => (appEl.textContent = "This app did not start: " + t)));
+  `;

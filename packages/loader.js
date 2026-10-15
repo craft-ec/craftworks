@@ -291,6 +291,16 @@ export async function run(boot) {
     return entries.get(name);
   }
 
+  // A PACKAGE's BYTES for an app's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the same verified bytes this page
+  // runs — `{ kind, bytes, sha256 }` — and the RUNTIME's own file. (A piece is the browser's once fetched: no second GET.)
+  const bytesOf = new Map();
+  ctx.packageOf = name =>
+    ctx.cache(bytesOf, name, async () => {
+      const p = await entry(name);
+      const { bytes } = await fetchPackage(p, name);
+      return { kind: p.kind, bytes, sha256: p.sha256 };
+    });
+  ctx.runtimeBytes = () => ctx.cache(bytesOf, " runtime", async () => new Uint8Array(await (await fetch(new URL("runtime.js", boot.loaderBase).href, { cache: "force-cache" })).arrayBuffer()));
   async function load(name) {
     const p = await entry(name);
     for (const d of p.needs ?? []) await require(d);
