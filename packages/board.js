@@ -10,7 +10,6 @@
 // role and removal). The space itself (its members, settings, invites) is its Home's.
 export async function mount(ctx, el) {
   // WHERE it is — its spaces — shown as this app chooses (`places`: a subtle group line).
-  ctx.background("board: ctx.require", ctx.require("places").then(p => p.attach(el, "group")));
   const [posts, directory, person, theme, space, roles, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "cards"].map(n => ctx.require(n)));
   const me = await space.me();
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.

@@ -22,8 +22,10 @@ export async function mount(ctx, el) {
   const said = h("p", { className: "said", hidden: true });
   const fail = e => ((said.textContent = ctx.say(e)), (said.hidden = false));
 
+  // THE LIST: two VIEWS (`ctx.view`: loading, empty, redrawn when what they read changes — a space made or joined on
+  // another device appears here with no page change) and the two forms, drawn once (never redrawn under the typing).
+  let views = [];
   async function list() {
-    const mine = (await space.mine()).filter(s => s.kind === "server");
     const make = h("form", {}, h("input", { name: "name", placeholder: "A new space's name", autocomplete: "off", required: true, ariaLabel: "New space" }), h("button", { textContent: "Make" }));
     make.onsubmit = async e => {
       e.preventDefault();
@@ -46,29 +48,25 @@ export async function mount(ctx, el) {
         fail(err);
       }
     };
-    // REQUESTED: the spaces asked to join, each with where it stands (the spaces panel's list, which went with it —
-    // audit 10-13). Read after the rest: the page never waits on it.
-    const requested = h("div", { hidden: true });
+    const mineEl = h("div");
+    // REQUESTED: the spaces asked to join, each with where it stands.
+    const requested = h("div");
     const STATUS = { asked: "asked · waiting for a member who may invite", "let-in": "let in · opening the welcome", code: "asked by a code · waiting" };
-    ctx.optional("spaces: waiting", conversation.waiting(), () => []).then(async ws => {
-      if (!ws?.length || !requested.isConnected) return;
-      const person = await ctx.require("person");
-      requested.hidden = false;
-      requested.replaceChildren(
-        h("h3", { textContent: "Requested" }),
-        h("ul", {}, ...ws.map(w => h("li", {}, h("button", { type: "button", className: "cw-flat", title: w.id ?? w.code, textContent: w.name ?? (w.code ? `code ${w.code}` : `a space #${String(w.id).slice(0, 6)}`), onclick: e => w.desc && person.openSpace(e.currentTarget, w.desc) }), h("small", { textContent: STATUS[w.status] ?? w.status ?? "" })))),
-      );
-    });
-    root.replaceChildren(
-      h("h2", { textContent: "Your spaces" }),
-      mine.length ? h("ul", {}, ...mine.map(s => h("li", {}, h("a", { href: `#/spaces/${s.id}`, textContent: space.shown(s) }), h("a", { href: `#/s/${s.id}`, textContent: "Open" })))) : h("p", { textContent: "You are in no shared space yet." }),
-      requested,
-      h("h3", { textContent: "Make one" }),
-      make,
-      h("h3", { textContent: "Join one" }),
-      join,
-      said,
-    );
+    root.replaceChildren(h("h2", { textContent: "Your spaces" }), mineEl, requested, h("h3", { textContent: "Make one" }), make, h("h3", { textContent: "Join one" }), join, said);
+    const person = await ctx.require("person");
+    views = [
+      ctx.view(mineEl, {
+        read: async () => (await space.mine()).filter(s => s.kind === "server").map(s => ({ id: s.id, name: space.shown(s) })),
+        draw: mine => h("ul", {}, ...mine.map(s => h("li", {}, h("a", { href: `#/spaces/${s.id}`, textContent: s.name }), h("a", { href: `#/s/${s.id}`, textContent: "Open" })))),
+        looks: { empty: "You are in no shared space yet." },
+      }),
+      ctx.view(requested, {
+        read: () => conversation.waiting(),
+        draw: ws => h("div", {}, h("h3", { textContent: "Requested" }), h("ul", {}, ...ws.map(w => h("li", {}, h("button", { type: "button", className: "cw-flat", title: w.id ?? w.code, textContent: w.name ?? (w.code ? `code ${w.code}` : `a space #${String(w.id).slice(0, 6)}`), onclick: e => w.desc && person.openSpace(e.currentTarget, w.desc) }), h("small", { textContent: STATUS[w.status] ?? w.status ?? "" }))))),
+        // (No requests: nothing shown — not a line saying so.)
+        looks: { empty: () => document.createTextNode(""), loading: () => document.createTextNode(""), failed: () => document.createTextNode("") },
+      }),
+    ];
   }
 
   // ONE SPACE: its SETTINGS AND CONFIG only (owner 10-13: its content is each app's) — for a member the one settings
@@ -100,6 +98,8 @@ export async function mount(ctx, el) {
   }
 
   const draw = () => {
+    for (const v of views) v.stop();
+    views = [];
     said.hidden = true;
     const [id, tab, focus] = (ctx.sub ?? "").split("/");
     root.replaceChildren(theme.loading?.("Opening…") ?? "");

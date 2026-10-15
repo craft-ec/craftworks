@@ -89,25 +89,15 @@ export async function start(ctx) {
     });
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
-    // THE APP's GROUPS (ARCHITECTURE §1: a space is a group in every app, shown by the app — never reached through a
-    // space's Home): its own ("Your …") and each of this person's spaces that enables what the app needs, named by the
-    // app (`group(space)`; else the space's name) — kept in the app's own menu, the one open marked.
-    let groups = [];
-    const groupsRead = me
-      ? ctx.optional("where: places", ctx
-          .require("places")
-          .then(p => p.list(`/${app}`))
-          .then(ps => (groups = ps.filter(x => x.id && x.id !== "discover"))), () => [])
-      : Promise.resolve([]);
+    // THE APP's PLACES (You, each space with the app, Discover) are the SIDE PANEL's (`places.side`, owner 10-15) —
+    // never listed in the menu as well.
     // THE APP's OWN SETTINGS in a space (ARCHITECTURE §1: an app defines its settings and shows them itself) — for who
     // may manage the space's apps, where the app has any (`app-settings`: Board's rules, Blog's approval, Chat's channels).
     const settingsRead = sp && !sp.outside && me
       ? ctx.optional("where: Promise.all", Promise.all([ctx.require("app-settings"), roles.of.strict(sp)]).then(([st, r]) => st.has(app) && r.can(me, "apps")), () => false)
       : Promise.resolve(false);
     let mayConfigure = false;
-    // (`groups: false`: an app that shows every space its own way — Contact, all spaces' people in one list.)
-    const tabs = (extra = [], { yoursOn = true, before = [], create = null, group = null, groups: showGroups = true } = {}) => {
-      groupsRead.then(() => groups.length && draw());
+    const tabs = (extra = [], { yoursOn = true, before = [], create = null } = {}) => {
       settingsRead.then(ok => ok && ((mayConfigure = true), draw()));
       const draw = () => {
       const home = who === "mine" || who === "discover";
@@ -122,7 +112,6 @@ export async function start(ctx) {
         : [
             ...(home ? before : []),
             ...(home || sp ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
-            ...((home || sp) && showGroups ? groups.map(g => ({ label: group?.(g) ?? g.label, href: g.href, on: sp?.id === g.id && !sp?.outside && sub !== "settings" })) : []),
             ...extra,
             ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings" }] : []),
             ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),

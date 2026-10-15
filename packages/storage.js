@@ -26,7 +26,7 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   // Who may read and write a table here: the person's grant for this site, and the table's key that comes with it.
   const access = await ctx.require("access");
-  const { core, glue, ask, listen, WAIT, contract, onContract, changed: wrote } = await ctx.require("node");
+  const { core, glue, ask, listen, WAIT, contract, onContract, changed: wrote, dataChanged } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
   // A table's tree lives in Sealed contracts, sealed whole (a public table's, in Block contracts): the core names them
   // from this code.
@@ -278,6 +278,19 @@ export async function start(ctx) {
   const opensLog = [];
   // A table FOUND BY ITS NAME (never blinded): catalogs, members, channels, epoch logs, public tails.
   const byNameTable = (app, opts) => !!(opts.public || opts.sealWith || opts.catalogKey || CHANNELS.has(app) || ANY_GRANT.has(app) || (opts.space?.tables && Object.values(opts.space.tables).includes(app)));
+  // NOT LISTED IS NOT FOR GOOD (R2 with R6): a table opened as not listed in its writer's catalog is read once the
+  // catalog lists it — the catalog is followed, so its listing arrives as a push (10-15, fx: another page of the
+  // account made the first space; this page's `spaces`, opened as not listed, never heard of it until reloaded).
+  // (`listed`: the list's own test — a catalog's place for the table, the directory's row for a node or a channel.)
+  const whenListedIn = (list, listed, p) => {
+    const off = list.onChange?.(() => {
+      if (!listed()) return;
+      if (typeof off === "function") off();
+      ctx.background("storage: listed now", p.then(t => t.assumed && ((t.assumed = false), t.reread())));
+    });
+    return p;
+  };
+  const whenListed = (cat, app, p) => whenListedIn(cat, () => !["unlisted", "none"].includes(placeOf(cat, app)), p);
   function tail(owner, app, opts = {}) {
     const inSpace = opts.space ?? null;
     const byName = byNameTable(app, opts);
@@ -288,7 +301,8 @@ export async function start(ctx) {
       if (!cat) return tailAt(owner, app, app, made);
       return cat.answer().then(() => {
         const place = placeOf(cat, app);
-        return tailAt(owner, app, app, place === "unlisted" || place === "none" ? { ...made, known: false } : made);
+        if (place === "unlisted" || place === "none") return whenListed(cat, app, tailAt(owner, app, app, { ...made, known: false }));
+        return tailAt(owner, app, app, made);
       });
     }
     const k = `${owner}|${app}`;
@@ -309,12 +323,12 @@ export async function start(ctx) {
           // Its first write here makes it at its blinded name, listed so first.
           const made = { ...rest, beforeCreate: cat && ours ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
           // Not looked for: not listed.
-          if (place === "unlisted") return tailAt(owner, app, label, { ...made, known: false });
+          if (place === "unlisted") return cat ? whenListed(cat, app, tailAt(owner, app, label, { ...made, known: false })) : tailAt(owner, app, label, { ...made, known: false });
           // MARKED NEVER MADE — one of this account's own: looked for ONCE at its blinded name, and listed again where it
           // is there (owner 10-07: a made table, `spacekeys`, was marked "none" by one failed read — its tree missing a
           // block its group could rebuild — and was never read again). Another's: not looked for.
           if (place === "none") {
-            if (!(ours && cat)) return tailAt(owner, app, label, { ...made, known: false });
+            if (!(ours && cat)) return cat ? whenListed(cat, app, tailAt(owner, app, label, { ...made, known: false })) : tailAt(owner, app, label, { ...made, known: false });
             const t = await tailAt(owner, app, label, { ...made, wait: WAIT.answer });
             await t.answer?.();
             if (!t.absent) {
@@ -360,7 +374,7 @@ export async function start(ctx) {
       took: tail => took(tail),
       rows: () => rows,
       raw: () => core.tail_raw(id) ?? [],
-      onChange: f => changed.push(f),
+      onChange: f => (changed.push(f), () => changed.includes(f) && changed.splice(changed.indexOf(f), 1)),
       // `value`: bytes, text, or a function giving the bytes at the moment of writing (a version names the feed's
       // next sequence, so it is made in the write's own turn).
       // (`user`: asked by the person — a click or key just now — so said on the save line; background writes are not.)
@@ -557,6 +571,7 @@ export async function start(ctx) {
         st = said.kind === "tail-unreadable" ? { s: "unreadable", why: said.said } : { s: "present" };
         if (said.kind === "tail") took(said.tail);
         else for (const f of changed) f();
+      dataChanged(); // (a view reads it again only once it is here)
         return;
       }
       // Asked and not there: a network search spent (seconds, on a real network) — named, so what is asked for no
@@ -702,6 +717,7 @@ export async function start(ctx) {
       t.info = { rows: tail.rows.length, pending: tail.pending, flushed: !!tail.root, legacy, unreadable: tail.unreadable ?? 0, writes: tail.writes };
       rows = tail.rows;
       for (const f of changed) f();
+      dataChanged(); // (a view reads it again only once it is here)
     }
     async function view() {
       if (t.lazy) return void t.poke();
@@ -948,7 +964,8 @@ export async function start(ctx) {
     const d = await directory();
     // Not listed — never made — only when the directory was READ (R2); otherwise it is read.
     const notListed = decidedCatalog(d) && !d.rows().some(r => r.key === `node:${writer}`);
-    return tail(writer, CATALOG, { known: notListed ? false : null, catalogKey: true, beforeCreate: () => listInDirectory(`node:${writer}`) });
+    const t = tail(writer, CATALOG, { known: notListed ? false : null, catalogKey: true, beforeCreate: () => listInDirectory(`node:${writer}`) });
+    return notListed ? whenListedIn(d, () => d.rows().some(r => r.key === `node:${writer}`), t) : t;
   }
   // The other writers whose feeds count: the nodes the directory lists, those the account's group holds (where it is
   // kept; elsewhere every listed node, until membership is gossiped in the feeds).
@@ -971,7 +988,10 @@ export async function start(ctx) {
     // instead of joining it). The channel is always read for what it is.
     // A REGISTRATION's channel cannot exist yet (the account was made this moment): known absent, never waited on
     // (audit 10-13: on a slow node the long read ended undecided and the new group was never made).
-    return tail(sp.shared, name, { known: sp.fresh ? false : null, beforeCreate: () => ctx.background("storage: listInDirectory", listInDirectory(name)) });
+    const t = tail(sp.shared, name, { known: sp.fresh ? false : null, beforeCreate: () => ctx.background("storage: listInDirectory", listInDirectory(name)) });
+    if (!sp.fresh) return t;
+    const d = await directory();
+    return whenListedIn(d, () => d.rows().some(r => r.key === name), t);
   }
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
   // The account: the directory names its nodes, their catalogs are account tables. Another space: its GROUP's members write, each listing the space's tables in its own catalog
@@ -1143,6 +1163,7 @@ export async function start(ctx) {
       const remerge = () => {
         rows = decoded(Array.from(feed.merge_feeds(all.map(f => [bytes(f.owner), f.raw()]))));
         for (const f of changed) f();
+      dataChanged(); // (a view reads it again only once it is here)
       };
       // Wanted WHOLE (a lazy table, then everything asked of it): a feed that arrives after (another writer's, found
       // late) read whole too — opened as the table first was (lazy), its rows would never join what is read.
@@ -1574,6 +1595,7 @@ export async function start(ctx) {
     const remerge = () => {
       rows = decoded(Array.from(feed.merge_feeds(all.filter(t => !t.absent).map(t => [bytes(t.owner), t.raw()]))));
       for (const f of changed) f();
+      dataChanged(); // (a view reads it again only once it is here)
     };
     // More writers taken in: ready as `settled` is (5 s at most; later ones merged as they come).
     const add = list =>

@@ -50,6 +50,7 @@ export async function start(ctx) {
     for (const [host, draw] of hosts) host.isConnected ? ctx.background("places: draw", draw()) : hosts.delete(host);
   };
   addEventListener("craftworks:route", redraw);
+  addEventListener("craftworks:route", () => dispatchEvent(new CustomEvent("craftworks:data"))); // (the side panel's mark moves)
   addEventListener("craftworks:auth", redraw);
   const keep = (host, draw) => {
     hosts.set(host, draw);
@@ -119,5 +120,36 @@ export async function start(ctx) {
     return host;
   }
 
-  return { list, rail, group, picker, attach };
+  // THE SIDE PANEL (owner 10-15: "for all app, move spaces to side panel" — YouTube's, Reddit's): every app's places
+  // as a list — You, each space that has the app (its unread count), Discover — and "＋ Join or make a space". A VIEW
+  // (`ctx.view`): drawn when read, again when spaces change. Nothing when the app has one place or none (Home,
+  // Settings, the token pages). Chat keeps its rail (its page has no side panel).
+  function side(host) {
+    host.classList.add("cw-side");
+    return ctx.view(host, {
+      read: async () => {
+        const ps = await list();
+        return ps.length < 2 ? [] : ps.map(p => ({ id: p.id, label: p.label, href: p.href, on: p.on, count: p.count ?? 0 }));
+      },
+      draw: ps =>
+        h(
+          "nav",
+          { ariaLabel: "Places" },
+          h(
+            "ul",
+            {},
+            ...ps.map(p => {
+              const a = h("a", { href: p.href, className: p.on ? "on" : "", textContent: p.label });
+              if (p.on) a.setAttribute("aria-current", "page");
+              if (p.count) a.append(h("span", { className: "cw-badge", textContent: String(p.count) }));
+              return h("li", {}, a);
+            }),
+          ),
+          h("a", { className: "more", href: "#/spaces", textContent: "＋ Join or make a space" }),
+        ),
+      looks: { empty: () => document.createTextNode(""), loading: () => document.createTextNode(""), failed: () => document.createTextNode("") },
+    });
+  }
+
+  return { list, rail, group, picker, attach, side };
 }

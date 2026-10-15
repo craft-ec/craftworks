@@ -239,7 +239,12 @@ export async function start(ctx) {
     return () => r.fns.delete(fn);
   }
   // (Its copy dropped too: the core's steps then want it read, and the door reads it — never a step on the old state.)
+  // DATA CHANGED (FOUNDATION §3 `view`): one signal for every view — a followed contract pushed, or this page wrote
+  // one — at most once per 150 ms (`craftworks:data`).
+  let dataT = null;
+  const dataChanged = () => (dataT ??= setTimeout(() => ((dataT = null), dispatchEvent(new CustomEvent("craftworks:data"))), 150));
   const changed = hexId => {
+    dataChanged();
     core.take_got(hexId);
     const r = reads.get(hexId);
     if (r && r.s !== "ASKED") r.s = "STALE";
@@ -251,6 +256,7 @@ export async function start(ctx) {
     if (!r) return;
     if (r.s !== "ASKED") r.s = "HELD";
     for (const f of r.fns) f(said);
+    dataChanged();
   });
   // The connection lost and back: its subscriptions were the old socket's, and what was followed may have moved — each
   // HELD contract read again ONCE (followed again), its answer handed on as a push is (its tables, bags, followers
@@ -280,5 +286,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, read, contract, onContract, changed, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
+  return { core, glue, ask, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
 }
