@@ -310,29 +310,37 @@ export async function start(ctx) {
   let again = false;
   // A WATCHDOG: the work here reports as it goes (`lease`); none for LEASE_QUIET means it hung (a store sat at 45% with
   // nothing sent, 2026-10-06) — the next kick starts it again rather than waiting on it forever.
+  // HEARD FROM when a run starts and at each video it reaches, not only while it encodes (10-15: a run only slow to
+  // read was never heard from, so every change "started again" another beside it — dozens a minute, all at once). A
+  // run started again takes over: the hung one, superseded (`run`), stops at its next step.
   let lastBeat = 0;
+  let run = 0;
   async function kick() {
     if (working && Date.now() - lastBeat < LEASE_QUIET) return void (again = true);
     if (working) ctx.log("video", { what: "background: no progress for 2 minutes — started again" });
+    const mine = ++run;
     working = true;
+    lastBeat = Date.now();
     try {
       do {
         again = false;
-        await work();
-      } while (again);
+        await work(mine);
+      } while (again && mine === run);
     } catch (e) {
       ctx.failed("video", e, `background: ${e.message ?? e}`);
     } finally {
-      working = false;
+      if (mine === run) working = false;
     }
   }
-  async function work() {
+  async function work(mine) {
     const me = await space.account();
     if (!me) return;
     const t = await leases();
     await t.settled;
-    const mine = await items.list({ by: me.id }, "new", kinds.inDomain("video"));
-    for (const v of mine) {
+    const list = await items.list({ by: me.id }, "new", kinds.inDomain("video"));
+    for (const v of list) {
+      if (mine !== run) return; // superseded: a newer run does this
+      lastBeat = Date.now();
       const f = v.files?.find(x => x.type === MANIFEST);
       if (!f) continue;
       const m = JSON.parse(await (await files.get(f)).text());

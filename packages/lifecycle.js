@@ -113,7 +113,7 @@ export async function start(ctx) {
       ended: { FAILED: { text: "Joining stopped (the trace says why) — it asks again with a new key", ms: 15000 } },
       events: {
         ask: { from: "*", to: "ASKED" },
-        wait: { from: ["ASKED", "WAITING"], to: "WAITING" },
+        wait: { from: "*", to: "WAITING" }, // (an ask made on an earlier page is NONE in this one)
         joined: { from: "*", to: "MEMBER" },
         fail: { from: "*", to: "FAILED" },
       },

@@ -161,6 +161,8 @@ test("a request's story is one key: asked, skipped and why, let in, joined", asy
   assert.equal(got[1].d.by, "node");
   // A move the table does not allow is a bug, not a report: admitting again from WELCOMED.
   assert.throws(() => L.transition("member", q, "admit", {}), e => e.kind === "bug");
+  // WAITING on an ask made on an earlier page (NONE in this one): a move, not a bug (10-15, ×3 in the live reports).
+  assert.equal(L.transition("join", "q:0000aaaa11", "wait", { why: "not let in yet" }), "WAITING");
   // A FAILED attempt is tried again (the rule still answers the request once).
   const r = "q:ffff000011";
   L.transition("member", r, "admit", { by: "page" });
