@@ -84,17 +84,17 @@ export async function mount(ctx, el) {
     );
   };
 
+  // Each list is a VIEW (`ctx.view`: loading, empty, redrawn when what it read changes); its intro and the bar drawn once.
+  let listView = null;
   async function mine(by = null, saved = false) {
-    // SAVED: `where`'s (the tracks you saved).
-    const list = saved ? (await at.read()).map(subs.shape) : bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options(), ...(by ? { by } : {}) }));
-    return h(
-      "div",
-      {},
-      h("p", { className: "s", textContent: by ? "Their subtitle, lyrics and transcript tracks, in their space." : "Every subtitle, lyrics or transcript track you made, on any video or audio. Add one from its page." }),
-      bar.el(),
-      list.length ? h("ul", {}, ...(await Promise.all(list.map(row)))) : h("p", { className: "none", textContent: `None ${bar.span()}.` }),
-      bar.older("Older", list.length),
-    );
+    const host = h("div");
+    listView = ctx.view(host, {
+      // SAVED: `where`'s (the tracks you saved).
+      read: async () => (saved ? (await at.read()).map(subs.shape) : bar.reorder(await subs.mine({ sort: bar.sort(), ...bar.options(), ...(by ? { by } : {}) }))),
+      draw: async list => h("div", {}, h("ul", {}, ...(await Promise.all(list.map(row)))), bar.older("Older", list.length)),
+      looks: { empty: () => h("div", {}, h("p", { className: "none", textContent: `None ${bar.span()}.` }), bar.older("Older", 0)) },
+    });
+    return h("div", {}, h("p", { className: "s", textContent: by ? "Their subtitle, lyrics and transcript tracks, in their space." : "Every subtitle, lyrics or transcript track you made, on any video or audio. Add one from its page." }), bar.el(), host);
   }
 
   // A SPACE's subtitle work — or DISCOVER's (the public network's): its videos and audio, each with its tracks (any
@@ -102,15 +102,23 @@ export async function mount(ctx, el) {
   async function inSpace(id) {
     const kindsCap = await ctx.require("kinds");
     const media = [...kindsCap.inDomain("video"), ...kindsCap.inDomain("audio")];
-    const videos = await items.list(id ? { board: id } : { discover: true }, "new", media, id ? {} : bar.options());
-    if (!videos.length) return h("p", { className: "none", textContent: id ? "No videos or audio in this space yet: subtitles, lyrics and transcripts go with them." : "No public videos or audio yet." });
-    const blocks = await Promise.all(
-      videos.map(async v => {
-        const tracks = await subs.of(v.ref);
-        return h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref, v.kind), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/caption/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }));
-      }),
-    );
-    return h("div", {}, h("p", { className: "s", textContent: id ? "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." : "Public videos and audio, and their subtitles, lyrics and transcripts — anyone adds a track or a translation." }), ...(id ? [] : [bar.el()]), ...blocks);
+    const host = h("div");
+    listView = ctx.view(host, {
+      read: async () => {
+        const videos = await items.list(id ? { board: id } : { discover: true }, "new", media, id ? {} : bar.options());
+        return Promise.all(videos.map(async v => ({ v, tracks: await subs.of(v.ref) })));
+      },
+      draw: async list =>
+        h(
+          "div",
+          {},
+          ...(await Promise.all(
+            list.map(async ({ v, tracks }) => h("div", {}, h("h3", {}, h("a", { href: watchHref(v.ref, v.kind), textContent: `▶ ${v.title}` }), " ", h("a", { className: "s", href: `#/caption/for/${encodeURIComponent(v.ref)}`, textContent: "Add a track" })), tracks.length ? h("ul", {}, ...(await Promise.all(tracks.map(row)))) : h("p", { className: "none", textContent: "No subtitles yet." }))),
+          )),
+        ),
+      looks: { empty: id ? "No videos or audio in this space yet: subtitles, lyrics and transcripts go with them." : "No public videos or audio yet." },
+    });
+    return h("div", {}, h("p", { className: "s", textContent: id ? "This space's videos and their subtitles — any member adds a track or a translation; each edits their own." : "Public videos and audio, and their subtitles, lyrics and transcripts — anyone adds a track or a translation." }), ...(id ? [] : [bar.el()]), host);
   }
 
   async function forItem(ref, fileKey = null) {
@@ -185,6 +193,8 @@ export async function mount(ctx, el) {
 
   let drawn = "";
   async function draw() {
+    listView?.stop();
+    listView = null;
     at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
     const w = route();
     drawn = where.key();

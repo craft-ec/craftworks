@@ -92,6 +92,8 @@ export async function mount(ctx, el) {
   place.tabs([], { create: { label: "Upload", run: () => (place.others ? (location.hash = "#/drive") : input.click()) } });
   const directory = await ctx.require("directory");
   async function draw() {
+    grid?.stop();
+    grid = null;
     // A FILE's PAGE (`…/drive/p/<ref>`): the one item page — its preview, its comments — framed here.
     if (place.sub.startsWith("p/")) {
       const id = decodeURIComponent(place.sub.slice(2));
@@ -121,9 +123,6 @@ export async function mount(ctx, el) {
     const at = folder();
     // SAVED: `where`'s (the files you saved, of anyone's) — one folder.
     const savedRows = () => place.read().then(list => list.filter(it => it.files?.[0]).map(it => ({ id: it.ref, ref: it.files[0], at: it.at, folder: "/", by: it.by, readOnly: true, others: true })));
-    const [rows, folders] = place.saved ? [await savedRows(), ["/"]] : await Promise.all([drive.list(sp, opts), drive.folders(sp, opts)]);
-    const here = rows.filter(r => r.folder === at);
-    const subs = folders.filter(f => f !== at && f.startsWith(at === "/" ? "/" : `${at}/`) && !f.slice(at === "/" ? 1 : at.length + 1).includes("/"));
     // The path, each step a link.
     const crumbs = h("nav", { className: "crumbs", ariaLabel: "Folder" }, h("a", { href: hrefOf("/"), textContent: sp ? `${space.shown(sp)} Drive` : discover ? "Public files" : place.saved ? "Saved" : them ? `${directory.shown(them)}'s Drive` : "Your Drive" }));
     at.split("/").filter(Boolean).reduce((path, part) => {
@@ -139,22 +138,32 @@ export async function mount(ctx, el) {
         textContent: "New folder",
         onclick: async () => {
           const name = await ask("New folder");
-          if (name) await drive.mkdir(sp, `${at === "/" ? "" : at}/${name}`).then(draw, fail);
+          if (name) await drive.mkdir(sp, `${at === "/" ? "" : at}/${name}`).then(() => grid?.refresh(), fail);
         },
       }),
     );
-    const tiles = [
-      ...subs.map(f => h("a", { className: "cw-card cw-file folder", href: hrefOf(f) }, h("div", { className: "pic", textContent: "📁" }), h("div", { className: "cap" }, h("span", { className: "n", textContent: f.slice(f.lastIndexOf("/") + 1) }), h("span", { className: "s", textContent: "Folder" })))),
-      ...here.map(tile),
-    ];
-    root.replaceChildren(
-      top,
-      crumbs,
-      ups,
-      said,
-      tiles.length ? h("div", { className: "grid" }, ...tiles) : h("p", { className: "none", textContent: at === "/" ? "No files yet" : "This folder is empty." }),
-    );
+    // THE FOLDER: a VIEW (`ctx.view` — loading, empty, redrawn when what it read changes: an upload here or on another
+    // device, a folder made); the path and the tools drawn once.
+    const host = h("div");
+    root.replaceChildren(top, crumbs, ups, said, host);
+    grid?.stop();
+    grid = ctx.view(host, {
+      read: async () => {
+        const [rows, folders] = place.saved ? [await savedRows(), ["/"]] : await Promise.all([drive.list(sp, opts), drive.folders(sp, opts)]);
+        return { here: rows.filter(r => r.folder === at), subs: folders.filter(f => f !== at && f.startsWith(at === "/" ? "/" : `${at}/`) && !f.slice(at === "/" ? 1 : at.length + 1).includes("/")) };
+      },
+      empty: d => !d.here.length && !d.subs.length,
+      draw: ({ here, subs }) =>
+        h(
+          "div",
+          { className: "grid" },
+          ...subs.map(f => h("a", { className: "cw-card cw-file folder", href: hrefOf(f) }, h("div", { className: "pic", textContent: "📁" }), h("div", { className: "cap" }, h("span", { className: "n", textContent: f.slice(f.lastIndexOf("/") + 1) }), h("span", { className: "s", textContent: "Folder" })))),
+          ...here.map(tile),
+        ),
+      looks: { empty: at === "/" ? "No files yet" : "This folder is empty.", loading: () => theme.loading("Opening Drive…") },
+    });
   }
+  let grid = null;
 
   // A FILE's tile: the file look (`cards`: the same wherever a file shows), linked to its page — the action row and
   // Drive's Open and Move… are there, not on the tile (owner 10-06: feeds show items; their page acts on one). A file
@@ -177,7 +186,7 @@ export async function mount(ctx, el) {
       drive
         .upload(file, { space: sp, public: who.public, audience: who.audience, write: who.write, folder: folder(), from: { app: "drive" }, onProgress: e => (line.textContent = `${file.name}: ${e.phase === "reading" ? "reading" : `${Math.round((100 * e.done) / Math.max(1, e.size))}%`}`) })
         .then(
-          () => (line.remove(), draw()),
+          () => (line.remove(), grid?.refresh()),
           e => (line.textContent = `${file.name}: not uploaded — ${ctx.say(e)}`),
         );
     }
@@ -185,7 +194,6 @@ export async function mount(ctx, el) {
 
   root.replaceChildren(theme.loading("Opening Drive…"));
   await draw();
-  drive.onChange(sp, () => el.isConnected && draw());
   // Another folder: drawn again. Another DRIVE (a space's, a person's, Discover): opened afresh — what it is, read once
   // above, is its own.
   let drawnFor = where.key();

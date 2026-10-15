@@ -118,7 +118,7 @@ export async function mount(ctx, el) {
   function postCard(p) {
     // A post opens where it lives: in Discover (read from outside), in its space, or in the personal space.
     const open = () => (location.hash = discovering() ? `#/discover/board/p/${p.ref}` : posts.pageOf(p.ref, p.kind ?? "post"));
-    const acts = actionsCap.bar(p, { outside: outsideFor(p), vote: true, open, discover: discovering(), removed: () => draw(), changed: () => draw() });
+    const acts = actionsCap.bar(p, { outside: outsideFor(p), vote: true, open, discover: discovering(), removed: () => listView?.refresh(), changed: () => listView?.refresh() });
     return cards.card(p, { href: null, open, actions: [acts] });
   }
 
@@ -189,24 +189,32 @@ export async function mount(ctx, el) {
 
   const sortBar = () => h("div", { className: "panel sorts" }, bar.el());
 
+  // THE POSTS: a VIEW (`ctx.view` — loading, empty, redrawn when what it read changes); the banner and the sort bar
+  // drawn once. Its own cards.
+  let listView = null;
   async function listPage(w) {
     const outside = w.pub ? await descOf(w.pub) : null;
-    const span = bar.span();
-    // SAVED: `where`'s (what you saved, of Board's kinds).
-    const list = w.saved ? await at.read() : bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()));
-    const older = bar.older("Older posts", list.length);
-    if (w.discover || w.pub) {
-      const head = h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }));
-      return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: `No public posts ${span}.` })]), older];
-    }
-    const sp = w.board ? await posts.boardOf(w.board) : null;
-    const head = w.board
-      ? h("div", { className: "panel banner" }, h("h2", { textContent: `b/${sp ? space.shown(sp) : "?"}` }))
-      : w.by
-        ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
-        : null;
-    const empty = w.board ? `No posts ${span}.` : w.feed ? `Nothing ${span}: your spaces' boards, the people you follow and your friends post here.` : w.by === me ? `You have not posted ${span}.` : `No posts ${span}.`;
-    return [head, sortBar(), ...(list.length ? list.map(p => postCard(p)) : [h("p", { className: "none", textContent: empty })]), older];
+    const pub = w.discover || w.pub;
+    const sp = !pub && w.board ? await posts.boardOf(w.board) : null;
+    const head = pub
+      ? h("div", { className: "panel banner" }, h("h2", { textContent: w.pub ? `b/${outside ? space.shown(outside) : "?"} · 🌐 public` : "🧭 Public boards" }))
+      : w.board
+        ? h("div", { className: "panel banner" }, h("h2", { textContent: `b/${sp ? space.shown(sp) : "?"}` }))
+        : w.by
+          ? h("div", { className: "panel banner" }, h("h2", {}, who(w.by)))
+          : null;
+    const empty = () => {
+      const span = bar.span();
+      return pub ? `No public posts ${span}.` : w.board ? `No posts ${span}.` : w.feed ? `Nothing ${span}: your spaces' boards, the people you follow and your friends post here.` : w.by === me ? `You have not posted ${span}.` : `No posts ${span}.`;
+    };
+    const host = h("div", { style: "display:contents" });
+    listView = ctx.view(host, {
+      // SAVED: `where`'s (what you saved, of Board's kinds).
+      read: async () => (w.saved ? await at.read() : bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()))),
+      draw: list => h("div", { style: "display:contents" }, ...list.map(p => postCard(p)), bar.older("Older posts", list.length)),
+      looks: { empty: () => h("div", { style: "display:contents" }, h("p", { className: "none", textContent: empty() }), bar.older("Older posts", 0)), loading: () => theme.loading("Reading the posts…") },
+    });
+    return [head, sortBar(), host];
   }
 
   // A public space's description (Discover): `items.publicSpace`.
@@ -233,6 +241,8 @@ export async function mount(ctx, el) {
   let drawnFor = null;
   const routeKey = whereCap.key;
   async function draw() {
+    listView?.stop();
+    listView = null;
     drawnFor = routeKey();
     at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });
     // ITS OWN SETTINGS (a space's, for who may manage its apps): drawn here, in the app.
@@ -249,13 +259,7 @@ export async function mount(ctx, el) {
     main.replaceChildren(...parts.filter(Boolean));
     side.replaceChildren(...sidebar);
   }
-  let drawing = null;
-  const redraw = () => {
-    if (!el.isConnected || drawing || route().submit || route().post) return;
-    drawing = draw().finally(() => (drawing = null));
-  };
   main.replaceChildren(theme.loading("Reading the posts…"));
   await draw();
-  posts.onChange(redraw);
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/board" && routeKey() !== drawnFor && draw());
 }
