@@ -9,7 +9,7 @@ export async function mount(ctx, el) {
     return e;
   };
   el.innerHTML = `<style>@layer components {
-    .st { max-width: 860px; margin: 0 auto; padding: 16px; }
+    .st { padding: 16px; }
     .st ul { list-style: none; padding: 0; display: grid; gap: 10px; }
     .st li { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--line, #8883); border-radius: 10px; }
     .st .ic { font-size: 28px; text-align: center; }
@@ -20,7 +20,7 @@ export async function mount(ctx, el) {
   // THE CATALOG: a VIEW (`ctx.view`) — what is installed read, drawn, and drawn again when it changes (here or on
   // another device of the account).
   const list = h("div");
-  root.replaceChildren(h("h2", { textContent: "App Store" }), list, said);
+  root.replaceChildren(list, said); // (its name is the header's)
   const v = ctx.view(list, {
     read: async () => [...(await installed.list()).map(a => a.route)].sort(),
     draw: haveList => {

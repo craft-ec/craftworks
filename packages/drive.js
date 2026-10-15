@@ -134,7 +134,6 @@ export async function mount(ctx, el) {
     const top = h(
       "div",
       { className: "top" },
-      h("h2", { textContent: "🗂️ Drive" }),
       others ? null : h("button", {
         type: "button",
         textContent: "New folder",

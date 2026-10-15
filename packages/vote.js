@@ -22,7 +22,7 @@ export async function mount(ctx, el) {
   };
   el.innerHTML = `
     <style>@layer apps {
-      .vt { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 960px; margin: 0 auto; }
+      .vt { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }
       .vt h2, .vt h3 { margin: 0; }
       .vt .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cw-space-3); align-items: start; }
       .vt .card { display: grid; gap: 4px; padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); color: inherit; text-decoration: none; }

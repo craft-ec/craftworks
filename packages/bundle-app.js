@@ -11,7 +11,7 @@ export async function mount(ctx, el) {
     return e;
   };
   el.innerHTML = `<style>@layer apps {
-    .bd { max-width: 900px; margin: 0 auto; padding: 0 16px; display: grid; gap: 12px; }
+    .bd { padding: 0 16px; display: grid; gap: 12px; }
     .bd ul { list-style: none; padding: 0; display: grid; gap: 8px; }
     .bd li.m { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
     .bd .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

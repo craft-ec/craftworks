@@ -30,7 +30,7 @@ export async function mount(ctx, el) {
   };
   el.innerHTML = `
     <style>@layer apps {
-      .fm { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 960px; margin: 0 auto; }
+      .fm { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }
       .fm h2 { margin: 0; }
       .fm .list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cw-space-3); align-items: start; }
       .fm .card { display: grid; gap: 4px; padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); color: inherit; text-decoration: none; }

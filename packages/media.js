@@ -87,7 +87,8 @@ export async function mount(ctx, el) {
     const title = at.space ? `${C.icon} ${space.shown(at.space)} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.
     const feedBar = w.watch || w.up || w.saved ? null : h("div", { className: "chips" }, bar.el());
-    return h("div", { className: "top" }, h("h2", { textContent: title }), feedBar);
+    // (The app's own name is the header's: a heading only for a space's channel.)
+    return h("div", { className: "top" }, at.space ? h("h2", { textContent: title }) : null, feedBar);
   }
 
   // A video's or a track's CARD: its kind's look (`cards`), opened here (in Discover: from outside).

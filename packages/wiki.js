@@ -19,7 +19,7 @@ export async function mount(ctx, el) {
   };
   el.innerHTML = `
     <style>@layer apps {
-      .wk { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); max-width: 900px; margin: 0 auto; min-width: 0; }
+      .wk { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); min-width: 0; }
       .wk h2, .wk h1 { margin: 0; }
       .wk .tools { display: flex; flex-wrap: wrap; gap: var(--cw-space-2); align-items: center; }
       .wk .tools .end { margin-left: auto; }

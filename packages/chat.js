@@ -380,8 +380,9 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
   const posts = await ctx.require("items");
   el.innerHTML = `
     <style>@layer apps {
-      .dir { max-width: 880px; margin: 0 auto; display: grid; gap: var(--cw-space-3); }
+      .dir { display: grid; gap: var(--cw-space-3); }
       .dir h2 { margin: 0; font-size: 1.4rem; }
+      .dir .back { justify-self: start; }
       .dir .note { margin: 0; color: var(--cw-muted); font-size: var(--cw-text-sm); }
       .dir .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--cw-space-3); }
       .dir .card { display: grid; gap: var(--cw-space-2); padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); }
@@ -391,7 +392,7 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
         background: var(--cw-accent); color: var(--cw-accent-fg); cursor: pointer; text-decoration: none; font-weight: 600; }
       .dir .card .said { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; }
     }</style>
-    <div class="dir"><h2>💬 Open spaces</h2><p class="note">Spaces anyone may join. What is said in them is for their members.</p><div class="grid"></div></div>`;
+    <div class="dir"><a class="back" href="#/chat">← Your messages</a><h2>Open spaces</h2><p class="note">Spaces anyone may join. What is said in them is for their members.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

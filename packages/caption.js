@@ -188,7 +188,7 @@ export async function mount(ctx, el) {
     at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
     const w = route();
     drawn = where.key();
-    const top = h("div", { className: "top" }, h("h2", { textContent: w.person ? `🔤 ${directory.shown(w.person)}'s captions` : "🔤 Caption" }));
+    const top = h("div", { className: "top" }, w.person ? h("h2", { textContent: `🔤 ${directory.shown(w.person)}'s captions` }) : null);
     // THE TABS (`where`'s, in every app's order): Your captions · Discover.
     at.tabs([], { yoursOn: !!w.mine && !w.saved });
     root.replaceChildren(top, theme.loading("Reading…"));

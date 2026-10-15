@@ -138,7 +138,9 @@ export async function start() {
     #app > .slot-header > section, #app > .slot-footer > section { margin: 0; }
     #app > .slot-header .bar, #app > .slot-footer p { padding-left: var(--cw-gutter); padding-right: var(--cw-gutter); }
     #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow: hidden; overflow: clip; display: flex; flex-direction: column; }
-    #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain;
+    /* (The scrollbar's room kept whether it shows or not: a page whose content arrives never shifts sideways — 10-15,
+       "why some pages are wobbly? all supposed to be fixed like chat/board".) */
+    #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
       padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
     #app > .slot-body > section { position: relative; }
     /* A count of what is new (unread): the one badge. */

@@ -12,7 +12,6 @@ export function mount(ctx, el) {
     <style>@layer components {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
-      .bar .home { text-decoration: none; font-size: 1.1rem; color: inherit; }
         border-radius: var(--cw-radius-sm); max-width: 16em; min-width: 6em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       /* The app's own actions give way first (they scroll), never the space's name. */
       .bar .actions { min-width: 0; overflow-x: auto; scrollbar-width: none; }
@@ -73,7 +72,6 @@ export function mount(ctx, el) {
 
     }</style>
     <nav class="bar">
-      <a class="home" href="#/" title="Home">⌂</a>
       <span class="name"></span>
       <span class="actions"></span>
       <span class="end"></span>
