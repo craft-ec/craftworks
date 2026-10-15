@@ -578,6 +578,46 @@ export async function start(ctx) {
       else core.tail_absent(id);
     }
 
+    // How long a step the identity signed, not yet on the network as read here, is waited for before it counts as
+    // never landed (a page closed between signing and sending).
+    const FORK_WAIT = 30000;
+    // EVERY STEP of this tail (a write, a flush, a replace) signed through here. A step the identity refuses as a FORK
+    // (it signed this tail further than this page holds): the network read again (`step`), the step prepared again.
+    // Caught up — written on what it holds. The node ANSWERED and holds less — those signed steps never landed (or were
+    // lost — none arrived in FORK_WAIT): this step goes past them, as a whole state. The node silent — nothing is overwritten on a guess: try again
+    // once it answers. Another page of this account writing the same table at once (two tabs, a phone beside a
+    // desktop on one node) is a fork every time either moves: caught up, tried again — after a short wait of its own
+    // so the two do not meet again in step. (10-15: a flush refused `WouldFork { last_seq: 47 }` had no such path; and
+    // two fx pages writing one table lost 7 of 97 writes — one try again was all a write had.)
+    async function signed(prepare, doing) {
+      let past = null;
+      for (let attempt = 0; ; attempt++) {
+        let p = await prepare();
+        if (past != null) p = core.tail_skip(id, past) ?? p;
+        try {
+          return void (await step(p, doing));
+        } catch (e) {
+          if (e.forkedAt == null || attempt >= 16) throw e;
+          // NOT YET SEEN is not NEVER LANDED: the other page's step is on its way to this node. Read again until it
+          // arrives (10-15: going past at once wrote this page's whole state over steps that had landed — two fx pages
+          // writing one table lost 41 of 97 rows, silently).
+          const t0 = Date.now();
+          for (let wait = 250; core.tail_next(id) <= e.forkedAt && Date.now() - t0 < FORK_WAIT; wait = Math.min(wait * 2, 4000)) {
+            await new Promise(r => setTimeout(r, wait));
+            await read();
+          }
+          if (core.tail_next(id) > e.forkedAt) {
+            await new Promise(r => setTimeout(r, 50 + Math.random() * 250 * Math.min(attempt + 1, 4)));
+            continue;
+          }
+          if (past != null) throw e;
+          if (!answered) throw new Error(`${app}: your node has written this further than it can read back right now — try again in a minute`);
+          ctx.log("write", { what: `${app}: the identity signed through step ${e.forkedAt}, the network holds step ${core.tail_next(id) - 1} and nothing past it arrived in ${FORK_WAIT / 1000} s: written past it` });
+          past = e.forkedAt;
+        }
+      }
+    }
+
     // One write: prepared by the core, signed by the identity delegate with this tail's key, sent as one delta.
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
@@ -591,26 +631,10 @@ export async function start(ctx) {
       // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
       // can find.
       if (now.s === "absent" && beforeCreate) await beforeCreate();
-      // A step the identity refuses as a FORK (it signed this tail further than this page holds): the network read
-      // again. Caught up — written again on what it holds. The node ANSWERED and holds less — those signed steps never
-      // landed (or were lost): this step goes past them, as a whole state. The node silent — nothing is overwritten
-      // on a guess: try again once it answers.
-      let past = null;
-      for (let attempt = 0; ; attempt++) {
+      await signed(() => {
         const v = typeof value === "function" ? value() : typeof value === "string" ? enc.encode(value) : value;
-        let p = core.tail_prepare(id, enc.encode(key), v);
-        if (past != null) p = core.tail_skip(id, past) ?? p;
-        try {
-          await step(p, "saving to");
-          break;
-        } catch (e) {
-          if (e.forkedAt == null || attempt >= 1) throw e;
-          if (core.tail_next(id) > e.forkedAt) continue;
-          if (!answered) throw new Error(`${app}: your node has written this further than it can read back right now — try again in a minute`);
-          ctx.log("write", { what: `${app}: the identity signed through step ${e.forkedAt}, the network holds step ${core.tail_next(id) - 1}: written past it` });
-          past = e.forkedAt;
-        }
-      }
+        return core.tail_prepare(id, enc.encode(key), v);
+      }, "saving to");
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.failed("flush failed", e, `${app}: ${e.message}`));
       t.absent = false;
@@ -743,64 +767,54 @@ export async function start(ctx) {
 
     // FLUSH: the tree's new blocks PUT first (a tail must never name a root whose blocks are not there), then the step
     // naming the new root, signed like any write.
+    // A TREE STEP (a flush, a replace): its blocks loaded and put, then the step — prepared again whole on a fork.
+    async function treeStep(make, doing) {
+      let made = null;
+      await signed(async () => {
+        for (let round = 0; round < 16; round++) {
+          const f = make();
+          if (f.need || f.keys) {
+            await settle(f.need ? { kind: "tail-need", id: idHex, blocks: f.need } : { kind: "tail-keys", id: idHex, epochs: f.keys }, app);
+            continue;
+          }
+          try {
+            await blocks.put(f.puts, app);
+          } catch (e) {
+            core.tail_reset(id);
+            await read();
+            throw e;
+          }
+          return (made = f);
+        }
+        throw new Error("the tree did not finish loading");
+      }, doing);
+      return made;
+    }
     async function flush() {
       const t0 = performance.now();
-      for (let round = 0; round < 16; round++) {
-        // ITS HISTORY: the root this flush replaces, and the log as it is BEFORE it (a flush drops the log).
-        const was = core.tail_root(id);
-        const prior = core.tail_root_log(id);
-        const f = core.tail_flush(id);
-        if (f.need || f.keys) {
-          await settle(f.need ? { kind: "tail-need", id: idHex, blocks: f.need } : { kind: "tail-keys", id: idHex, epochs: f.keys }, app);
-          continue;
-        }
-        try {
-          await blocks.put(f.puts, app);
-        } catch (e) {
-          core.tail_reset(id);
-          await read();
-          throw e;
-        }
-        await step(f, "flushing");
-        ctx.log("flushed", { what: `${app}: ${f.puts.length} tree block(s) put, the tail emptied (seq ${f.seq})`, ms: Math.round(performance.now() - t0) });
-        // …then the replaced root LOGGED (its history: kept for the retention — every row as it was then reads back).
-        if (was) {
-          const now = Date.now();
-          // The space's retention (0: Off — the log pruned to nothing, the replaced root not kept).
-          const days = daysFor(inSpace);
-          const l = core.tail_log_root(id, prior, was, now, now - days * 86400e3, days ? HISTORY.roots : 0);
-          if (l) await step(l, "keeping its history").catch(e => ctx.failed("history", e, `${app}: its history not logged: ${e.message}`));
-        }
-        return;
+      // ITS HISTORY: the root this flush replaces, and the log as it is BEFORE it (a flush drops the log).
+      let was, prior;
+      const f = await treeStep(() => ((was = core.tail_root(id)), (prior = core.tail_root_log(id)), core.tail_flush(id)), "flushing");
+      ctx.log("flushed", { what: `${app}: ${f.puts.length} tree block(s) put, the tail emptied (seq ${f.seq})`, ms: Math.round(performance.now() - t0) });
+      // …then the replaced root LOGGED (its history: kept for the retention — every row as it was then reads back).
+      if (was) {
+        const now = Date.now();
+        // The space's retention (0: Off — the log pruned to nothing, the replaced root not kept).
+        const days = daysFor(inSpace);
+        const l = core.tail_log_root(id, prior, was, now, now - days * 86400e3, days ? HISTORY.roots : 0);
+        if (l) await step(l, "keeping its history").catch(e => ctx.failed("history", e, `${app}: its history not logged: ${e.message}`));
       }
-      throw new Error("the tree did not finish loading");
     }
 
     // REPLACE (see `replaceWith`): a new tree of `list` alone under the key writes use — its blocks put first, then the
     // step, as a flush.
     async function replace(list) {
       const given = list.map(([k, v]) => [enc.encode(k), typeof v === "string" ? enc.encode(v) : v]);
-      for (let round = 0; round < 16; round++) {
-        const f = core.tail_replace(id, given);
-        if (f.need || f.keys) {
-          await settle(f.need ? { kind: "tail-need", id: idHex, blocks: f.need } : { kind: "tail-keys", id: idHex, epochs: f.keys }, app);
-          continue;
-        }
-        try {
-          await blocks.put(f.puts, app);
-        } catch (e) {
-          core.tail_reset(id);
-          await read();
-          throw e;
-        }
-        await step(f, "replacing");
-        ctx.log("replaced", { what: `${app}: replaced with ${list.length} row(s) (repair), seq ${f.seq}` });
-        st = { s: "present" };
-        waiting.delete(idHex);
-        await view();
-        return;
-      }
-      throw new Error(`${app}: not replaced (its tree kept asking for more)`);
+      const f = await treeStep(() => core.tail_replace(id, given), "replacing");
+      ctx.log("replaced", { what: `${app}: replaced with ${list.length} row(s) (repair), seq ${f.seq}` });
+      st = { s: "present" };
+      waiting.delete(idHex);
+      await view();
     }
 
     return ready;
