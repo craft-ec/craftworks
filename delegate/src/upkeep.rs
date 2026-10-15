@@ -214,6 +214,24 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
                 return io;
             }
         }
+        // THE BAGS, SOME SILENT (10-15, live: "1 bag(s) never answered (writers)" dropped a whole round, every space's
+        // requests with it): the round goes on with what answered. A bag that never answered adds no request; a space
+        // whose WRITERS list never answered is held back whole — without it a request could be answered twice (each
+        // request once: `rules::admission`). The next round reads them all again.
+        if let Step::Requests { waiting } = &r.step {
+            let held: Vec<[u8; 32]> = waiting.iter().filter(|(_, _, code)| code == WRITERS).map(|(_, space, _)| *space).collect();
+            let silent = waiting.len();
+            if let Some(&(id, space, ref code)) = waiting.first() {
+                let last = (id, space, code.clone());
+                r.pending.retain(|(s, ..)| !held.contains(s));
+                r.step = Step::Requests { waiting: vec![last] };
+                keep(h, Some(&r));
+                let member = r.member;
+                let spaces: Vec<String> = held.iter().map(|s| hex(&s[..6])).collect();
+                identity::upkeep_say(h, &member, &format!("{silent} bag(s) never answered: went on without them{}", if spaces.is_empty() { String::new() } else { format!(", space(s) {} held back (their writers list silent)", spaces.join(", ")) }));
+                return replied(h, Reply::Got { id, state: None }, now_ms);
+            }
+        }
         // DROPPED, SAID WHERE (a report carries what settles its cause): an asker's step, as that request's (the
         // `member` machine's, by the node); the bags' — which never answered — said.
         let at = match &r.step {
@@ -655,7 +673,7 @@ fn held_by(m: &Mandate, did: &[u8; 32]) -> bool {
 }
 
 /// A request bag's NAME: a code's own; the open door `open <space>`; a level group's `level <space>`.
-fn bag_name(code: &str, space: &[u8; 32]) -> String {
+pub fn bag_name(code: &str, space: &[u8; 32]) -> String {
     match code {
         "open" | "level" | "stuck" => format!("{code} {}", hex(space)),
         _ => code.to_string(),

@@ -591,3 +591,47 @@ fn people_sharing_a_node_are_served_in_turn() {
     let members = identity::upkeep_members(&w.h);
     assert!(members.iter().all(|m| identity::upkeep_round_at(&w.h, m).is_some()), "each one's last round recorded: {members:?}");
 }
+
+/// A BAG THAT NEVER ANSWERS (10-15, live: "1 bag(s) never answered (writers)" dropped whole rounds): the round, stuck,
+/// goes on with the bags that answered — the member bag silent, the asker by code still let in. Control: the space's
+/// WRITERS list silent — that space held back (a request could be answered twice without it), nothing written, and
+/// the node says why.
+#[test]
+fn a_round_goes_on_without_a_silent_bag_but_never_without_a_spaces_writers_list() {
+    for silent_writers in [false, true] {
+        let mut w = world();
+        let silent = if silent_writers {
+            id(BAG, &crate::table::sealed_bag_address(&SPACE, "writers"))
+        } else {
+            id(BAG, &identity::invite_address(&upkeep::bag_name("stuck", &SPACE)))
+        };
+        let w2 = world_clone(&w);
+        let mut net = network(&w2, vec![join(&w.asker, &w.kp)]);
+        let mut asked = Vec::new();
+        let mut todo = upkeep::woke(&mut w.h, NOW);
+        let mut stalled = false;
+        loop {
+            while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
+                if matches!(io, Io::Get { id, .. } if id == silent) {
+                    asked.push(io);
+                    continue;
+                }
+                let reply = net(&io);
+                asked.push(io);
+                todo.extend(upkeep::replied(&mut w.h, reply, NOW));
+            }
+            if stalled {
+                break;
+            }
+            // The wake-ups pass: the round is stuck on the silent bag.
+            stalled = true;
+            identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &(10 + upkeep::STUCK).to_le_bytes());
+            todo = upkeep::woke(&mut w.h, NOW);
+        }
+        let wrote = asked.iter().filter(|x| !matches!(x, Io::Get { .. })).count();
+        assert_eq!(wrote, if silent_writers { 0 } else { 4 }, "writers list silent: {silent_writers}: {asked:?}");
+        let said = String::from_utf8(identity::Host::get_secret(&w.h, &[identity::UPKEEP_SAID, &MEMBER[..]].concat()).unwrap_or_default()).unwrap();
+        assert!(said.contains("went on without them"), "{said}");
+        assert_eq!(said.contains("held back"), silent_writers, "{said}");
+    }
+}
