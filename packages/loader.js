@@ -192,6 +192,22 @@ export async function run(boot) {
     Promise.resolve()
       .then(() => (typeof f === "function" ? f() : f))
       .catch(e => (handled(what, e), typeof fallback === "function" ? fallback() : fallback));
+  // A CACHE that never holds a failure (FOUNDATION §2 R4): `ctx.cache(map, key, make, fallback?)` — the promise kept
+  // while it is wanted; one that FAILS leaves the map at once (asked for again, it is made again) and answers with
+  // `fallback` if one is given (a view's empty), else its fault. One implementation for every per-page cache.
+  ctx.cache = (map, key, make, ...fallback) => {
+    if (map.has(key)) return map.get(key);
+    const p = Promise.resolve()
+      .then(make)
+      .catch(e => {
+        if (map.get(key) === p) map.delete(key);
+        if (!fallback.length) return Promise.reject(e);
+        handled(`cache: ${String(key).slice(0, 40)}`, e);
+        return typeof fallback[0] === "function" ? fallback[0]() : fallback[0];
+      });
+    map.set(key, p);
+    return p;
+  };
   // WHAT A PERSON READS for a failure: its kind's words (`fault.say`), never a stack.
   ctx.say = e => faultNow?.say(e) ?? String(e?.message ?? e);
 

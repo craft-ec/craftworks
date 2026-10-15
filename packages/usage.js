@@ -64,8 +64,7 @@ export async function start(ctx) {
     let by = info.by ?? (ref.startsWith("did:") ? ref.slice(0, ref.lastIndexOf("/")) : null);
     let it = null;
     if (!by || !info.kind || !info.title) {
-      if (!byItem.has(ref)) byItem.set(ref, ctx.optional("usage: items.get", ctx.require("items").then(i => i.get(ref)), () => null));
-      it = await byItem.get(ref);
+      it = await ctx.cache(byItem, ref, () => ctx.require("items").then(i => i.get(ref)), null);
       by = by ?? it?.by ?? null;
     }
     const me = (await (await ctx.require("space")).account())?.id;
@@ -295,8 +294,7 @@ export async function start(ctx) {
     const [items, space, keep] = await Promise.all(["items", "space", "keep"].map(n => ctx.require(n)));
     const bys = new Map();
     const byOf = ref => {
-      if (!bys.has(ref)) bys.set(ref, String(ref).startsWith("did:") ? Promise.resolve(String(ref).slice(0, String(ref).lastIndexOf("/"))) : ctx.optional("usage: items.get", items.get(ref).then(it => it?.by ?? null), () => null));
-      return bys.get(ref);
+      return ctx.cache(bys, ref, () => (String(ref).startsWith("did:") ? String(ref).slice(0, String(ref).lastIndexOf("/")) : items.get(ref).then(it => it?.by ?? null)), null);
     };
     const keepersOf = new Map();
     const keepers = root => (keepersOf.has(root) || keepersOf.set(root, keep.keepers(root)), keepersOf.get(root));

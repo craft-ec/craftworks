@@ -203,8 +203,7 @@ export async function start(ctx) {
       if (p.length < 17) continue;
       raw += 1;
       const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
-      if (!keys.has(epoch)) keys.set(epoch, epoch === OPEN ? await openKey(sp) : await ctx.optional("index: access.keyAt", access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null)), () => null));
-      const key = await keys.get(epoch);
+      const key = await ctx.cache(keys, epoch, () => (epoch === OPEN ? openKey(sp) : access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null))), null);
       if (!key) {
         unread.set(epoch, (unread.get(epoch) ?? 0) + 1);
         continue;

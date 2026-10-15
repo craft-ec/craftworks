@@ -46,13 +46,11 @@ export async function start(ctx) {
   const listedIn = new Map(); // `domain|month` → Promise<Set of refs>
   const indexed = (domain, at) => {
     const k = `${domain}|${index.monthOf(at)}`;
-    if (!listedIn.has(k)) listedIn.set(k, index.discoverPointers.strict(domain, [index.monthOf(at)]).then(ps => new Set(ps.map(p => p?.ref))));
-    return listedIn.get(k);
+    return ctx.cache(listedIn, k, () => index.discoverPointers.strict(domain, [index.monthOf(at)]).then(ps => new Set(ps.map(p => p?.ref))));
   };
   const answeredIn = new Map(); // an item's ref → Promise<Set of writer keys pointed in its bag>
   const answerers = ref => {
-    if (!answeredIn.has(ref)) answeredIn.set(ref, ctx.optional("items: index.pointers", index.pointers(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean))), () => new Set()));
-    return answeredIn.get(ref);
+    return ctx.cache(answeredIn, ref, () => index.pointers.strict(ref).then(ps => new Set(ps.map(p => p?.w).filter(Boolean))), () => new Set());
   };
   // A PUBLIC item LISTED: in Discover's bag of its domain and month (a top item), its own bag made; an answer to one (a
   // comment, a vote, a subtitle) pointed in that item's bag. Once each: what the bags hold already is not dropped again.
@@ -548,18 +546,14 @@ export async function start(ctx) {
   // (a space under keys nobody holds any more) — is left out, never shown as a space that opens nothing; how many,
   // reported once a page (`leftover`).
   const openable = new Map(); // space id → Promise<bool>, once a page
+  // (Unread is left out NOW, never remembered: R4 — asked again, it is read again.)
   const opens = d =>
-    openable.get(d.id) ??
-    openable
-      .set(
-        d.id,
-        ctx.optional("items: async", (async () => {
-          const pr = await (await ctx.require("roles")).ofPublic(d);
-          await pr.settled;
-          return pr.acts().length > 0;
-        })(), () => false),
-      )
-      .get(d.id);
+    ctx.cache(openable, d.id, async () => {
+      const pr = await (await ctx.require("roles")).ofPublic(d);
+      const st = (await pr.decided?.()) ?? pr.state;
+      if (st?.s === "unknown") throw new Error(`${d.id.slice(0, 8)}: its public acts not read yet`);
+      return pr.acts().length > 0;
+    }, false);
   let leftoverSaid = false;
   async function publicSpaces() {
     const seen = new Map();

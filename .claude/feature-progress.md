@@ -22,6 +22,10 @@ Phases (each: build, fx probe with a control, commit):
       other page writes — new: no reload (window marker kept), 22 contracts read again once, the row arrives in 5 s;
       old: the page reloaded (marker lost). Write race 97/97 again. Kept on purpose: log out, a login, a newer version,
       the trace's "newest" button.
+- [x] 8 R4/R5: `ctx.cache` (loader) — the one per-page cache: a failure forgotten, fallback answered; 11 caches moved
+      onto it (items ×3, directory ×2, roles ×2, usage ×2, markdown, video-player, index); read-check bans a cache kept
+      by hand (HEAD: 9 sites). Roles' view carries R5 `state`/`decided`; Discover leaves an unread space out NOW without
+      remembering it. fx: ctx.cache forgot a failure and read again (made 2); reload probe unchanged (38 / 47).
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.

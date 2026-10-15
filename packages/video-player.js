@@ -182,8 +182,7 @@ export async function start(ctx) {
   const manifests = new Map();
   const manifest = ref => {
     const k = ref.root ?? ref.inline?.slice(0, 64);
-    if (!manifests.has(k)) manifests.set(k, files.get(ref).then(b => b.text()).then(JSON.parse));
-    return manifests.get(k);
+    return ctx.cache(manifests, k, () => files.get(ref).then(b => b.text()).then(JSON.parse));
   };
 
   // ADAPTIVE: one SourceBuffer; fragments appended in order ahead of the playhead; the rendition picked per fragment.

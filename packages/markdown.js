@@ -218,8 +218,7 @@ export async function start(ctx) {
   const whenSeen = (el, load) => (seen ? ((el._load = load), seen.observe(el)) : load());
   const urls = new Map(); // a file's key → its object URL (read once a page)
   const urlOf = async (key, ref) => {
-    if (!urls.has(key)) urls.set(key, (async () => URL.createObjectURL(await (await ctx.require("files")).get(ref)))().catch(e => (urls.delete(key), Promise.reject(e))));
-    return urls.get(key);
+    return ctx.cache(urls, key, async () => URL.createObjectURL(await (await ctx.require("files")).get(ref)));
   };
   function media(key, ref, alt, item = null) {
     const kind = kindOf(ref);

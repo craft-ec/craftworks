@@ -147,8 +147,7 @@ export async function start(ctx) {
   // A person's LEVEL now, from their card's contributions (once per page per person).
   const levels = new Map();
   function levelOf(did) {
-    if (!levels.has(did)) levels.set(did, ctx.optional("directory: Promise.all", Promise.all([card(did), ctx.require("usage")]).then(([c, u]) => u.levelFrom(c?.contrib ?? [])), () => ({ id: "free", name: "Free" })));
-    return levels.get(did);
+    return ctx.cache(levels, did, () => Promise.all([card(did), ctx.require("usage")]).then(([c, u]) => u.levelFrom(c?.contrib ?? [])), () => ({ id: "free", name: "Free" }));
   }
 
   // The account's DEVICES on the card: the credentials its key group holds now (rewritten when they change: a device
@@ -202,8 +201,7 @@ export async function start(ctx) {
   // A person's DATA key, from their key log (once per page): what signs their member's credential in a space.
   const dataKeys = new Map();
   function dataKey(did) {
-    if (!dataKeys.has(did)) dataKeys.set(did, ctx.optional("directory: keysOf", keysOf(did).then(k => k?.data ?? null), () => null));
-    return dataKeys.get(did);
+    return ctx.cache(dataKeys, did, () => keysOf(did).then(k => k?.data ?? null), null);
   }
 
   // A person's DEVICES: the keys their card's credentials name, each checked against their key log (a credential signed

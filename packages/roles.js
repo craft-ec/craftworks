@@ -83,16 +83,13 @@ export async function start(ctx) {
 
   const spaces = new Map();
   const outside = new Map();
-  function ofPublic(desc) {
-    if (!outside.has(desc.id)) outside.set(desc.id, open(desc, { outside: true }));
-    return outside.get(desc.id);
-  }
+  // (A view that failed to open is not kept: R4.)
+  const ofPublic = desc => ctx.cache(outside, desc.id, () => open(desc, { outside: true }));
   function of(sp) {
     // A space READ FROM OUTSIDE (`where`'s, `outside: true`: its public description): its public acts only.
     if (sp.outside) return ofPublic(sp);
     sp = sp.parent ?? sp;
-    if (!spaces.has(sp.id)) spaces.set(sp.id, open(sp));
-    return spaces.get(sp.id);
+    return ctx.cache(spaces, sp.id, () => open(sp));
   }
 
   async function open(sp, { outside: out = false } = {}) {
@@ -114,6 +111,12 @@ export async function start(ctx) {
       },
       onChange: f => (sealedActs?.onChange(f), pubActs.onChange(f)),
       settled: Promise.all([sealedActs?.settled, pubActs.settled]),
+      // Read or not (R5): the narrowest of its tables' states — "unknown" while any is, never "none" for unread.
+      get state() {
+        const ss = [sealedActs, pubActs].filter(Boolean).map(x => x.state ?? { s: "present" });
+        return ss.find(x => x.s === "unknown") ?? ss.find(x => x.s === "unreadable") ?? { s: "present" };
+      },
+      decided: async () => (await Promise.all([sealedActs?.decided?.(), pubActs.decided?.()]), t.state),
     };
     const g = out ? null : keys.group(sp);
     // THE ACTS' DAG: what a new act names and when it is timed; which named acts are not here.
@@ -396,6 +399,11 @@ export async function start(ctx) {
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
       onChange: f => changed.push(f),
       settled: t.settled,
+      // Its acts read or not (R5): what a decision on "no acts" waits for.
+      get state() {
+        return t.state;
+      },
+      decided: () => t.decided(),
     };
     // ITS RETENTION handed to `storage` (its tables' history kept that long): the `space`/`history` setting, in days
     // ("" — the plan's; "0": off).

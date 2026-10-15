@@ -110,8 +110,11 @@ t.onState(fn)
   card lookup.
 - **R3 — Unreadable is not terminal.** `unkeyed` becomes `waiting: Map<id, need>` (epochs, table key, grant). Key
   arrival (§1 events) re-reads exactly those; their state moves and subscribers redraw. No page reload.
-- **R4 — Caches hold objects, never failures.** `tails`, `tables`, `directoryOpen`, `opened` delete themselves on
-  rejection (as `memberKeys`, `readyShared`, `bags` already do); a later `known:null` open upgrades a `known:false` one.
+- **R4 — Caches hold objects, never failures.** Every per-page cache of a read goes through `ctx.cache(map, key, make,
+  fallback?)`: a failure leaves the map at once (asked again, it is made again) and answers the fallback or its fault —
+  one implementation (`tools/read-check.mjs` fails a cache kept by hand); a later `known:null` open upgrades a
+  `known:false` one. A view that cannot yet tell "none" from "not read" (roles' public acts, R5) says `unknown`, and is
+  never remembered as "none".
 - **R5 — A merged table is decided when its own feed and every listed writer's feed are**; a sealed or unread writer
   list makes it `unreadable`, never an empty `present`.
 - **Defaults deny.** A policy, card or role not read is `unknown` and treated as the narrowest choice, never "anyone".

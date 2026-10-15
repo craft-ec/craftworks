@@ -23,7 +23,12 @@ const ONE = [
   ],
   [/\bcore\.take_got\(/g, { "node.js": 1, "blocks.js": 1, "files.js": 2 }, "a held copy TAKEN (`held_state` reads it; only immutable reads are freed)"],
 ];
-const BANNED = [[/\bbackoff\(/g, "a retry loop of its own: the door asks an absent contract again (`node.onContract`)"]];
+const BANNED = [
+  [/\bbackoff\(/g, "a retry loop of its own: the door asks an absent contract again (`node.onContract`)"],
+  // R4: a per-page cache of a READ kept by hand keeps its failure (or a fallback in its place) for the page's life —
+  // `ctx.cache(map, key, make, fallback?)` forgets a failure.
+  [/if \(!(\w+)\.has\([^)]*\)\)\s*\1\.set\([^\n]*(\.then\(|ctx\.optional\(|ctx\.require\()/g, "a cache of a read kept by hand: `ctx.cache` (a failure is forgotten, FOUNDATION §2 R4)"],
+];
 const code = src => src.replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
 for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {
   const src = code(readFileSync(join(pkgs, f), "utf8"));
