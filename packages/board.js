@@ -129,14 +129,17 @@ export async function mount(ctx, el) {
     const mine = (await space.mine()).some(s => s.id === d.id);
     // Join, Requested (while a member lets you in), Open: the one join control.
     // Follow always (its public board in your feed); Join too when joining is open.
-    const join = !mine ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board`, joinable: pr.policy("", "join") === "anyone" }) : null;
+    const join = !mine ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board`, joinable: (await pr.policy("", "join")) === "anyone" }) : null;
+    // (Its rules read with `await`: the same here and in an app's frame, where they cross the bridge.)
+    const pol = {};
+    for (const a of ["post", "comment", "vote"]) pol[a] = await pr.policyIn("text", a);
     return h(
       "div",
       { className: "panel" },
       h("h3", { textContent: `b/${space.shown(d)}` }),
       // Who takes part, as its policy says (`roles`: each of post, comment, vote — anyone, or its members).
-      h("p", { textContent: `🌐 Public · ${["post", "comment", "vote"].map(a => `${a[0].toUpperCase()}${a.slice(1)}: ${pr.policyIn("text", a) === "anyone" ? "anyone" : "its members"}`).join(" · ")}` }),
-      !mine && pr.policyIn("text", "post") === "anyone" ? h("a", { className: "go", href: `#/discover/board/b/${d.id}/submit`, textContent: "Create post" }) : null,
+      h("p", { textContent: `🌐 Public · ${["post", "comment", "vote"].map(a => `${a[0].toUpperCase()}${a.slice(1)}: ${pol[a] === "anyone" ? "anyone" : "its members"}`).join(" · ")}` }),
+      !mine && pol.post === "anyone" ? h("a", { className: "go", href: `#/discover/board/b/${d.id}/submit`, textContent: "Create post" }) : null,
       mine ? h("a", { className: "go", href: `#/s/${d.id}/board`, textContent: "Open in your space" }) : join ?? h("p", { textContent: "Joining is by invite." }),
     );
   }
@@ -145,7 +148,7 @@ export async function mount(ctx, el) {
     if (discovering()) {
       // Public boards only (a space may be listed for joining, its board still its members').
       const listed = await posts.publicSpaces();
-      const spaces = (await Promise.all(listed.map(async x => ((await roles.ofPublic(x))?.policyIn("text", "read") === "anyone" ? x : null)))).filter(Boolean);
+      const spaces = (await Promise.all(listed.map(async x => ((await (await roles.ofPublic(x))?.policyIn("text", "read")) === "anyone" ? x : null)))).filter(Boolean);
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
         d ? await publicPanel(d) : null,
@@ -158,18 +161,20 @@ export async function mount(ctx, el) {
       const sp = await posts.boardOf(w.board);
       if (!sp) return [];
       const r = await roles.of(sp);
-      const n = r.members().length;
+      const n = (await r.members()).length;
       // BOARD'S OWN SETTINGS (its owner and admins): who may post, and its rules (shown here).
-      const rules = r.config("board", "rules", "");
+      const rules = await r.config("board", "rules", "");
       // Who may post: the TEXT domain's rule (`kinds.policyDomain`: what enforces a post — set in the Space app).
-      const mayPost = r.allowsIn("post", me, "text");
+      const mayPost = await r.allowsIn("post", me, "text");
+      const myRole = await r.role(me);
+      const pubRead = (await r.policyIn("text", "read")) === "anyone";
       return [
         h(
           "div",
           { className: "panel" },
           h("h3", { textContent: `b/${space.shown(sp)}` }),
-          h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${r.role(me) ?? "member"}` }),
-          r.policyIn("text", "read") === "anyone" ? h("p", { textContent: "🌐 Public: anyone reads its posts." }) : null,
+          h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you: ${myRole ?? "member"}` }),
+          pubRead ? h("p", { textContent: "🌐 Public: anyone reads its posts." }) : null,
           mayPost ? create : h("p", { textContent: "Only admins post here; comment and vote on any post." }),
         ),
         rules ? h("div", { className: "panel" }, h("h3", { textContent: "Rules" }), h("p", { className: "text", style: "white-space: pre-wrap", textContent: rules })) : null,

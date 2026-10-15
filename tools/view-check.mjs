@@ -21,6 +21,10 @@ for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {
   // ONE NAVIGATION (owner 10-15: "is it still many duplicate implementation?"): an app's entries are written only by
   // `where` (`tabs`, `menu`) — the side panel places them by their roles.
   if (f !== "where.js") for (const m of src.matchAll(/ctx\.actions\[[^\]]+\]\s*=[^=]/g)) bad.push(`packages/${f}:${src.slice(0, m.index).split("\n").length}: an app's menu written by hand — where.tabs / where.menu`);
+  // ONE WAY TO ASK (10-16): `theme.ask`, by the control — never the browser's prompt / confirm / alert (an app's frame
+  // has none, and a dialog an app could fill with anything is no system's).
+  const prose = src.replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+  for (const m of prose.matchAll(/(?<![\w.$])(?:window\.)?(prompt|confirm|alert)\(/g)) bad.push(`packages/${f}:${src.slice(0, m.index).split("\n").length}: the browser's ${m[1]}() — theme.ask(anchor, { text, value?, ok? })`);
   if (!/export\s+async\s+function\s+mount\s*\(\s*ctx\b/.test(src)) continue;
   const viewed = /\bctx\.view\(/.test(src);
   if (viewed && NOT_YET.has(name)) bad.push(`${name}: on a view now — take it off view-check's NOT-YET list`);

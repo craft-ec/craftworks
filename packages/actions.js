@@ -166,8 +166,9 @@ export async function start(ctx) {
 
   // SAVED: any item, one key (`saved:<ref>`).
   const SAVED = ref => `saved:${ref}`;
-  const isSaved = ref => pins.has(SAVED(ref));
-  const saved = () => pins.refs("saved:").map(k => k.slice(6));
+  // (Read with `await`: the same in the page and in an app's frame.)
+  const isSaved = async ref => !!(await pins.has(SAVED(ref)));
+  const saved = async () => (await pins.refs("saved:")).map(k => k.slice(6));
   // A SAVE is two things, written together: this person's own list of what they saved (`pins`: every app's Saved,
   // across every place) and the item's save SIGNAL (`items.signal`: counted where it is). The signal is best effort.
   const setSaved = async (ref, on) => {
@@ -186,12 +187,14 @@ export async function start(ctx) {
 
   // SAVE alone (a card's: a note, a file, a track): ☆ / ★ and how many saved it.
   function save(it) {
-    const draw = (on = isSaved(it.ref)) => `${on ? "★" : "☆"}${countOf(it, "save") ? ` ${short(countOf(it, "save"))}` : ""}`;
+    let saved = false;
+    const draw = (on = saved) => `${on ? "★" : "☆"}${countOf(it, "save") ? ` ${short(countOf(it, "save"))}` : ""}`;
     const b = h("button", { type: "button", title: "Save: kept in this app's Saved", textContent: draw() });
+    isSaved(it.ref).then(on => ((saved = on), (b.textContent = draw())));
     b.onclick = async e => {
       e.stopPropagation();
       e.preventDefault();
-      const on = !isSaved(it.ref);
+      const on = (saved = !saved);
       bump(it, "save", on);
       b.textContent = draw(on);
       await ctx.background("actions: setSaved", setSaved(it.ref, on));
@@ -210,17 +213,18 @@ export async function start(ctx) {
     const btn = (textContent, run, extra = {}) => h("button", { type: "button", textContent, ...extra, onclick: e => (e.stopPropagation(), e.preventDefault(), run(e)) });
     const el = h("div", { className: "cw-acts" });
 
-    me().then(self => {
+    Promise.all([me(), isSaved(it.ref)]).then(([self, wasSaved]) => {
       const mine = it.by === self;
       const n = id => (countOf(it, id) ? ` ${short(countOf(it, id))}` : "");
-      const saveLabel = (on = isSaved(it.ref)) => `${on ? "★ Saved" : "☆ Save"}${n("save")}`;
+      let isOn = wasSaved;
+      const saveLabel = (on = isOn) => `${on ? "★ Saved" : "☆ Save"}${n("save")}`;
       const save = btn(saveLabel(), async () => {
-        const on = !isSaved(it.ref);
+        const on = (isOn = !isOn);
         bump(it, "save", on);
         save.textContent = saveLabel(on);
         save.className = on ? "on" : "";
         await setSaved(it.ref, on).catch(fail);
-      }, { className: isSaved(it.ref) ? "on" : "" });
+      }, { className: isOn ? "on" : "" });
       el.replaceChildren(
         ...[
           voteEl,

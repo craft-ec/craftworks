@@ -38,9 +38,17 @@
 // How a space is SHOWN, everywhere: its name and the start of its id — `Makers#30fe18` (names are not unique; the id
 // is), as people are (`pat#8r4orC`).
 const shown = sp => `${String(sp?.name ?? "").trim() || "space"}#${String(sp?.id ?? "").slice(0, 6)}`;
+// A space's TABLE names, and its BOARD (the room its posts are in).
+const tableOf = (sp, name) => `x${sp.id.slice(0, 12)}-${name}`;
+function board(sp, { pub = false, outside = false } = {}) {
+  const name = pub || outside ? "pub-board" : "board";
+  return Object.freeze({ kind: "board", id: `${sp.id}/${name}`, name: sp.name, parent: sp, inherits: true, messages: tableOf(sp, name), scope: sp, outside });
+}
 // IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the same pure helpers beside the host's proxy.
+// A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
+const isGroup = sp => !!(sp?.circle || sp?.group);
 export function frame() {
-  return { shown };
+  return { shown, tableOf, board, isGroup };
 }
 
 export async function start(ctx) {
@@ -53,7 +61,6 @@ export async function start(ctx) {
   const hex = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
   // A space's own table: the identity's rule for names is 1–32 of a–z 0–9 - _.
-  const tableOf = (sp, name) => `x${sp.id.slice(0, 12)}-${name}`;
 
   // WHO is here: the logged-in person's id, or null for a GUEST (a public page opened by anyone). The one way every
   // package asks — never `account().id` (a guest has no account).
@@ -102,10 +109,6 @@ export async function start(ctx) {
   // direct conversation).
   // Its PUBLIC board (`pub-board`: written in the clear — anyone reads; its members write), when the board reads in
   // public; `outside`: the same seen by someone not in the space (`sp`: its description, { id, name, governance }).
-  function board(sp, { pub = false, outside = false } = {}) {
-    const name = pub || outside ? "pub-board" : "board";
-    return Object.freeze({ kind: "board", id: `${sp.id}/${name}`, name: sp.name, parent: sp, inherits: true, messages: tableOf(sp, name), scope: sp, outside });
-  }
 
   async function mine() {
     const acc = await account();
@@ -210,6 +213,5 @@ export async function start(ctx) {
 
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
-  const isGroup = sp => !!(sp?.circle || sp?.group);
   return { isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
 }

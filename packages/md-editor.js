@@ -320,8 +320,12 @@ export async function start(ctx) {
         "🔗",
         "Link",
         both(
-          () => {
-            const url = prompt("Link to (https://…)", "https://");
+          async () => {
+            // (The selection kept while the link is asked for, and put back to link it.)
+            const sel = getSelection();
+            const range = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+            const url = await (await ctx.require("theme")).ask(range?.getBoundingClientRect ? { getBoundingClientRect: () => range.getBoundingClientRect() } : null, { text: "Link to (https://…)", value: "https://", ok: "Link" });
+            if (range) sel.removeAllRanges(), sel.addRange(range);
             if (url && /^(https?:\/\/|mailto:|\/)/i.test(url)) exec("createLink", url);
           },
           () => surround("[", "](https://)", "text"),
@@ -410,7 +414,7 @@ export async function start(ctx) {
       mine ??= (async () => {
         const [own, saved] = await Promise.all([
           items.list({ by: (await (await ctx.require("space")).account()).id }, "new", kinds.all(), { window: "all" }),
-          ctx.optional("md-editor: ctx.require", ctx.require("actions").then(a => Promise.all(a.saved().slice(0, 50).map(r => items.get(r)))), () => []),
+          ctx.optional("md-editor: ctx.require", ctx.require("actions").then(async a => Promise.all((await a.saved()).slice(0, 50).map(r => items.get(r)))), () => []),
         ]);
         const seen = new Set();
         return [...saved.filter(Boolean), ...own].filter(it => !seen.has(it.ref) && seen.add(it.ref));

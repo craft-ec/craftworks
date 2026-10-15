@@ -86,7 +86,7 @@ export async function start(ctx) {
       const mine = await ctx.optional("item-page: usage.level", usage.level(), () => ({ id: "free", name: "Free" }));
       const name = it.meta.level === "vip" ? "VIP" : "PRO and VIP";
       const about = h("div", { className: "about" });
-      if (usage.reaches(mine.id, it.meta.level)) {
+      if (await usage.reaches(mine.id, it.meta.level)) {
         const conversation = await ctx.require("conversation");
         const asked = (await conversation.askedCodes()).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
         if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.failed("item", e, `asking into ${gate.space.slice(0, 8)}: ${e.message}`));
@@ -147,7 +147,12 @@ export async function start(ctx) {
       page.append(cards.card(it, { href: null, body: host, actions: [bar], by: true }));
     }
     // ITS EDITIONS (TOKEN §1c): bought and sold here; the author makes them (`editions`, null when none to show).
-    const eds = await (await ctx.require("editions")).section(it, { changed: redraw }).catch(e => (ctx.log("editions", { what: e.message ?? String(e) }), null));
+    // In an APP's FRAME: a SYSTEM SHEET the host draws (money moves there — never in an app's frame; FOUNDATION §3).
+    const eds = ctx.system
+      ? Array.isArray(it.meta?.editions) && it.meta.editions.length
+        ? h("p", {}, h("button", { type: "button", className: "cw-btn", textContent: `🪙 Editions (${it.meta.editions.length})`, onclick: () => ctx.system("editions", { ref: it.ref, outside }).then(redraw, e => ctx.failed("editions", e)) }))
+        : null
+      : await (await ctx.require("editions")).section(it, { changed: redraw }).catch(e => (ctx.log("editions", { what: e.message ?? String(e) }), null));
     if (eds) page.append(eds);
     // ITS COMMENTS: the one thread.
     if (parts.comments) {
@@ -194,7 +199,7 @@ export async function start(ctx) {
       const sel = document.createElement("select");
       sel.ariaLabel = "Add to a bundle";
       sel.append(Object.assign(document.createElement("option"), { value: "", textContent: "Add to a bundle…" }), ...all.map(b => Object.assign(document.createElement("option"), { value: b.ref, textContent: `${b.title}${b.members.includes(ref) ? " ✓" : ""}` })));
-      sel.onchange = () => sel.value && bundles.add(sel.value, ref).then(() => (sel.selectedOptions[0].textContent += " ✓", (sel.value = "")), e => alert(ctx.say(e)));
+      sel.onchange = () => sel.value && bundles.add(sel.value, ref).then(() => (sel.selectedOptions[0].textContent += " ✓", (sel.value = "")), async e => (await ctx.require("theme")).ask(sel, { text: ctx.say(e) }));
       if (page.isConnected) page.prepend(sel);
     } catch (e) {
       ctx.failed("item page", e, "add to a bundle not offered");

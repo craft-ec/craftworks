@@ -41,8 +41,8 @@ export async function mount(ctx, el) {
       type: "button",
       className: "main",
       textContent: "＋ New bundle",
-      onclick: async () => {
-        const name = prompt("The bundle's name");
+      onclick: async e => {
+        const name = await theme.ask(e.currentTarget, { text: "The bundle's name", value: "", ok: "Make it" });
         if (name) await bundles.make(name, sp, { audience: who.value }).then(ref => (location.hash = at.href(`b/${encodeURIComponent(ref)}`)), fail);
       },
     });

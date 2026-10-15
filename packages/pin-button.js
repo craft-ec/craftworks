@@ -27,24 +27,26 @@ export async function start(ctx) {
     b.setAttribute("aria-pressed", String(on));
     b.title = on ? "Unpin" : "Pin";
   };
-  t.onChange(() => {
+  // (Read with `await`: the same in the page and in an app's frame.)
+  t.onChange(async () => {
     for (const b of buttons) {
       if (!b.isConnected) buttons.delete(b);
-      else paint(b, has(b.dataset.ref));
+      else paint(b, await has(b.dataset.ref));
     }
   });
 
   function button(ref, { onSet, className = "" } = {}) {
     const b = Object.assign(document.createElement("button"), { type: "button", className: `cw-pin ${className}`.trim(), textContent: "📌" });
     b.dataset.ref = ref;
-    paint(b, has(ref));
-    b.onclick = e => {
+    paint(b, false);
+    has(ref).then(on => paint(b, on));
+    b.onclick = async e => {
       e.stopPropagation();
-      const on = !has(ref);
+      const on = b.getAttribute("aria-pressed") !== "true";
       paint(b, on); // at once; the table's change confirms it (or puts it back if the write fails)
       onSet?.(on);
-      set(ref, on).catch(err => {
-        paint(b, has(ref));
+      set(ref, on).catch(async err => {
+        paint(b, await has(ref));
         ctx.failed("pin failed", err, `${ref}: ${err?.message ?? err}`);
       });
     };

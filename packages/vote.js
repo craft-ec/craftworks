@@ -108,7 +108,7 @@ export async function mount(ctx, el) {
     if (sp) {
       const r = await roles.of(sp);
       await r.settled;
-      if (!r.allowsIn("post", me, "vote")) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make polls here (its policy).` }));
+      if (!(await r.allowsIn("post", me, "vote"))) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make polls here (its policy).` }));
     }
     const q = h("input", { type: "text", placeholder: "The question", maxLength: 300 });
     const opts = h("textarea", { rows: 5, placeholder: "One option per line (two or more)" });
@@ -171,7 +171,7 @@ export async function mount(ctx, el) {
     if (v.mayFinalize) {
       const fin = h("button", { type: "button", className: "cw-btn primary", textContent: "Finalize now" });
       const run = theme.action(fin, () => S.finalize(p), { busy: "Finalizing…" });
-      fin.onclick = () => confirm("Finalize: the result is fixed as it is now; later votes and delegations change nothing.") && run().then(() => draw(), e => fail(said, e));
+      fin.onclick = async () => (await theme.ask(fin, { text: "Finalize: the result is fixed as it is now; later votes and delegations change nothing.", ok: "Finalize" })) && run().then(() => draw(), e => fail(said, e));
       root.append(h("div", { className: "tools" }, fin, h("span", { className: "s", textContent: "Its proposer or an admin finalizes." })));
     }
     if (v.outcome) {
@@ -357,7 +357,7 @@ export async function mount(ctx, el) {
       const withVote = [];
       for (const sp of (await space.mine()).filter(s => !s.circle)) {
         const r = await roles.of(sp);
-        if (r && (await ctx.optional("vote: r.settled.then", r.settled.then(() => true), () => false)) && r.apps().includes("vote")) withVote.push(sp);
+        if (r && (await ctx.optional("vote: r.settled.then", Promise.resolve(r.settled).then(() => true), () => false)) && (await r.apps()).includes("vote")) withVote.push(sp);
       }
       const cards = [];
       for (const sp of withVote) {

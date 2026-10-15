@@ -44,9 +44,10 @@ export async function start(ctx) {
     // A space's: its roles, admins — and NAMED PEOPLE: this person's lists, or a new one chosen from its members.
     const fewer = sp
       ? [
-          ...(r?.roles() ?? []).map(ro => [`role:${ro.id}`, `🔐 ${ro.name} only`]),
+          // (A space's roles read with `await`: the same here and in an app's frame, where they cross the bridge.)
+          ...((await r?.roles()) ?? []).map(ro => [`role:${ro.id}`, `🔐 ${ro.name} only`]),
           ["admins", "🔐 Admins only"],
-          ...Object.entries(r?.lists?.() ?? {}).filter(([, l]) => l.by === me).map(([id, l]) => [`list:${id}`, `🔐 ${listName(l).slice(0, 60)}`]),
+          ...Object.entries((await r?.lists?.()) ?? {}).filter(([, l]) => l.by === me).map(([id, l]) => [`list:${id}`, `🔐 ${listName(l).slice(0, 60)}`]),
           ["list:new", "🔐 Chosen people…"],
         ]
       : [];
@@ -111,7 +112,7 @@ export async function start(ctx) {
       const d = h("dialog", { className: "cw-pick" });
       const list = h("div", { style: "display:grid;gap:4px;max-height:50vh;overflow:auto" });
       const directory = ctx.require("directory");
-      directory.then(dir => list.append(...r.members().filter(m => m.did !== me).map(m => h("label", { style: "display:flex;gap:8px;align-items:center" }, h("input", { type: "checkbox", value: m.did }), dir.nameEl(m.did)))));
+      Promise.all([directory, r.members()]).then(([dir, members]) => list.append(...members.filter(m => m.did !== me).map(m => h("label", { style: "display:flex;gap:8px;align-items:center" }, h("input", { type: "checkbox", value: m.did }), dir.nameEl(m.did)))));
       const ok = h("button", { type: "button", textContent: "Share with these" });
       const no = h("button", { type: "button", textContent: "Cancel" });
       let out = null;

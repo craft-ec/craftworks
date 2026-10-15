@@ -84,7 +84,7 @@ export async function mount(ctx, el) {
     if (form.outside) return false;
     const r = await (await ctx.require("roles")).of(place);
     await r.settled;
-    return ["owner", "admin"].includes(r.role(me));
+    return ["owner", "admin"].includes(await r.role(me));
   }
   // The MAILBOX its responses arrive in: the space's (space mail), else this person's own.
   const mailboxOf = async place => (F.toSpace(place) ? mail.of(place) : mail);
@@ -95,11 +95,7 @@ export async function mount(ctx, el) {
   // space's, a circle by the credential it cited) — mail is open to anyone, so who may answer is checked where the
   // answers are read (and before sending, for the respondent's sake). A rule not read yet: not counted yet.
   async function mayAnswer(form, place, did, cred = null) {
-    const r = F.toSpace(place) ? await roles.ofPublic(place) : null;
-    await r?.settled;
-    if (!r) await ctx.background("form: roles.personal", roles.personal(form.by).ready);
-    if (r?.banned?.(did)) return false;
-    return roles.mayWrite({ action: "comment", item: form, writer: did, cred, r }) === true;
+    return (await roles.allows({ action: "comment", item: form, writer: did, cred, place: F.toSpace(place) ? place : null })) === true;
   }
 
   // A RESPONSE sent: a mail to the space (a space's form) or to the maker — a change of answer is a new one (the
@@ -118,10 +114,10 @@ export async function mount(ctx, el) {
     if (!(await items.mayWriteOn(form, "comment", { outside: F.toSpace(place) ? place : null }))) {
       // WHY, measured (owner 10-11: "measure, don't assume"): what the one check saw — in the trace and the health bag
       // (a failure line: the loader's collector), the person told plainly.
-      const verdict = roles.mayWrite({ action: "comment", item: form, writer: me, cred });
-      const pol = F.toSpace(place) ? null : roles.personal(form.by);
+      const verdict = await roles.allows({ action: "comment", item: form, writer: me, cred });
       const domain = (await ctx.require("kinds")).policyDomain(form.kind);
-      ctx.log("form", { what: `could not answer ${form.ref}: rule ${verdict}; its own ${JSON.stringify(form.meta?.write ?? null)}; ${pol ? `its maker's ${pol.policyIn(domain, "comment")} (read: ${pol.loaded()})` : "a space's"}; cited ${cred ? "a credential" : "none"}` });
+      const pol = F.toSpace(place) ? null : await roles.personalPolicy(form.by, domain, "comment");
+      ctx.log("form", { what: `could not answer ${form.ref}: rule ${verdict}; its own ${JSON.stringify(form.meta?.write ?? null)}; ${pol ? `its maker's ${pol.who} (read: ${pol.loaded})` : "a space's"}; cited ${cred ? "a credential" : "none"}` });
       throw new Error("this form is not open to you");
     }
     const x = F.responseMail(form, place, me, v.clean, Date.now(), cred);
@@ -249,11 +245,11 @@ export async function mount(ctx, el) {
     if (!was && sp) {
       const r = await (await ctx.require("roles")).of(sp);
       await r.settled;
-      if (!r.allowsIn("post", me, "form")) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make forms here (its policy).` }));
+      if (!(await r.allowsIn("post", me, "form"))) return root.replaceChildren(h("p", { className: "none", textContent: `${space.shown(sp)} does not let you make forms here (its policy).` }));
       // ITS RESPONSES ARE SPACE MAIL: none made while the space's mail is off — its owner turns it on (here, or Mail).
       if (F.toSpace(sp) && !(await mail.accepts(sp.id))) {
         const off = h("p", { className: "none", textContent: `A form's responses here arrive as ${space.shown(sp)}'s mail (its owner and admins read them), and its mail is off.` });
-        if (r.role(me) !== "owner") return root.replaceChildren(off, h("p", { className: "none", textContent: "Ask its owner to turn its mail on; then forms can be made here." }));
+        if ((await r.role(me)) !== "owner") return root.replaceChildren(off, h("p", { className: "none", textContent: "Ask its owner to turn its mail on; then forms can be made here." }));
         const said = h("p", { className: "said" });
         const on = h("button", { type: "button", className: "cw-btn primary", textContent: "Turn on this space's mail" });
         const run = theme.action(on, async () => (await mail.of(sp)).enable(), { busy: "Turning on…" });

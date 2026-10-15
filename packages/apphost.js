@@ -254,7 +254,7 @@ export async function start(ctx) {
   // THE TRUST CORE stays here (the node, the keys, the tables, the identity, the spaces and their items): a frame gets
   // it only as proxies, each call checked. EVERYTHING ELSE — UI, pure libraries, an app's own logic — is loaded into the
   // frame by its hash (as a phone's frameworks into an app's process), its own requires resolved the same way there.
-  const HOST = new Set(["node", "storage", "identity", "auth", "keys", "access", "index", "files", "membership", "conversation", "space", "items", "roles", "directory", "lifecycle", "activity", "usage", "upkeep", "edge", "drafts", "installed", "apphost", "places", "login", "blocks", "account", "ordering", "statement", "tokens", "beacon", "keeper", "witness", "vote-tally"]);
+  const HOST = new Set(["node", "storage", "identity", "auth", "keys", "access", "index", "files", "membership", "conversation", "space", "items", "roles", "directory", "lifecycle", "activity", "usage", "upkeep", "edge", "drafts", "installed", "apphost", "places", "login", "blocks", "account", "ordering", "statement", "tokens", "beacon", "keeper", "witness", "vote-tally", "person", "keep", "video-studio", "moderation", "wiki-pages", "blog-press", "editions"]);
   const FRAME_LOCAL = { has: name => !HOST.has(name) };
   const { SOURCE: RUNTIME_CTX } = await ctx.require("frame-runtime");
   // (`bytes`: a module given as it is — a probe's — in place of a package by name.)
@@ -277,7 +277,9 @@ export async function start(ctx) {
         return { __cwfn: handleN };
       }
       if (v == null || typeof v !== "object") return v;
-      if (depth > 16 || v instanceof Promise) return null;
+      // A PROMISE (a place's `settled`, a person's `ready`): a handle the frame awaits.
+      if (v instanceof Promise) return marshal(() => v, name);
+      if (depth > 16) return null;
       if (OPEN(v)) return v;
       let out;
       if (Array.isArray(v)) out = v.map(x => marshal(x, name, depth + 1));
@@ -287,6 +289,14 @@ export async function start(ctx) {
       else return null;
       return Object.getOwnPropertyDescriptor(v, "state")?.enumerable === false ? { __cwstate: plain(v.state), v: out } : out;
     };
+    // A SYNC ANSWER across the bridge (the host's function gave a value, not a promise): in the frame it is a promise
+    // all the same — said once per name in the trace, where an app may still use it as a value (fx 10-16: a place's
+    // `mayEdit()` read as true).
+    const syncNames = new Set();
+    const syncSaid = (name, v) => {
+      if (!(v && typeof v.then === "function") && !syncNames.has(name)) syncNames.add(name), ctx.log("bridge: a sync call", { what: `${app}: ${name}` });
+      return v;
+    };
     const callback = id => (...args) => void frame.contentWindow?.postMessage({ event: "cb", id, args: marshal(args, "callback") }, "*");
     const unmarshal = v => {
       if (v == null || typeof v !== "object" || OPEN(v)) return v;
@@ -294,12 +304,25 @@ export async function start(ctx) {
       if (v instanceof Map) return new Map([...v].map(([k, x]) => [unmarshal(k), unmarshal(x)]));
       if (v instanceof Set) return new Set([...v].map(unmarshal));
       if (typeof v.__cwcb === "number") return callback(v.__cwcb);
+      // A place on the app's screen (an element it passed): an anchor at the same place on this page.
+      if (v.__cwrect === 1) {
+        const f = frame.getBoundingClientRect();
+        const n = k => Number(v[k]) || 0;
+        const r = { left: f.left + n("left"), top: f.top + n("top"), right: f.left + n("right"), bottom: f.top + n("bottom"), width: n("width"), height: n("height") };
+        // (On the page while the app's frame is: what a clock on it — `ctx.every` — runs by.)
+        return { getBoundingClientRect: () => ({ ...r, x: r.left, y: r.top }), get isConnected() { return frame.isConnected; } };
+      }
       return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unmarshal(x)]));
     };
     // A READ (by its exact name) needs no gesture; EVERY OTHER call — a capability's or a handle's (a step a call gave
     // back, named by its key) — only on the person's gesture. Fails closed: a read not named here is refused until named
     // (a visible refusal), never a write let through because its name was not on a list (fx 10-15: \`delegate\` was not).
-    const READS = new Set(["get", "list", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level"]);
+    const READS = new Set(["get", "list", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level", "settled", "ready",
+      // (10-16, from what the framed apps' code calls — and the methods of what those calls return.)
+      "allows", "asked", "askedCodes", "boardOf", "boards", "following", "history", "keepers", "mayOpen", "nsfwShown", "outsideOf", "personalPolicy",
+      "pins", "labels", "people", "prefs", "progress", "publicIn", "publicSpace", "publicSpaces", "range", "reaches", "visible", "waiting", "page", "pages",
+      "has", "is", "at", "about", "refs", "lists", "roles", "domains", "acts", "mayEdit", "needsReview", "drafts", "thread", "probe", "editorAt",
+      "opened", "reading", "showing", "settings", "policyIn", "config"]);
     const WRITES = { test: name => !READS.has(name) };
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";
@@ -313,7 +336,7 @@ export async function start(ctx) {
     const whereNow = () => ({ route: ctx.route, sub: ctx.sub ?? "", space: ctx.space ?? null });
     const ops = {
       // (The site's apps, as data: what `where` reads to know an app's places — its public side, its views.)
-      boot: async () => ({ where: { ...whereNow(), apps: plain(ctx.apps ?? []) }, runtime: b64(await ctx.runtimeBytes()), app: b64(bytes ?? (await ctx.packageOf(module)).bytes) }),
+      boot: async () => ({ where: { ...whereNow(), apps: plain(ctx.apps ?? []), site: `${location.origin}${location.pathname}` }, runtime: b64(await ctx.runtimeBytes()), app: b64(bytes ?? (await ctx.packageOf(module)).bytes) }),
       // A SYSTEM package (the same bytes as the page's) loaded in the frame; a capability the app is granted: a proxy.
       pkg: async name => {
         if (FRAME_LOCAL.has(name)) {
@@ -323,7 +346,10 @@ export async function start(ctx) {
         if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
         // A capability with SYNC HELPERS (its module's `frame` export): its bytes, so the frame runs the same helpers.
         const p = await ctx.packageOf(name);
-        return /\bexport function frame\(/.test(new TextDecoder().decode(p.bytes)) ? { local: false, b64: b64(p.bytes) } : { local: false };
+        // Its CONSTANTS (what it gives that is not a call — a type's name, a limit): with the proxy, as values.
+        const c = await ctx.require(name);
+        const consts = c && typeof c === "object" ? marshal(Object.fromEntries(Object.entries(c).filter(([, v]) => typeof v !== "function" && !(v instanceof Promise))), name) : {};
+        return { local: false, consts, ...(/\bexport (async )?function frame\(/.test(new TextDecoder().decode(p.bytes)) ? { b64: b64(p.bytes) } : {}) };
       },
       cap: async (name, method, args, strict) => {
         if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
@@ -331,17 +357,48 @@ export async function start(ctx) {
         const c = await ctx.require(name);
         const f = c && Object.hasOwn(c, method) ? c[method] : undefined; // (its own calls only: never its prototype's)
         if (typeof f !== "function") throw Object.assign(new Error(`${name} has no call "${method}"`), { kind: "refused" });
-        return marshal(await (strict && typeof f.strict === "function" ? f.strict : f).apply(c, unmarshal(Array.isArray(args) ? args : [])), method);
+        return marshal(await syncSaid(`${name}.${method}`, (strict && typeof f.strict === "function" ? f.strict : f).apply(c, unmarshal(Array.isArray(args) ? args : []))), method);
       },
       // A HANDLE called (a function a call gave back).
       fn: async (id, args) => {
         const h = handles.get(id);
         if (!h) throw Object.assign(new Error("this step is gone: open it again"), { kind: "refused" });
         if (WRITES.test(h.name)) gesture(h.name);
-        return marshal(await h.f(...unmarshal(Array.isArray(args) ? args : [])), h.name);
+        return marshal(await syncSaid(h.name, h.f(...unmarshal(Array.isArray(args) ? args : []))), h.name);
       },
       log: async (step, detail) => (ctx.log(`${app}: ${String(step).slice(0, 40)}`, detail), true),
       say: async (message, kind) => ctx.say(Object.assign(new Error(message), { kind })),
+      // A SYSTEM PAGE the host draws in the app's place: its SETTINGS in a space (`where.settings`, the same page an
+      // app in the page shows) — the frame hidden while the address stays there.
+      system: async (page, { kind, yours, ref, outside = null } = {}) => {
+        // AN ITEM's EDITIONS (bought and sold): a sheet over the app, the host's (`editions.section`).
+        if (page === "editions") {
+          const it = await (await ctx.require("items")).get.strict(String(ref), { outside: unmarshal(outside) });
+          if (!it) throw Object.assign(new Error("that item is not here"), { kind: "absent" });
+          const sheet = document.createElement("dialog");
+          sheet.className = "cw-sheet";
+          const close = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", textContent: "Close", onclick: () => sheet.close() });
+          const body = document.createElement("div");
+          sheet.append(body, close);
+          document.body.append(sheet);
+          const draw = async () => body.replaceChildren((await (await ctx.require("editions")).section(it, { changed: draw })) ?? Object.assign(document.createElement("p"), { textContent: "No editions." }));
+          await draw();
+          sheet.showModal();
+          await new Promise(done => sheet.addEventListener("close", done, { once: true }));
+          sheet.remove();
+          return true;
+        }
+        if (page !== "settings") throw Object.assign(new Error(`no such system page: ${page}`), { kind: "refused" });
+        const at = await (await ctx.require("where")).of({ kind: String(kind ?? ""), app: String(ctx.route).replace(/^\//, ""), yours: String(yours ?? "Yours") });
+        const box = document.createElement("div");
+        box.className = "cw-system-page";
+        frame.after(box);
+        frame.hidden = true;
+        const back = () => (box.remove(), (frame.hidden = false), removeEventListener("craftworks:route", back));
+        addEventListener("craftworks:route", back);
+        await at.settings(box);
+        return true;
+      },
       // ITS NAVIGATION: a place in this site (#/…), routed by the page.
       go: async href => (/^#\/[^\s]*$/.test(href) && (location.hash = href), true),
       // ITS MENU (the frame's `where`): its entries, to the side panel through the one door (`where.menu`); an entry
@@ -360,18 +417,25 @@ export async function start(ctx) {
       },
       failed: async (step, message, kind, what) => (ctx.failed(`${app}: ${String(step).slice(0, 40)}`, Object.assign(new Error(message), { kind }), what), true),
     };
-    let budget = 60;
-    ctx.every(frame, 1000, () => (budget = 60));
+    // A RUNAWAY FRAME is slowed, never a list broken: past 400 calls in a second, a call WAITS for the next second
+    // (a long list's cards each ask a few things — fx 10-16: 60 a second refused Discover's).
+    const PER_SECOND = 400;
+    let budget = PER_SECOND;
+    let refill = [];
+    ctx.every(frame, 1000, () => ((budget = PER_SECOND), refill.splice(0).forEach(go => go())));
+    const turn = () => (budget-- > 0 ? null : new Promise(go => refill.push(go)).then(turn));
     const onMessage = async e => {
       if (!frame.isConnected) return (removeEventListener("message", onMessage), removeEventListener("craftworks:data", onData), removeEventListener("craftworks:route", onRoute));
       if (e.source !== frame.contentWindow) return;
       const m = e.data ?? {};
       clicked();
-      if (m.event === "height") return void (frame.style.height = `${Math.max(120, Math.min(Number(m.h) || 0, 20000))}px`);
+      if (m.event === "height") return void (!el.classList.contains("cw-fill") && (frame.style.height = `${Math.max(120, Math.min(Number(m.h) || 0, 20000))}px`));
+      // An app with panes of its own: the frame fills the area (the theme's `cw-fill`), each pane scrolling itself.
+      if (m.event === "fill") return void (el.classList.add("cw-fill"), (frame.style.height = ""), (frame.style.minHeight = "0"));
       const { id, op, args = [] } = m;
       if (typeof id !== "number") return;
       const reply = r => frame.contentWindow?.postMessage({ id, ...r }, "*");
-      if (budget-- <= 0) return reply({ ok: false, error: "too many calls", kind: "refused" });
+      await turn();
       if (!Object.hasOwn(ops, op)) return reply({ ok: false, error: `no such call: ${op}`, kind: "refused" });
       try {
         reply({ ok: true, value: await ops[op](...args) });

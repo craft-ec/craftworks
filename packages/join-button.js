@@ -34,8 +34,8 @@ export async function start(ctx) {
   // FOLLOW a space from outside (the same edge as following a person: their personal space): its public items in the
   // follower's feed, without joining.
   const people = await (await ctx.require("edge")).people();
-  const followButton = d => {
-    const on = people.is("follow", d.id);
+  const followButton = async d => {
+    const on = await people.is("follow", d.id);
     return h("button", {
       type: "button",
       className: "follow",
@@ -52,7 +52,7 @@ export async function start(ctx) {
       if ((await space.mine.strict()).some(s => s.id === d.id)) return box.replaceChildren(h("a", { href: open, textContent: "Open" }));
       // Asked already: said so, whatever the space lets in now.
       const asked = await conversation.asked(d.id);
-      if (!asked && !joinable) return box.replaceChildren(followButton(d));
+      if (!asked && !joinable) return box.replaceChildren(await followButton(d));
       if (asked) {
         // LET IN already (its public acts admit this person): the welcome is what is awaited — asked for again here.
         const letIn = (await conversation.waiting()).some(w => w.key === d.id && w.status === "let-in");
@@ -69,7 +69,7 @@ export async function start(ctx) {
           await conversation.joinOpen(d).then(draw, err => ((said.textContent = ctx.say(err)), (said.hidden = false), (b.disabled = false), (b.textContent = "Join")));
         },
       });
-      box.replaceChildren(h("div", { style: "display:flex;gap:8px" }, b, followButton(d)), said);
+      box.replaceChildren(h("div", { style: "display:flex;gap:8px" }, b, await followButton(d)), said);
     };
     await draw();
     people.onChange(() => box.isConnected && draw());

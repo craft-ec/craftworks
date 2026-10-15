@@ -546,7 +546,7 @@ export async function start(ctx) {
     ctx.log("account keys", { what: r.loggedOut ? "this node was removed from the account: it has forgotten everything it held" : `this node was removed, and could not forget: ${r.refused ?? JSON.stringify(r)}` });
     status = { removed: true, members: [], epoch: mls.status().epoch };
     if (r.loggedOut) {
-      alert("This node was removed from your account, so it has forgotten your account's keys. To use it again, log in with your recovery words.");
+      await (await ctx.require("theme")).ask(null, { text: "This node was removed from your account, so it has forgotten your account's keys. To use it again, log in with your recovery words.", ok: "Log out" });
       await auth.logout();
     }
     return status;

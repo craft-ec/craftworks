@@ -30,6 +30,49 @@
 //   posts.onChange(fn)
 // A post: { ref, id, by, title, body, board, at, edited, comments, score, mine, mayRemove }; a comment: the same
 // without title and board, with `replies`.
+// AN ITEM's PURE PARTS — what a list or a card asks at once, never a read: its tags, where its page is, its link, the
+// item a text names. One implementation: `start` uses them, and an app's frame has the same (`frame`, FOUNDATION §3).
+const NSFW = "nsfw";
+const spaceIdOf = x => (String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : null);
+const tagsOf = it => (Array.isArray(it?.meta?.tags) ? it.meta.tags : []);
+const normalTags = text =>
+  [...new Set(String(text ?? "").split(/[,\s]+/).map(t => t.replace(/^#/, "").toLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "").slice(0, 40)).filter(Boolean))].slice(0, 20);
+const isNsfw = it => tagsOf(it).includes(NSFW);
+// (`site()`: this site's address, before its `#`.)
+function pure(kinds, site) {
+  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki", vote: "vote", bundle: "bundle" };
+  // A kind with an app of its own (a paste: Paste, though of the note family) first; else its domain's.
+  const APP_OF_KIND = { paste: "paste" };
+  const appOf = kind => APP_OF_KIND[kind] ?? APP_OF[kinds.domain(kind)] ?? "board";
+  // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
+  // AN ITEM'S REFERENCE: a space's (`space:<id>/<item>`) or a person's (`did:craftec:<id>/<item>`).
+  const ITEM_REF = /^(space:[0-9a-f]{64}|did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\/[A-Za-z0-9_-]{4,80}$/;
+  function pageOf(ref, kind) {
+    const app = appOf(kind);
+    const sp = String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null;
+    const base = sp ? `#/s/${sp}/${app}` : `#/${app}/u/${String(ref).slice(0, String(ref).lastIndexOf("/"))}`;
+    // THE ONE PAGE (`item-page`), framed by its app: `…/<app>/p/<ref>`.
+    return `${base}/p/${ref}`;
+  }
+  // ITS LINK, to share: the address this page is served at — a node's (`/v1/contract/web/<site>/`) or a server's own
+  // domain in front of one — with its page (`pageOf`). Opened in a browser it is the item; pasted anywhere in the app,
+  // from ANY address, it opens here (`markdown`): what names the item is its page, never the host.
+  const linkOf = (ref, kind) => `${site()}${pageOf(ref, kind)}`;
+  // The item a text NAMES: its reference as it is, or any link to its page (`…#/<app>/…/p/<ref>`, whatever the host).
+  function refOf(text) {
+    const t = String(text ?? "").trim();
+    if (ITEM_REF.test(t)) return t;
+    const m = /^https?:\/\/\S*#\/\S*?\/p\/(\S+)$/.exec(t);
+    const ref = m ? decodeURIComponent(m[1]) : null;
+    return ref && ITEM_REF.test(ref) ? ref : null;
+  }
+  return { appOf, pageOf, linkOf, refOf };
+}
+// IN AN APP's FRAME: the pure parts beside the host's proxy (the site's address: the host's, `ctx.site`).
+export async function frame(cap, ctx) {
+  return { ...pure(await ctx.require("kinds"), () => ctx.site), spaceIdOf, tagsOf, normalTags, isNsfw };
+}
+
 export async function start(ctx) {
   const [content, index, space, edge] = await Promise.all(["content", "index", "space", "edge"].map(n => ctx.require(n)));
   const TAIL = "posts";
@@ -114,7 +157,6 @@ export async function start(ctx) {
     return all.filter((_, i) => on[i]);
   };
   // The SPACE ID an item reference names (`space:<id>/…`), null for a person's item.
-  const spaceIdOf = x => (String(x).startsWith("space:") ? String(x).slice(6, String(x).indexOf("/")) : null);
   const boardOf = async x => {
     const id = spaceIdOf(x) ?? x;
     return (await boards()).find(s => s.id === id) ?? null;
@@ -605,12 +647,7 @@ export async function start(ctx) {
   // WINDOW, bounded unless asked for "all": New the last 30 days (older on asking), a rank the last week.
   // TAGS: an item's own (its author's: `meta.tags`, lowercase) — what it is, for everyone; `nsfw` marks adult content,
   // shown only to whoever chose to see it (`edge.prefs` "nsfw"), and always to its author.
-  const NSFW = "nsfw";
-  const tagsOf = it => (Array.isArray(it?.meta?.tags) ? it.meta.tags : []);
-  const normalTags = text =>
-    [...new Set(String(text ?? "").split(/[,\s]+/).map(t => t.replace(/^#/, "").toLowerCase().replace(/[^\p{L}\p{N}_-]/gu, "").slice(0, 40)).filter(Boolean))].slice(0, 20);
   const nsfwShown = async () => !!(await edge.prefs()).get("nsfw");
-  const isNsfw = it => tagsOf(it).includes(NSFW);
   // What a list shows of what it read: its TAG (`where.tag`), and NSFW only where chosen.
   async function shownOf(out, where) {
     const self = await me();
@@ -1066,35 +1103,8 @@ export async function start(ctx) {
 
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
   // plays (Video, Audio, Image), a post (or anything else) on its board, a note in Note, a file in Drive.
-  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki", vote: "vote", bundle: "bundle" };
-  // A kind with an app of its own (a paste: Paste, though of the note family) first; else its domain's.
-  const APP_OF_KIND = { paste: "paste" };
-  const appOf = kind => APP_OF_KIND[kind] ?? APP_OF[kinds.domain(kind)] ?? "board";
-  // In its PLACE (`where`'s addresses): a space's in the space, a person's in their space (`u/<did>`: yours too).
-  // AN ITEM'S REFERENCE: a space's (`space:<id>/<item>`) or a person's (`did:craftec:<id>/<item>`).
-  const ITEM_REF = /^(space:[0-9a-f]{64}|did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64})\/[A-Za-z0-9_-]{4,80}$/;
-  function pageOf(ref, kind) {
-    const app = appOf(kind);
-    const sp = String(ref).startsWith("space:") ? ref.slice(6, ref.indexOf("/")) : null;
-    const base = sp ? `#/s/${sp}/${app}` : `#/${app}/u/${String(ref).slice(0, String(ref).lastIndexOf("/"))}`;
-    // THE ONE PAGE (`item-page`), framed by its app: `…/<app>/p/<ref>`.
-    return `${base}/p/${ref}`;
-  }
-  // ITS LINK, to share: the address this page is served at — a node's (`/v1/contract/web/<site>/`) or a server's own
-  // domain in front of one — with its page (`pageOf`). Opened in a browser it is the item; pasted anywhere in the app,
-  // from ANY address, it opens here (`markdown`): what names the item is its page, never the host.
-  const linkOf = (ref, kind) => {
-    const u = new URL(location.href);
-    return `${u.origin}${u.pathname}${pageOf(ref, kind)}`;
-  };
-  // The item a text NAMES: its reference as it is, or any link to its page (`…#/<app>/…/p/<ref>`, whatever the host).
-  function refOf(text) {
-    const t = String(text ?? "").trim();
-    if (ITEM_REF.test(t)) return t;
-    const m = /^https?:\/\/\S*#\/\S*?\/p\/(\S+)$/.exec(t);
-    const ref = m ? decodeURIComponent(m[1]) : null;
-    return ref && ITEM_REF.test(ref) ? ref : null;
-  }
+  // (Where an item's page is, its link, the item a text names: the module's `pure`, as an app's frame has them.)
+  const { appOf, pageOf, linkOf, refOf } = pure(kinds, () => `${location.origin}${location.pathname}`);
 
   // MENTIONS told: everyone a text mentions (`[@…](person:DID)`: `md-editor`) is sent a notice to their inbox (`index`)
   // — so a mention reaches them wherever it is written (a personal post of someone they never read, a comment), not

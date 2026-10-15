@@ -50,6 +50,12 @@ export function sharedTags(pointers) {
 // A kept welcome's wait before its next try (`tries`: made so far): 2 minutes, doubling, at most an hour.
 export const resendWait = tries => Math.min(3600e3, 120e3 * 2 ** Math.max(0, (Number(tries) || 1) - 1));
 
+// A level group's code (`level pro`): pure, as an app's frame has it (FOUNDATION §3).
+const levelCode = id => `level ${id}`;
+export function frame() {
+  return { levelCode };
+}
+
 export async function start(ctx) {
   const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
@@ -702,7 +708,6 @@ export async function start(ctx) {
   const openCode = id => `open ${id}`;
   // LEVEL GROUPS (rewards §5a: a creator's PRO, VIP): who asks drops a request in the bag `level <id>`; any member lets
   // them in while their public card's contributions reach its level (here, and the identity delegate with no page open).
-  const levelCode = id => `level ${id}`;
   const levelOfGroup = r => /^level:(pro|vip)$/.exec(r.policy("", "join") ?? "")?.[1] ?? null;
   // A person's level NOW from their card read again (the one rule: gov's, through `usage`) — kept TEN MINUTES (every
   // member's page asks of every member each tick); null where the card did not read (unknown, never "free": a failed

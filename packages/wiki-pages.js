@@ -379,6 +379,12 @@ export function tree(pages) {
 }
 
 // ── THE SERVICE ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the pure parts beside the host's proxy — the pages, their
+// versions and who may edit them are read and decided in the host.
+export function frame() {
+  return { TITLE_MAX, KIND, SECTION, cleanTitle, normTitle, titleProblem, parseLinks, unescapeLinks, linkify, splitSections, joinSections, versionHash, versionOf, resolve, textOf, carryMerges, planWhole, planSection, planPropose, backlinks, tree };
+}
+
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
   const me = async () => space.me.strict();
@@ -516,7 +522,8 @@ export async function start(ctx) {
       const heads = cur?.heads ?? [];
       return apply(p, [{ op: v.gone ? "gone" : cur ? "edit" : "new", sid: v.sid, base: cur?.h ?? null, merges: heads.map(x => x.h).filter(h => h !== cur?.h), body: v.body, pos: v.pos }]);
     };
-    return { scope: owner ? "personal" : "space", owner, space: sp && !circle ? sp : null, mayEdit, mayWrite, pages, page, apply, create, accept, decline, history, restore, editorAt };
+    // (`may`: what this person may do here, decided as the place is read — data, as an app's frame receives it.)
+    return { scope: owner ? "personal" : "space", owner, space: sp && !circle ? sp : null, may: { edit: mayEdit(), write: mayWrite() }, mayEdit, mayWrite, pages, page, apply, create, accept, decline, history, restore, editorAt };
   }
 
   // COPY to my wiki: the page's sections now, under the same section ids (so a proposal back names them), its LINEAGE

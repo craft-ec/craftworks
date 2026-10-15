@@ -18,78 +18,113 @@
 //   the same table (`edge.prefs()`: `prefs.get(name)`, `await prefs.set(name, value)`, `prefs.onChange(fn)`) — e.g.
 //   `nsfw`: show items tagged NSFW. LABELS: table `tags` (its name from before; private tags):
 //   `l/<id>` { name } a label;  `a/<id>/<ref>` { at } that label on a thing.
+// EACH KIND OVER ITS TABLE (`t`: the account's table — { rows(), put(k, v), remove(k), onChange(fn), settled }).
+function pinsOver(t) {
+  const has = ref => t.rows().some(r => r.key === ref);
+  const refs = prefix => t.rows().map(r => r.key).filter(k => !k.startsWith("pref:") && (!prefix || k.startsWith(prefix)));
+  const set = (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref));
+  return { has, refs, set, onChange: t.onChange };
+}
+function labelsOver(t) {
+  const parse = v => {
+    try {
+      return JSON.parse(v) ?? {};
+    } catch {
+      return {};
+    }
+  };
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  const list = () =>
+    t.rows()
+      .filter(r => r.key.startsWith("l/"))
+      .map(r => ({ id: r.key.slice(2), name: String(parse(r.value).name ?? "") }))
+      .filter(l => l.name)
+      .sort(byName);
+  const assigned = () => t.rows().filter(r => r.key.startsWith("a/")).map(r => {
+    const rest = r.key.slice(2);
+    const i = rest.indexOf("/");
+    return { id: rest.slice(0, i), ref: rest.slice(i + 1) };
+  });
+  const of = ref => {
+    const ids = new Set(assigned().filter(a => a.ref === ref).map(a => a.id));
+    return list().filter(l => ids.has(l.id));
+  };
+  const refs = (id, prefix = "") => assigned().filter(a => a.id === id && a.ref.startsWith(prefix)).map(a => a.ref);
+  const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
+
+  const newId = () => `${Date.now().toString(36)}${[...crypto.getRandomValues(new Uint8Array(3))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
+  async function create(name) {
+    name = name.trim().slice(0, 50);
+    if (!name) throw new Error("a label needs a name");
+    const same = find(name);
+    if (same) return same.id;
+    const id = newId();
+    await t.put(`l/${id}`, JSON.stringify({ name }));
+    return id;
+  }
+  const rename = (id, name) => {
+    name = name.trim().slice(0, 50);
+    const same = find(name);
+    if (!name || (same && same.id !== id)) return Promise.reject(new Error(name ? `there is already a label “${same.name}”` : "a label needs a name"));
+    return t.put(`l/${id}`, JSON.stringify({ name }));
+  };
+  // A label goes with every use of it.
+  async function remove(id) {
+    for (const ref of refs(id)) await t.remove(`a/${id}/${ref}`);
+    await t.remove(`l/${id}`);
+  }
+  const set = (ref, id, on) => (on ? t.put(`a/${id}/${ref}`, JSON.stringify({ at: Date.now() })) : t.remove(`a/${id}/${ref}`));
+  // A thing that is gone takes its labels with it.
+  async function clear(ref) {
+    for (const l of of(ref)) await t.remove(`a/${l.id}/${ref}`);
+  }
+  return { list, of, refs, create, rename, remove, set, clear, onChange: t.onChange };
+}
+// (`set`: a link made or undone — the host's own, which tells a followed person.)
+function peopleOver(t, set) {
+  const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);
+  // When a link was made (ms; 0: none).
+  const at = (rel, did) => {
+    try {
+      return Number(JSON.parse(t.rows().find(r => r.key === `${rel}/${did}`)?.value ?? "{}").at) || 0;
+    } catch {
+      return 0;
+    }
+  };
+  const list = rel => t.rows().filter(r => r.key.startsWith(`${rel}/`)).map(r => r.key.slice(rel.length + 1));
+  const about = (rel, id) => {
+    try {
+      return JSON.parse(t.rows().find(r => r.key === `${rel}/${id}`)?.value ?? "{}").about ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return { is, at, list, set, about, onChange: t.onChange, settled: t.settled };
+}
+function prefsOver(t) {
+  const get = name => {
+    const r = t.rows().find(x => x.key === `pref:${name}`);
+    try {
+      return r ? JSON.parse(r.value).v : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const set = (name, v) => (v === undefined || v === false ? t.remove(`pref:${name}`) : t.put(`pref:${name}`, JSON.stringify({ v, at: Date.now() })));
+  return { get, set, onChange: t.onChange };
+}
 export async function start(ctx) {
   const storage = await ctx.require("storage");
 
   let pinsOpen = null;
   function pins() {
     // (R4: a table that did not open is asked for again next time — never kept as a failure.)
-    return (pinsOpen ??= storage.table("pins").catch(e => ((pinsOpen = null), Promise.reject(e))).then(t => {
-      const has = ref => t.rows().some(r => r.key === ref);
-      const refs = prefix => t.rows().map(r => r.key).filter(k => !k.startsWith("pref:") && (!prefix || k.startsWith(prefix)));
-      const set = (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref));
-      return { has, refs, set, onChange: t.onChange };
-    }));
+    return (pinsOpen ??= storage.table("pins").catch(e => ((pinsOpen = null), Promise.reject(e))).then(pinsOver));
   }
 
   let labelsOpen = null;
   function labels() {
-    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
-    return (labelsOpen ??= storage.table("tags").catch(e => ((labelsOpen = null), Promise.reject(e))).then(t => {
-      const parse = v => {
-        try {
-          return JSON.parse(v) ?? {};
-        } catch {
-          return {};
-        }
-      };
-      const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-      const list = () =>
-        t.rows()
-          .filter(r => r.key.startsWith("l/"))
-          .map(r => ({ id: r.key.slice(2), name: String(parse(r.value).name ?? "") }))
-          .filter(l => l.name)
-          .sort(byName);
-      const assigned = () => t.rows().filter(r => r.key.startsWith("a/")).map(r => {
-        const rest = r.key.slice(2);
-        const i = rest.indexOf("/");
-        return { id: rest.slice(0, i), ref: rest.slice(i + 1) };
-      });
-      const of = ref => {
-        const ids = new Set(assigned().filter(a => a.ref === ref).map(a => a.id));
-        return list().filter(l => ids.has(l.id));
-      };
-      const refs = (id, prefix = "") => assigned().filter(a => a.id === id && a.ref.startsWith(prefix)).map(a => a.ref);
-      const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
-
-      const newId = () => `${Date.now().toString(36)}${[...crypto.getRandomValues(new Uint8Array(3))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
-      async function create(name) {
-        name = name.trim().slice(0, 50);
-        if (!name) throw new Error("a label needs a name");
-        const same = find(name);
-        if (same) return same.id;
-        const id = newId();
-        await t.put(`l/${id}`, JSON.stringify({ name }));
-        return id;
-      }
-      const rename = (id, name) => {
-        name = name.trim().slice(0, 50);
-        const same = find(name);
-        if (!name || (same && same.id !== id)) return Promise.reject(new Error(name ? `there is already a label “${same.name}”` : "a label needs a name"));
-        return t.put(`l/${id}`, JSON.stringify({ name }));
-      };
-      // A label goes with every use of it.
-      async function remove(id) {
-        for (const ref of refs(id)) await t.remove(`a/${id}/${ref}`);
-        await t.remove(`l/${id}`);
-      }
-      const set = (ref, id, on) => (on ? t.put(`a/${id}/${ref}`, JSON.stringify({ at: Date.now() })) : t.remove(`a/${id}/${ref}`));
-      // A thing that is gone takes its labels with it.
-      async function clear(ref) {
-        for (const l of of(ref)) await t.remove(`a/${l.id}/${ref}`);
-      }
-      return { list, of, refs, create, rename, remove, set, clear, onChange: t.onChange };
-    }));
+    return (labelsOpen ??= storage.table("tags").catch(e => ((labelsOpen = null), Promise.reject(e))).then(labelsOver));
   }
 
   let peopleOpen = null;
@@ -98,18 +133,7 @@ export async function start(ctx) {
   // they hold from someone (`circles`).
   const RELATIONS = new Set(["follow", "follower", "friend", "asked", "answered", "hide", "block", "modlist", "cred-friends", "cred-followers", "credin-friends", "credin-followers"]);
   function people() {
-    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
     return (peopleOpen ??= storage.table("people").catch(e => ((peopleOpen = null), Promise.reject(e))).then(t => {
-      const is = (rel, did) => t.rows().some(r => r.key === `${rel}/${did}`);
-      // When a link was made (ms; 0: none).
-      const at = (rel, did) => {
-        try {
-          return Number(JSON.parse(t.rows().find(r => r.key === `${rel}/${did}`)?.value ?? "{}").at) || 0;
-        } catch {
-          return 0;
-        }
-      };
-      const list = rel => t.rows().filter(r => r.key.startsWith(`${rel}/`)).map(r => r.key.slice(rel.length + 1));
       // `at`: when the link holds from (default now; what it answers may be older). `about`: what is needed to read
       // the thing it points at — a followed SHARED space's public description (a person needs none: their DID is their
       // personal space, found by it).
@@ -132,32 +156,13 @@ export async function start(ctx) {
             .then(async index => index.send(did, { kind: on ? "follow" : "unfollow", from: (await (await ctx.require("space")).account()).id, at, ...(cred ? { cred } : {}) }))
             .catch(e => ctx.failed("edge", e, `telling ${String(did).slice(12, 20)}… of the follow: ${e?.message ?? e}`));
       };
-      const about = (rel, id) => {
-        try {
-          return JSON.parse(t.rows().find(r => r.key === `${rel}/${id}`)?.value ?? "{}").about ?? null;
-        } catch {
-          return null;
-        }
-      };
-      return { is, at, list, set, about, onChange: t.onChange, settled: t.settled };
+      return peopleOver(t, set);
     }));
   }
 
   let prefsOpen = null;
   function prefs() {
-    // (R4: a table that did not open is asked for again next time — never kept as a failure.)
-    return (prefsOpen ??= storage.table("pins").catch(e => ((prefsOpen = null), Promise.reject(e))).then(t => {
-      const get = name => {
-        const r = t.rows().find(x => x.key === `pref:${name}`);
-        try {
-          return r ? JSON.parse(r.value).v : undefined;
-        } catch {
-          return undefined;
-        }
-      };
-      const set = (name, v) => (v === undefined || v === false ? t.remove(`pref:${name}`) : t.put(`pref:${name}`, JSON.stringify({ v, at: Date.now() })));
-      return { get, set, onChange: t.onChange };
-    }));
+    return (prefsOpen ??= storage.table("pins").catch(e => ((prefsOpen = null), Promise.reject(e))).then(prefsOver));
   }
 
   return { pins, labels, people, prefs };

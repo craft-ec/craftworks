@@ -544,5 +544,22 @@ export async function start(ctx) {
   }
 
   // `perms`: what a composed role may carry.
-  return { of: ctx.total("roles.of", () => null, of), ofPublic: ctx.total("roles.ofPublic", () => null, ofPublic), personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"], perms: G.perms() };
+  // A WRITER's RIGHT DECIDED WHOLE (async — one call, as an app's frame asks it): its place's roles read first (a
+  // space's, from outside as its public acts say), an author's personal rule waited for, a ban, then `mayWrite`.
+  // true | false | null (not decidable yet).
+  // (`sp`: a space this person is in; `place`: one read from outside, by its public description.)
+  async function allows({ action, item, writer, cred = null, place = null, sp = null }) {
+    const r = sp ? await of(sp) : place ? await ofPublic(place) : null;
+    await r?.settled;
+    if (!r && item?.by) await personal(item.by).ready;
+    if (r?.banned?.(writer)) return false;
+    return mayWrite({ action, item, writer, cred, r });
+  }
+  // A person's PERSONAL rule for a domain's action, once read: { who, loaded } (what a refusal's report says).
+  async function personalPolicy(did, domain, action) {
+    const p = personal(did);
+    await p.ready;
+    return { who: p.policyIn(domain, action), loaded: p.loaded() };
+  }
+  return { allows, personalPolicy, of: ctx.total("roles.of", () => null, of), ofPublic: ctx.total("roles.ofPublic", () => null, ofPublic), personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"], perms: G.perms() };
 }

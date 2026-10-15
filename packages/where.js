@@ -49,8 +49,9 @@ export async function start(ctx) {
       // (Both refusals are ANSWERS, not failures: `expected` — the loader says them, never as a fault.)
       if (!desc) throw new Fault("refused-expected", "not in that space", { message: "you are not in that space (left, or not joined yet)" });
       // Why not, said (its public rules: the app not on there, or who reads it).
-      const on = pr.apps().includes(app);
-      const reads = pr.policyIn(domain, "read");
+      // (Its roles read with `await`: the same here and in an app's frame, where they cross the bridge.)
+      const on = (await pr.apps()).includes(app);
+      const reads = await pr.policyIn(domain, "read");
       if (!on || reads !== "anyone") throw new Fault("refused-expected", "members only", { message: `${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it` });
       sp = { ...desc, outside: true };
     }
@@ -80,7 +81,7 @@ export async function start(ctx) {
       if (saved)
         return ctx
           .require("actions")
-          .then(a => Promise.all(a.saved().map(getSaved)))
+          .then(async a => Promise.all((await a.saved()).map(getSaved)))
           // NSFW as every list (`items.visible`).
           .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
       if (who === "discover") return items.list.strict({ discover: true }, sort, ks, { window, ...options });
@@ -94,7 +95,7 @@ export async function start(ctx) {
     // THE APP's OWN SETTINGS in a space (ARCHITECTURE §1: an app defines its settings and shows them itself) — for who
     // may manage the space's apps, where the app has any (`app-settings`: Board's rules, Blog's approval, Chat's channels).
     const settingsRead = sp && !sp.outside && me
-      ? ctx.optional("where: Promise.all", Promise.all([ctx.require("app-settings"), roles.of.strict(sp)]).then(([st, r]) => st.has(app) && r.can(me, "apps")), () => false)
+      ? ctx.optional("where: Promise.all", Promise.all([ctx.require("app-settings"), roles.of.strict(sp)]).then(async ([st, r]) => st.has(app) && (await r.can(me, "apps")) === true), () => false)
       : Promise.resolve(false);
     let mayConfigure = false;
     // Each entry's ROLE, where the side panel puts it (owner 10-15, YouTube's: Home · Subscriptions, then You): `discover`,
@@ -129,6 +130,9 @@ export async function start(ctx) {
     // nothing else then).
     const settings = async host => {
       if (sub !== "settings" || !sp || sp.outside) return false;
+      // IN AN APP's FRAME: a SYSTEM page — the host draws it in the app's place (its rules are the space's governance,
+      // never the app's to draw; FOUNDATION §3).
+      if (ctx.system) return void (await ctx.system("settings", { kind, app, yours })), true;
       // (Only for who may manage the space's apps — the menu offers it to them alone, and so does the address.)
       if (!(await settingsRead)) return void host.replaceChildren(Object.assign(document.createElement("p"), { textContent: "Its owner and admins keep this app's settings." })), true;
       const page = await (await ctx.require("app-settings")).appPage(sp, app).catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) }));

@@ -101,13 +101,18 @@ export function coverOf(it, { kindOf, keyOf, inlined = new Set() }) {
   return chosen ?? files.find(f => kindOf(f) === "image" && !inlined.has(keyOf(f))) ?? null;
 }
 
+// A post's blog state, and whether Blog lists it as an article (a post neither a draft nor a review copy).
+const blogOf = it => (it?.meta?.blog && typeof it.meta.blog === "object" ? it.meta.blog : {});
+const isArticle = it => it?.kind === "post" && !blogOf(it).draft && !blogOf(it).review;
+// IN AN APP's FRAME (FOUNDATION §3): the pure parts beside the host's proxy — drafts, publishing and who approves are
+// the host's.
+export function frame() {
+  return { isArticle, readingTime, headingsOf, isDue, approvalOf, coverOf, WPM, APPROVED, DECLINED };
+}
+
 export async function start(ctx) {
   const [items, space, roles] = await Promise.all(["items", "space", "roles"].map(n => ctx.require(n)));
   const me = async () => space.me.strict();
-  const blogOf = it => (it?.meta?.blog && typeof it.meta.blog === "object" ? it.meta.blog : {});
-
-  // An article as Blog lists it: a post that is neither a draft nor a review copy.
-  const isArticle = it => it?.kind === "post" && !blogOf(it).draft && !blogOf(it).review;
 
   // A PUBLICATION's rule: its editors approve (`config` act, on the space's settings: `app-settings`).
   const ruleOf = async sp => {

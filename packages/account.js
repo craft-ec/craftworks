@@ -203,7 +203,7 @@ export async function mount(ctx, el) {
           said,
         );
         btn.onclick = async () => {
-          if (!confirm("Run this on your ORIGINAL login only — the one that still has your spaces. It makes this login's keys the account's again; your other devices then log in with the recovery words once more.")) return;
+          if (!(await (await ctx.require("theme")).ask(btn, { text: "Run this on your ORIGINAL login only — the one that still has your spaces. It makes this login's keys the account's again; your other devices then log in with the recovery words once more.", ok: "Run it" }))) return;
           btn.disabled = true;
           const line = t => said.append(Object.assign(document.createElement("li"), { textContent: t }));
           try {

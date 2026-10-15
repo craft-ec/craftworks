@@ -11,11 +11,12 @@ export async function start(ctx) {
   const { list, of, set, create } = labels;
   // ONE KEY per item, whatever its kind (a note, a post, a video): its labels are the account's one list.
   const key = ref => `item:${ref}`;
-  const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
+  // (The account's labels are read with `await`: the same in the page and in an app's frame, where they cross the bridge.)
+  const find = async name => (await list()).find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
   const fail = e => ctx.log("label failed", { what: e?.message ?? String(e) });
   // Notes' labels from before (`notes:<ref>`) moved to it, once (none left: nothing to do).
-  for (const l of list())
-    for (const old of labels.refs(l.id, "notes:"))
+  for (const l of await list())
+    for (const old of await labels.refs(l.id, "notes:"))
       await set(key(old.slice(6)), l.id, true)
         .then(() => set(old, l.id, false))
         .catch(fail);
@@ -43,9 +44,9 @@ export async function start(ctx) {
 
   // CHIPS: a thing's labels, following the table.
   const chipSets = new Set();
-  const paint = box => {
+  const paint = async box => {
     box.replaceChildren(
-      ...of(box.dataset.ref).map(l => {
+      ...(await of(box.dataset.ref)).map(l => {
         const b = Object.assign(document.createElement("button"), { type: "button", className: "cw-chip", textContent: l.name, title: `Show “${l.name}”` });
         b.onclick = e => (e.stopPropagation(), box.onPick?.(l.id));
         return b;
@@ -70,10 +71,10 @@ export async function start(ctx) {
     box.querySelector(".head").textContent = title;
     const input = box.querySelector("input");
     const items = box.querySelector(".items");
-    const fill = () => {
+    const fill = async () => {
       const q = input.value.trim();
-      const on = new Set(of(ref).map(l => l.id));
-      const shown = list().filter(l => !q || l.name.toLowerCase().includes(q.toLowerCase()));
+      const on = new Set((await of(ref)).map(l => l.id));
+      const shown = (await list()).filter(l => !q || l.name.toLowerCase().includes(q.toLowerCase()));
       items.replaceChildren(
         ...shown.map(l => {
           const row = document.createElement("label");
@@ -83,7 +84,7 @@ export async function start(ctx) {
           return row;
         }),
       );
-      if (q && !find(q)) {
+      if (q && !(await find(q))) {
         const c = Object.assign(document.createElement("button"), { type: "button", className: "create" });
         c.textContent = `+ Create “${q}”`;
         c.onclick = async () => {

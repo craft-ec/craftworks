@@ -10,6 +10,8 @@ export const SOURCE = `
     const cbs = new Map(); let cbN = 0;
     const out = v => {
       if (typeof v === "function") { cbs.set(++cbN, v); return { __cwcb: cbN }; }
+      // An ELEMENT (a menu's anchor): where it is on the app's screen — the host places what it draws there.
+      if (v instanceof Element) { const r = v.getBoundingClientRect(); return { __cwrect: 1, left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; }
       if (v == null || typeof v !== "object" || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || v instanceof Date || v instanceof Blob) return v;
       if (Array.isArray(v)) return v.map(out);
       if (v instanceof Map) return new Map([...v].map(([k, x]) => [out(k), out(x)]));
@@ -52,10 +54,10 @@ export const SOURCE = `
       if (!loaded.has(name)) loaded.set(name, (async () => {
         const p = await call("pkg", name);
         if (!p.local) {
-          if (!p.b64) return proxy(name);
-          const helpers = {};
+          const helpers = { ...(p.consts || {}) };
+          if (!p.b64) return proxy(name, helpers);
           const cap = proxy(name, helpers);
-          Object.assign(helpers, (await importB64(p.b64)).frame(cap, ctx));
+          Object.assign(helpers, await (await importB64(p.b64)).frame(cap, ctx));
           return cap;
         }
         if (p.kind === "bytes") return fromB64(p.b64);
@@ -67,7 +69,9 @@ export const SOURCE = `
     const ctx = { params: new URLSearchParams(), route: "", sub: "", space: null, actions: {}, apps: [], require,
       log: (step, detail = {}) => call("log", step, JSON.parse(JSON.stringify(detail ?? {}))).catch(() => {}),
       failed: (step, e, what = "") => call("failed", step, String(e && e.message ? e.message : e), e && e.kind, what).catch(() => {}),
-      say: e => String(e && e.message ? e.message : e) };
+      say: e => String(e && e.message ? e.message : e),
+      // A SYSTEM PAGE (an app's settings in a space): drawn by the host in the app's place.
+      system: (page, opts) => call("system", page, opts) };
     globalThis.app = ctx;
     // ITS NAVIGATION is the page's: a link to a place (#/…) or a hash set by the app goes to the host, which routes.
     addEventListener("click", e => {
@@ -84,8 +88,18 @@ export const SOURCE = `
       call("actions", entries).catch(() => {});
     });
     const appEl = document.getElementById("cw-app");
-    const tell = () => parent.postMessage({ event: "height", h: Math.ceil(appEl.getBoundingClientRect().height) + 8 }, "*");
+    // ITS SIZE: a page as tall as what it shows (the host's area scrolls it) — or, an app with panes of its own
+    // (\`cw-fill\`, as Board's), the whole area, each pane scrolling itself.
+    let filled = false;
+    const tell = () => !filled && parent.postMessage({ event: "height", h: Math.ceil(appEl.getBoundingClientRect().height) + 8 }, "*");
     new ResizeObserver(tell).observe(appEl);
+    const fill = () => {
+      if (filled || !appEl.classList.contains("cw-fill")) return;
+      filled = true;
+      for (const x of [document.documentElement, document.body, appEl]) x.style.setProperty("height", "100%", "important");
+      parent.postMessage({ event: "fill" }, "*");
+    };
+    new MutationObserver(fill).observe(appEl, { attributes: true, attributeFilter: ["class"] });
     (async () => {
       const boot = await call("boot");
       Object.assign(ctx, boot.where);

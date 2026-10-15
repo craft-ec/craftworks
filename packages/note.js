@@ -96,6 +96,9 @@ export async function mount(ctx, el) {
   const root = el.querySelector(".keep");
   const said = t => (root.querySelector(".said").textContent = t);
   let items, who, edge, pins, labels, pinUI, labelUI, sp = null, rs = null, at = null;
+  // WHAT THE LIST LAST READ of this person's pins and labels (its view's read: awaited, the same in the page and in an
+  // app's frame) — what it is drawn from.
+  let now = { pinned: new Set(), labels: [] };
   const meId = (await (await ctx.require("space")).account()).id;
   try {
     edge = await ctx.require("edge");
@@ -155,7 +158,7 @@ export async function mount(ctx, el) {
     by: it.by,
     item: it,
     meta: it.meta ?? {},
-    pinned: pins.has(ref(it.ref)),
+    pinned: now.pinned.has(ref(it.ref)),
   });
   // SAVE: a change to a note held (its editors: `items.editItem`), or a new one made (`items.submit`): its ref.
   const save = async (key, n) => {
@@ -343,6 +346,16 @@ export async function mount(ctx, el) {
   };
 
   const R = await ctx.require("roles");
+  // WHAT THIS PERSON MAY DO HERE: the space's rules, decided by `roles` — awaited, the same in the page and in an app's
+  // frame — and again when its roles change.
+  let mayPost = true;
+  let mayEdit = true;
+  const decide = async () => {
+    if (!rs) return;
+    mayPost = (await R.allows({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, sp })) === true;
+    mayEdit = (await rs.allows("edit", meId, "note")) === true;
+  };
+  await decide();
   // THE NOTES: a VIEW (`ctx.view` — loading, empty, redrawn when what it read changes: a note here or on another
   // device, a pin, a label). What it reads includes this page's own choices (grid or list, archive, a label), so a
   // toggle draws it too (`render()`).
@@ -352,10 +365,10 @@ export async function mount(ctx, el) {
   const drawNotes = () => {
     root.classList.toggle("list", list);
     // The composer: not in the archive, nor for who may not edit here.
-    composer.hidden = others || archive || (!!rs && R.mayWrite({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, r: rs }) !== true);
-    if (label && !labels.list().some(l => l.id === label)) label = null; // deleted meanwhile
+    composer.hidden = others || archive || (!!rs && !mayPost);
+    if (label && !now.labels.some(l => l.id === label)) label = null; // deleted meanwhile
     bar();
-    const inLabel = label ? new Set(labels.refs(label, "item:")) : null;
+    const inLabel = label ? new Set(now.labels.find(l => l.id === label)?.refs ?? []) : null;
     const all = held
       .map(note)
       .filter(n => n.archived === archive)
@@ -397,20 +410,20 @@ export async function mount(ctx, el) {
     };
     b.replaceChildren(
       chip("All notes", !label, () => show(null)),
-      ...labels.list().map(l => chip(`🏷️ ${l.name}`, label === l.id, () => show(label === l.id ? null : l.id))),
+      ...now.labels.map(l => chip(`🏷️ ${l.name}`, label === l.id, () => show(label === l.id ? null : l.id))),
       chip("✏️ Edit labels", false, editLabels, "edit-labels"),
     );
   }
 
   // EDIT LABELS: make, rename (on leaving the field) and delete, as in Keep.
   const lEditor = root.querySelector("dialog.labels-editor");
-  function lines() {
+  async function lines() {
     lEditor.querySelector(".label-lines").replaceChildren(
-      ...labels.list().map(l => {
+      ...(await labels.list()).map(l => {
         const line = Object.assign(document.createElement("div"), { className: "line" });
         const del = Object.assign(document.createElement("button"), { type: "button", textContent: "🗑️", title: "Delete label" });
-        del.onclick = () => {
-          if (confirm(`Delete the label “${l.name}”? It is removed from every note; the notes stay.`)) labels.remove(l.id).catch(e => said(`Could not delete the label: ${ctx.say(e)}`));
+        del.onclick = async () => {
+          if (await (await ctx.require("theme")).ask(del, { text: `Delete the label “${l.name}”? It is removed from every note; the notes stay.`, ok: "Delete" })) labels.remove(l.id).catch(e => said(`Could not delete the label: ${ctx.say(e)}`));
         };
         const name = Object.assign(document.createElement("input"), { value: l.name, maxLength: 50 });
         name.onchange = () => labels.rename(l.id, name.value).catch(e => ((name.value = l.name), said(`Could not rename: ${ctx.say(e)}`)));
@@ -436,11 +449,11 @@ export async function mount(ctx, el) {
   // THE TOP BAR while Notes is open: search, grid or list, and Notes or Archive.
   // Who may edit here: the composer says so when this person may not.
   const gate = () => {
-    const ok = !others && (!rs || rs.allows("edit", meId, "note"));
+    const ok = !others && (!rs || mayEdit);
     composer.hidden = !ok;
   };
   gate();
-  rs?.onChange(() => root.isConnected && (gate(), render()));
+  rs?.onChange(() => root.isConnected && decide().then(() => (gate(), render())));
   // THE TABS (`where`'s, in every app's order): Your notes · the app's own · Discover.
   const actions = () => {
     at.tabs([
@@ -452,7 +465,9 @@ export async function mount(ctx, el) {
   notesView = ctx.view(notesEl, {
     read: async () => {
       held = await at.read({ whole: true });
-      return { held, list, archive, label, pins: pins.refs?.("") ?? [], labels: labels.list().map(l => [l.id, l.name, labels.refs(l.id, "item:")]) };
+      const [pinRefs, ls] = await Promise.all([pins.refs(""), labels.list()]);
+      now = { pinned: new Set(pinRefs), labels: await Promise.all(ls.map(async l => ({ ...l, refs: await labels.refs(l.id, "item:") }))) };
+      return { held, list, archive, label, pins: pinRefs, labels: now.labels.map(l => [l.id, l.name, l.refs]) };
     },
     draw: () => drawNotes(),
     empty: () => false,

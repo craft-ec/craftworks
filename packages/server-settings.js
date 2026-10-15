@@ -220,7 +220,7 @@ export async function start(ctx) {
           };
           const del = ro && mayCompose
             ? el("button", { type: "button", className: "danger", textContent: "Delete", onclick: async () => {
-                if (!confirm(`Delete the role “${ro.name}”? Whoever holds it loses what it gave.`)) return;
+                if (!(await theme.ask(del, { text: `Delete the role “${ro.name}”? Whoever holds it loses what it gave.`, ok: "Delete" }))) return;
                 try {
                   await r.act({ act: "role", role: ro.id, on: false });
                   await r.refresh();

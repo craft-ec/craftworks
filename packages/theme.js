@@ -164,6 +164,16 @@ export async function start() {
     @keyframes cw-shimmer { to { background-position: -200% 0; } }
     @media (prefers-reduced-motion: reduce) { .cw-loading i { animation: none; } }
 }`;
+  style.textContent += `@layer components {
+    .cw-ask { position: fixed; z-index: 95; width: 300px; background: var(--cw-surface); color: var(--cw-fg); border: 1px solid var(--cw-line);
+      border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); padding: var(--cw-space-3); display: grid; gap: var(--cw-space-2); }
+    .cw-ask p { margin: 0; }
+    .cw-ask .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; }
+    /* A SYSTEM SHEET over an app (an item's editions): the host's, centred. */
+    .cw-sheet { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface);
+      color: var(--cw-fg); padding: var(--cw-space-3); display: grid; gap: var(--cw-space-2); }
+    .cw-sheet::backdrop { background: var(--cw-scrim); }
+  }`;
   document.head.append(style);
   // LOADING: what stands in place of something still on its way — a label and three shimmering lines. The one
   // placeholder: the loader's for a component, a component's for its own parts (a list, a room). `label` may change.
@@ -218,5 +228,39 @@ export async function start() {
       return inFlight;
     };
   }
-  return { loading, action };
+  // ASK, by the control (FOUNDATION §3): `await ask(anchor, { text, value?, ok? })` — a small panel next to `anchor`
+  // with `text`, an input where `value` is given (a string: its start), OK and Cancel: the input's text (or true) on
+  // OK or Enter, null on Cancel, Escape or a click outside. The one way a page asks or confirms — never the browser's
+  // prompt / confirm / alert (an app's frame has none: a dialog an app could fill with anything).
+  let asking = null;
+  function ask(anchor, { text, value = null, ok = "OK" } = {}) {
+    asking?.(null);
+    return new Promise(done => {
+      const box = Object.assign(document.createElement("form"), { className: "cw-ask" });
+      const input = value == null ? null : Object.assign(document.createElement("input"), { value, className: "field" });
+      const yes = Object.assign(document.createElement("button"), { type: "submit", className: "cw-btn primary", textContent: ok });
+      const no = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", textContent: "Cancel" });
+      const row = Object.assign(document.createElement("div"), { className: "row" });
+      row.append(no, yes);
+      box.append(Object.assign(document.createElement("p"), { textContent: text }), ...(input ? [input] : []), row);
+      const at = anchor?.getBoundingClientRect?.() ?? { left: innerWidth / 2 - 150, bottom: innerHeight / 3 };
+      box.style.left = `${Math.max(8, Math.min(at.left, innerWidth - 316))}px`;
+      box.style.top = `${Math.max(8, Math.min(at.bottom + 6, innerHeight - 160))}px`;
+      const outside = e => !box.contains(e.target) && finish(null);
+      const finish = v => {
+        asking = null;
+        box.remove();
+        removeEventListener("pointerdown", outside, true);
+        done(v);
+      };
+      asking = finish;
+      box.onsubmit = e => (e.preventDefault(), finish(input ? input.value : true));
+      no.onclick = () => finish(null);
+      box.onkeydown = e => e.key === "Escape" && finish(null);
+      document.body.append(box);
+      addEventListener("pointerdown", outside, true);
+      (input ?? yes).focus();
+    });
+  }
+  return { loading, action, ask };
 }

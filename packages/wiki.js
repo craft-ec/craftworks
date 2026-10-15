@@ -167,7 +167,7 @@ export async function mount(ctx, el) {
       );
     const fill = () => {
       const q = find.value.trim().toLowerCase();
-      if (!pages.length) return list.replaceChildren(h("p", { className: "none", textContent: wiki.mayEdit() ? "No pages yet: ＋ New page above, or link one as [[Its title]] and follow the link." : "No pages yet." }));
+      if (!pages.length) return list.replaceChildren(h("p", { className: "none", textContent: wiki.may.edit ? "No pages yet: ＋ New page above, or link one as [[Its title]] and follow the link." : "No pages yet." }));
       if (!q) return list.replaceChildren(branch(W.tree(pages)));
       const hits = pages.filter(p => p.title.toLowerCase().includes(q) || p.text.toLowerCase().includes(q));
       list.replaceChildren(
@@ -216,7 +216,7 @@ export async function mount(ctx, el) {
 
   // ── A NEW PAGE ──
   async function create({ at, wiki }, title) {
-    if (!wiki.mayEdit()) return root.replaceChildren(h("a", { href: at.href(""), textContent: "← Index" }), said(wiki.owner ? "Only its owner writes pages in this wiki." : "This space's rules do not let you write pages in its wiki."));
+    if (!wiki.may.edit) return root.replaceChildren(h("a", { href: at.href(""), textContent: "← Index" }), said(wiki.owner ? "Only its owner writes pages in this wiki." : "This space's rules do not let you write pages in its wiki."));
     const t = h("input", { type: "text", className: "title", placeholder: "Title", maxLength: 200, value: W.cleanTitle(title) });
     // Who sees it: yours, the one choice (a space's: as its wiki reads).
     const who = wiki.scope === "personal" ? await (await ctx.require("audience")).picker({ space: null, kind: "wiki", initial: "private" }) : null;
@@ -254,13 +254,13 @@ export async function mount(ctx, el) {
           h("div", { className: "tools" }, back),
           h("h1", { textContent: title || "Not here" }),
           h("p", { className: "none", textContent: title ? "There is no page with this title in this wiki yet." : "This page is not here, or not yours to read." }),
-          title && wiki.mayEdit() ? h("a", { className: "cw-btn primary", href: at.href(`new/${encodeURIComponent(title)}`), textContent: "Create it" }) : null,
+          title && wiki.may.edit ? h("a", { className: "cw-btn primary", href: at.href(`new/${encodeURIComponent(title)}`), textContent: "Create it" }) : null,
         ].filter(Boolean),
       );
     }
     const me = at.me;
-    const editor = wiki.mayEdit();
-    const writer = wiki.mayWrite();
+    const editor = wiki.may.edit;
+    const writer = wiki.may.write;
     const msg = h("div", {});
     const redraw = () => show(view, p.ref).catch(e => msg.replaceChildren(said(errText(e))));
     const say = (t, ok) => msg.replaceChildren(said(t, ok));
