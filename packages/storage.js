@@ -995,7 +995,8 @@ export async function start(ctx) {
       },
       // New writers: a member's devices changed (their card), or the members did (the group moved).
       watch: fn => {
-        addEventListener("craftworks:keys", fn);
+        const mine = e => !e.detail?.space || e.detail.space === sp.id;
+        addEventListener("craftworks:keys", e => mine(e) && fn());
         ctx.background("storage: async", (async () => {
           const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
           const members = (await keys.group(sp).ready.strict())?.members ?? [];
@@ -1007,7 +1008,8 @@ export async function start(ctx) {
             }
           };
           each();
-          addEventListener("craftworks:keys", async () => {
+          addEventListener("craftworks:keys", async e => {
+            if (!mine(e)) return;
             members.splice(0, members.length, ...((await keys.group(sp).ready())?.members ?? []));
             each();
           });
@@ -1204,9 +1206,14 @@ export async function start(ctx) {
       if (scope.departed?.(name)) ctx.background("storage: scope.departedTable", scope.departedTable().then(d => d.onChange(() => ctx.background("storage: gatherDeparted", gatherDeparted()))));
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
       const seen = new Set(others.filter(listed));
+      // The bag AS HELD answers; read again only for a writer it does not list (10-15, owner's trace: every directory
+      // change — each card read — read every space's bag again, one every ~5 s for as long as the page was open).
       scope.watch?.(async () => {
-        const b = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(true), () => bag) : null;
-        for (const o of await ctx.optional("storage: scope.writers", scope.writers(), () => [])) if (!seen.has(o) && (!scope.bag || b?.blind || b?.set.has(o))) seen.add(o), ctx.background("storage: gather", gather(o));
+        const fresh = (await ctx.optional("storage: scope.writers", scope.writers(), () => [])).filter(o => !seen.has(o));
+        if (!fresh.length) return;
+        let b = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(false), () => bag) : null;
+        if (b && !b.blind && fresh.some(o => !b.set.has(o))) b = await ctx.optional("storage: scope.bag", scope.bag(true), () => b);
+        for (const o of fresh) if (!scope.bag || b?.blind || b?.set.has(o)) seen.add(o), ctx.background("storage: gather", gather(o));
       });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key

@@ -145,8 +145,8 @@ export async function start(ctx) {
     }
     // Every EARLIER epoch this group's log hands on, from `st` back: each secret kept here, so rows sealed before this
     // node joined open too. How many were kept.
-    // Walked once per device: where the identity holds the epoch before this one and the first (a walk that finished
-    // left them all), nothing is read again — each step is a log read and a delegate call.
+    // Walked once per device: it stops at the first epoch below the top already held (an earlier walk went on from
+    // there) — each step is a log read and a delegate call.
     const held = async e => !!(await ctx.optional("keys: auth.identity.tableKeyAt", auth.identity.tableKeyAt(g.channel, e, g.space), () => null))?.tableKey;
     // `whole`: walked to the start whatever is held — a node that joined another BRANCH (a repair) holds its old
     // branch's keys for those epochs, not this one's.
@@ -165,6 +165,10 @@ export async function start(ctx) {
           gap ??= e;
           continue;
         }
+        // HELD ALREADY: a walk keeps every epoch it reaches, top down — one that met this one went on below it as far
+        // as the links reach. Nothing under it is read again (10-15, owner's trace: Craftworks' history has a gap at
+        // epoch 15, so epoch 0 is never held and the check above never passed — 43 log reads, ~85 s, every load).
+        if (!whole && e < st.epoch && (await held(e))) break;
         if (e < st.epoch) {
           await auth.identity.epochKeep(e, secret, g.space);
           n += 1;

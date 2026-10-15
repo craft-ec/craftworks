@@ -122,9 +122,11 @@ export async function start(ctx) {
   }
 
   // An epoch's key kept here (the account's group or a space's): `craftworks:keys`, so what was sealed with it and
-  // could not be opened before is opened now (`storage`).
-  const keysChanged = r => {
-    if (r?.mlsSaved) dispatchEvent(new CustomEvent("craftworks:keys"));
+  // could not be opened before is opened now (`storage`). It names its SPACE (hex; none: the account's group) — a
+  // space's tables follow only their own (10-15: one space's history walk, 43 keys kept, had every other space read
+  // its writers again on each).
+  const keysChanged = space => r => {
+    if (r?.mlsSaved) dispatchEvent(new CustomEvent("craftworks:keys", { detail: space?.length ? { space: [...space].map(x => x.toString(16).padStart(2, "0")).join("") } : {} }));
     return r;
   };
   const call = async ([id, frames], what, ms) => {
@@ -171,11 +173,11 @@ export async function start(ctx) {
     tableKey: table => call(core.frames_table_key(table, 0), `the key of “${table}”`),
     // The account's MLS group on this node: its state and the current epoch's secret, kept by the delegate (home only).
     // `space`: a space's id (bytes) — its own group — or none: the account's.
-    mlsSave: (state, epoch, secret, space = NONE) => call(core.frames_mls_save(state, epoch, secret, space), "keeping the group's keys").then(keysChanged),
+    mlsSave: (state, epoch, secret, space = NONE) => call(core.frames_mls_save(state, epoch, secret, space), "keeping the group's keys").then(keysChanged(space)),
     mlsLoad: (space = NONE) => call(core.frames_mls_load(space), "reading the group's keys"),
     // The space's EARLIER epochs' secrets held here (below `below`): `[[epoch, secretHex]…]` — for a member let in later.
     epochSecrets: (space, below) => call(core.frames_epoch_secrets(space, below), "the space's earlier keys").then(r => r?.epochs ?? []),
-    epochKeep: (epoch, secret, space = NONE) => call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key").then(keysChanged),
+    epochKeep: (epoch, secret, space = NONE) => call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key").then(keysChanged(space)),
     // A table's key in an MLS epoch (-1: the newest this node holds).
     tableKeyAt: (table, epoch = -1, space = NONE) => call(core.frames_table_key_at(table, epoch, space), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
