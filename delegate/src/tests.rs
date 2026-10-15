@@ -635,3 +635,41 @@ fn a_round_goes_on_without_a_silent_bag_but_never_without_a_spaces_writers_list(
         assert_eq!(said.contains("held back"), silent_writers, "{said}");
     }
 }
+
+/// A CROWDED NODE (10-15, fx: a dozen accounts with spaces on one node, and one person's admission round never came in
+/// 14 wake-ups): twelve others away, every one of their bags SILENT. Measured: the wake-ups until the owner's round
+/// starts — printed, and bounded by one turn each (a silent round ends within STUCK wake-ups).
+#[test]
+fn on_a_crowded_node_each_person_still_gets_a_turn() {
+    let mut w = world();
+    let (_, spaces) = identity::upkeep_mandate(&w.h, &MEMBER).unwrap();
+    for i in 0..12u8 {
+        let mut theirs = spaces[0].clone();
+        theirs.space = [0x40 + i; 32];
+        identity::upkeep_set_mandate(&mut w.h, &[0x01 + i; 32], "did:other", &[theirs]);
+    }
+    let mine: Vec<[u8; 32]> = {
+        let c = (BAG, crate::table::sealed_bag_address(&SPACE, "writers"));
+        vec![id(c.0, &c.1), id(BAG, &identity::invite_address(CODE)), id(BAG, &identity::invite_address(&upkeep::bag_name("stuck", &SPACE)))]
+    };
+    // The owner's turns: the wake-ups at which a round of theirs began. Between two: one turn around the others.
+    let mut turns = Vec::new();
+    for wake in 40u64..40 + 3 * 13 * (upkeep::STUCK + 2) {
+        identity::Host::set_secret(&mut w.h, identity::UPKEEP_WAKEUPS, &wake.to_le_bytes());
+        let ios = upkeep::woke(&mut w.h, NOW);
+        // Nobody's bags answer (a silent network): every round stalls, the owner's too, and is dropped or goes on.
+        // (By whose round began: the others' copied mandates share the owner's code — the same bag.)
+        let whose = identity::Host::get_secret(&w.h, upkeep::ROUND).filter(|r| r.len() >= 32).map(|r| r[..32].to_vec());
+        if !ios.is_empty() && whose.as_deref() == Some(&MEMBER[..]) && ios.iter().any(|io| matches!(io, Io::Get { id, .. } if mine.contains(id))) {
+            turns.push(wake);
+        }
+        if turns.len() == 2 {
+            break;
+        }
+    }
+    println!("owner's rounds began at wake-ups {turns:?}, with 12 others away and silent");
+    assert_eq!(turns.len(), 2, "the owner's second turn never came: {turns:?}");
+    let first = turns[1] - turns[0];
+    // One turn each, of at most STUCK wake-ups (a stalled round ends, and the next starts, in the same wake-up).
+    assert!(first <= 13 * upkeep::STUCK, "one turn each: {first} wake-ups for 13 people");
+}

@@ -198,6 +198,7 @@ pub fn id_of(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
 /// retried. The GETs to send.
 pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
     let w = wakeups(h);
+    let mut carry: Vec<Io> = Vec::new(); // what a stalled round that went on still sends, before the next round's GETs
     if let Some(mut r) = round(h) {
         if w.saturating_sub(r.moved) < STUCK {
             return Vec::new();
@@ -218,6 +219,7 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
         // requests with it): the round goes on with what answered. A bag that never answered adds no request; a space
         // whose WRITERS list never answered is held back whole — without it a request could be answered twice (each
         // request once: `rules::admission`). The next round reads them all again.
+        let mut went_on = false;
         if let Step::Requests { waiting } = &r.step {
             let held: Vec<[u8; 32]> = waiting.iter().filter(|(_, _, code)| code == WRITERS).map(|(_, space, _)| *space).collect();
             let silent = waiting.len();
@@ -229,34 +231,44 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
                 let member = r.member;
                 let spaces: Vec<String> = held.iter().map(|s| hex(&s[..6])).collect();
                 identity::upkeep_say(h, &member, &format!("{silent} bag(s) never answered: went on without them{}", if spaces.is_empty() { String::new() } else { format!(", space(s) {} held back (their writers list silent)", spaces.join(", ")) }));
-                return replied(h, Reply::Got { id, state: None }, now_ms);
+                let io = replied(h, Reply::Got { id, state: None }, now_ms);
+                // Still going (an asker to let in): its next step. Ended: the next person's round starts in this same
+                // wake-up (10-15, measured: returning here made each silent turn cost a wake-up more — 52 for 13 people
+                // where dropping took 39).
+                if round(h).is_some() {
+                    return io;
+                }
+                carry = io;
+                went_on = true;
             }
         }
         // DROPPED, SAID WHERE (a report carries what settles its cause): an asker's step, as that request's (the
         // `member` machine's, by the node); the bags' — which never answered — said.
-        let at = match &r.step {
-            Step::Requests { waiting } => {
-                let kinds: Vec<&str> = waiting.iter().map(|(_, _, code)| if ["writers", "stuck", "open", "level"].contains(&code.as_str()) { code.as_str() } else { "a code's" }).collect();
-                format!("{} bag(s) never answered ({})", waiting.len(), kinds.join(", "))
+        if !went_on {
+            let at = match &r.step {
+                Step::Requests { waiting } => {
+                    let kinds: Vec<&str> = waiting.iter().map(|(_, _, code)| if ["writers", "stuck", "open", "level"].contains(&code.as_str()) { code.as_str() } else { "a code's" }).collect();
+                    format!("{} bag(s) never answered ({})", waiting.len(), kinds.join(", "))
+                }
+                Step::KeyLog { .. } => "their key log never answered".into(),
+                Step::Card { .. } => "their card never answered".into(),
+                Step::CardBlocks { want, .. } => format!("{} of their card's blocks never answered", want.len()),
+                Step::Log { .. } => "the epoch's log never answered".into(),
+                Step::Commit { .. } => "the commit was never answered".into(),
+                Step::Next { .. } => "the next epoch's log never answered".into(),
+                Step::Welcome { .. } => "the welcome was not taken in 5 tries".into(),
+            };
+            match &r.step {
+                Step::KeyLog { ask } | Step::Card { ask, .. } | Step::CardBlocks { ask, .. } | Step::Log { ask, .. } | Step::Commit { ask, .. } | Step::Next { ask, .. } | Step::Welcome { ask, .. } => {
+                    let ask = ask.clone();
+                    decided(h, &r.member, &ask, "fail", &format!("the round stalled: {at}"), now_ms);
+                }
+                Step::Requests { .. } => identity::upkeep_say(h, &r.member, &format!("a round did not finish: dropped — {at}")),
             }
-            Step::KeyLog { .. } => "their key log never answered".into(),
-            Step::Card { .. } => "their card never answered".into(),
-            Step::CardBlocks { want, .. } => format!("{} of their card's blocks never answered", want.len()),
-            Step::Log { .. } => "the epoch's log never answered".into(),
-            Step::Commit { .. } => "the commit was never answered".into(),
-            Step::Next { .. } => "the next epoch's log never answered".into(),
-            Step::Welcome { .. } => "the welcome was not taken in 5 tries".into(),
-        };
-        match &r.step {
-            Step::KeyLog { ask } | Step::Card { ask, .. } | Step::CardBlocks { ask, .. } | Step::Log { ask, .. } | Step::Commit { ask, .. } | Step::Next { ask, .. } | Step::Welcome { ask, .. } => {
-                let ask = ask.clone();
-                decided(h, &r.member, &ask, "fail", &format!("the round stalled: {at}"), now_ms);
-            }
-            Step::Requests { .. } => identity::upkeep_say(h, &r.member, &format!("a round did not finish: dropped — {at}")),
+            keep(h, None);
         }
-        keep(h, None);
     }
-    let Some(c) = codes(h) else { return Vec::new() };
+    let Some(c) = codes(h) else { return carry };
     // EACH PERSON IN TURN (10-14, measured on fx: with a dozen accounts on one node, each wake-up went to the first of
     // them away — one person was never upkept): from the one after the member last served, the first whose page is
     // away and who has a request bag to read.
@@ -290,13 +302,14 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
         if waiting.is_empty() {
             continue;
         }
-        let io = waiting.iter().map(|(id, _, _)| Io::Get { id: *id, subscribe: true }).collect();
+        let io: Vec<Io> = waiting.iter().map(|(id, _, _)| Io::Get { id: *id, subscribe: true }).collect();
         keep(h, Some(&Round { member, step: Step::Requests { waiting }, asks: Vec::new(), heard: Vec::new(), pending: Vec::new(), moved: w }));
         h.set_secret(LAST_SERVED, &member);
         identity::upkeep_set_round_at(h, &member, w);
-        return io;
+        carry.extend(io);
+        return carry;
     }
-    Vec::new()
+    carry
 }
 
 /// An ANSWER from the network: the round moved on. What to send next.
