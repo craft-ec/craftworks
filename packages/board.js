@@ -47,7 +47,7 @@ export async function mount(ctx, el) {
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Posts", href: base(), on: page }] : []),
-        ...(at.who === "mine" || at.who === "discover" ? [{ label: "Feed", href: "#/board/feed", on: !!w.feed }] : []),
+        ...(at.who === "mine" || at.who === "discover" ? [{ label: "Following", href: "#/board/feed", on: !!w.feed, role: "feed" }] : []),
       ],
       { yoursOn: page && w.by === me, create: { label: "Post", href: at.space ? `${base()}/submit` : "#/board/submit", on: !!w.submit } },
     );

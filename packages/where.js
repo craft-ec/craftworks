@@ -97,7 +97,10 @@ export async function start(ctx) {
       ? ctx.optional("where: Promise.all", Promise.all([ctx.require("app-settings"), roles.of.strict(sp)]).then(([st, r]) => st.has(app) && r.can(me, "apps")), () => false)
       : Promise.resolve(false);
     let mayConfigure = false;
-    const tabs = (extra = [], { yoursOn = true, before = [], create = null } = {}) => {
+    // Each entry's ROLE, where the side panel puts it (owner 10-15, YouTube's: Home · Subscriptions, then You): `discover`,
+    // `feed` (what you follow — `feed: true` where the app's own page IS its feed, as Videos'), `you` (yours, saved,
+    // the app's extras unless they say otherwise), `create`.
+    const tabs = (extra = [], { yoursOn = true, before = [], create = null, feed = false } = {}) => {
       settingsRead.then(ok => ok && ((mayConfigure = true), draw()));
       const draw = () => {
       const home = who === "mine" || who === "discover";
@@ -105,18 +108,18 @@ export async function start(ctx) {
       // (as at Log out: nothing made for the guest reaches the session).
       ctx.actions[ctx.route] = !me
         ? [
-            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
-            ...extra.filter(e => e.public),
-            { label: "Log in", run: async () => (await (await ctx.require("login")).session()) && location.reload(), end: true },
+            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover", role: "discover" }] : []),
+            ...extra.filter(e => e.public).map(e => ({ role: "you", ...e })),
+            { label: "Log in", run: async () => (await (await ctx.require("login")).session()) && location.reload(), end: true, role: "create" },
           ]
         : [
-            ...(home ? before : []),
-            ...(home || sp ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn }] : []),
-            ...extra,
-            ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings" }] : []),
-            ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved }] : []),
-            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover" }] : []),
-            ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true }] : []),
+            ...(home ? before.map(e => ({ role: "you", ...e })) : []),
+            ...(home || sp ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn, role: feed && !sp ? "feed" : "you" }] : []),
+            ...extra.map(e => ({ role: "you", ...e })),
+            ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings", role: "you" }] : []),
+            ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved, role: "you" }] : []),
+            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover", role: "discover" }] : []),
+            ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true, role: "create" }] : []),
           ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
       };

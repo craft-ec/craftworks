@@ -78,6 +78,7 @@ export async function mount(ctx, el) {
     // THE TABS (`where`'s, in every app's order): Following · yours · Saved · Discover; Upload where you may.
     at.tabs([], {
       yoursOn: !!w.feed && !w.saved,
+      feed: true, // (its own page is what you follow: the side panel's Following)
       // Yours first, as every app's: your channel, then the feed of those you follow.
       before: [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }],
       create: { label: "Upload", href: at.space ? `${base()}/up` : `#/${C.app}/up`, on: !!w.up },
