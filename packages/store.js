@@ -17,25 +17,29 @@ export async function mount(ctx, el) {
   }</style><div class="st"></div>`;
   const root = el.querySelector(".st");
   const said = h("p", { className: "said", hidden: true });
-  async function draw() {
-    const have = new Set((await installed.list()).map(a => a.route));
-    const byCat = [...(ctx.apps ?? [])].sort((a, b) => String(a.category).localeCompare(String(b.category)) || a.name.localeCompare(b.name));
-    root.replaceChildren(
-      h("h2", { textContent: "App Store" }),
-      h(
+  // THE CATALOG: a VIEW (`ctx.view`) — what is installed read, drawn, and drawn again when it changes (here or on
+  // another device of the account).
+  const list = h("div");
+  root.replaceChildren(h("h2", { textContent: "App Store" }), list, said);
+  const v = ctx.view(list, {
+    read: async () => [...(await installed.list()).map(a => a.route)].sort(),
+    draw: haveList => {
+      const have = new Set(haveList);
+      const byCat = [...(ctx.apps ?? [])].sort((a, b) => String(a.category).localeCompare(String(b.category)) || a.name.localeCompare(b.name));
+      return h(
         "ul",
         {},
         ...byCat.map(a => {
           const on = have.has(a.route);
           const b = h("button", { type: "button", className: on ? "" : "main", textContent: installed.system(a.route) ? "System" : on ? "Remove" : "Install", disabled: installed.system(a.route) });
-          b.onclick = () => installed.set(a.route, !on).then(draw, e => ((said.textContent = ctx.say(e)), (said.hidden = false)));
+          b.onclick = () => installed.set(a.route, !on).then(() => v.refresh(), e => ((said.textContent = ctx.say(e)), (said.hidden = false)));
           const needs = (a.needs ?? []).length ? `In a space, it needs: ${a.needs.join(", ")}` : "Your own space only";
           return h("li", {}, h("span", { className: "ic", textContent: a.icon ?? "▫️" }), h("div", {}, h("strong", { textContent: `${a.name} · ${a.category ?? ""}` }), h("small", { textContent: a.about ?? "" }), h("small", { textContent: needs })), b);
         }),
-      ),
-      said,
-    );
-  }
-  addEventListener("craftworks:installed", () => el.isConnected && draw(), { signal: ctx.signal });
-  await draw();
+      );
+    },
+    // (Nothing installed is still a catalog to draw.)
+    empty: () => false,
+  });
+  addEventListener("craftworks:installed", () => el.isConnected && v.refresh(), { signal: ctx.signal });
 }

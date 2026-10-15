@@ -3,7 +3,7 @@
 // own, its author's (`items.tagsOf`: what it is, for everyone); NSFW stays hidden unless chosen (`items.list`).
 export async function mount(ctx, el) {
   const [items, cards, actions, theme, kinds] = await Promise.all(["items", "cards", "actions", "theme", "kinds"].map(n => ctx.require(n)));
-  const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
+  const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() }); // (draw: below)
   const tagNow = () => decodeURIComponent(String(ctx.sub ?? "").split("/")[0] ?? "").toLowerCase();
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
@@ -17,30 +17,37 @@ export async function mount(ctx, el) {
       .tg .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cw-space-3); align-items: start; }
       .tg .none { color: var(--cw-muted); }
     }</style>
-    <div class="tg"><h2></h2><div class="bar"></div><div class="grid"></div></div>`;
-  const grid = el.querySelector(".grid");
+    <div class="tg"><h2></h2><div class="bar"></div><div class="results"></div></div>`;
+  const grid = el.querySelector(".results");
   // Every kind that stands on its own and has a look (a channel is a place, a folder Drive's, a delegation Vote's record).
   const shown = kinds.all().filter(k => !["channel", "folder", "delegation"].includes(k));
-  async function draw() {
-    const tag = tagNow();
-    el.querySelector("h2").textContent = `#${tag}`;
+  // THE RESULTS: a VIEW (`ctx.view` — loading, empty, redrawn when what it read changes); the tag's own cards.
+  const results = ctx.view(grid, {
+    read: async () => {
+      const tag = tagNow();
+      const [mine, open] = await Promise.all([
+        items.list({ feed: true, tag }, bar.sort(), shown, bar.options()),
+        items.list({ discover: true, tag }, bar.sort(), shown, bar.options()),
+      ]);
+      const seen = new Set();
+      return bar.reorder([...mine, ...open].filter(p => !seen.has(p.ref) && seen.add(p.ref)));
+    },
+    draw: list =>
+      h(
+        "div",
+        { className: "grid" },
+        ...list.map(p => {
+          const open = () => (location.hash = items.pageOf(p.ref, p.kind));
+          return cards.card(p, { open, actions: [actions.bar(p, { open, changed: () => results.refresh(), removed: () => results.refresh() })] });
+        }),
+      ),
+    looks: { empty: () => h("p", { className: "none", textContent: `Nothing tagged #${tagNow()} ${bar.span()}.` }), loading: () => theme.loading(`Finding #${tagNow()}…`) },
+  });
+  function draw() {
+    el.querySelector("h2").textContent = `#${tagNow()}`;
     el.querySelector(".bar").replaceChildren(bar.el());
-    grid.replaceChildren(theme.loading(`Finding #${tag}…`));
-    const [mine, open] = await Promise.all([
-      items.list({ feed: true, tag }, bar.sort(), shown, bar.options()),
-      items.list({ discover: true, tag }, bar.sort(), shown, bar.options()),
-    ]);
-    const seen = new Set();
-    const list = bar.reorder([...mine, ...open].filter(p => !seen.has(p.ref) && seen.add(p.ref)));
-    grid.replaceChildren(
-      ...(list.length
-        ? list.map(p => {
-            const open = () => (location.hash = items.pageOf(p.ref, p.kind));
-            return cards.card(p, { open, actions: [actions.bar(p, { open, changed: () => draw(), removed: () => draw() })] });
-          })
-        : [h("p", { className: "none", textContent: `Nothing tagged #${tag} ${bar.span()}.` })]),
-    );
+    return results.refresh();
   }
-  await draw();
+  draw();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/tag" && draw());
 }

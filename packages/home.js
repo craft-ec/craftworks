@@ -96,26 +96,32 @@ export async function mount(ctx, el) {
     addEventListener("craftworks:installed", async () => ((have = new Set((await installed.list()).map(a => a.route))), desk.redraw()), { signal: ctx.signal });
     // PINNED IN A SPACE (the spaces' own Homes, which kept these pins — `app:/s/<space>/<route>` — went with the
     // desktop; audit 10-13): each still opens that app in that space.
-    ctx.background("home: space pins", ctx.require("edge").then(async edge => {
-      const pins = await edge.pins();
-      const space = await ctx.require("space");
-      const box = el.querySelector(".space-pins");
-      const draw = async () => {
+    // A VIEW (`ctx.view`): read, drawn, drawn again when the pins or the spaces change.
+    const [edge, space] = await Promise.all([ctx.require("edge"), ctx.require("space")]);
+    const box = el.querySelector(".space-pins");
+    box.hidden = false;
+    ctx.view(box, {
+      read: async () => {
+        const pins = await edge.pins();
         const list = [...(pins.refs?.("app:/s/") ?? [])].map(k => /^app:\/s\/([0-9a-f]{64})(\/[^/]+)/.exec(k)).filter(Boolean);
-        if (!list.length || !box) return void (box && (box.hidden = true));
+        if (!list.length) return [];
         const mine = await space.mine();
-        const a = document.createElement("ul");
-        for (const [, id, route] of list) {
+        return list.map(([, id, route]) => {
           const app = ctx.apps.find(x => x.route === route);
           const sp = mine.find(x => x.id === id);
-          a.append(Object.assign(document.createElement("li"), {}).appendChild(Object.assign(document.createElement("a"), { href: `#/s/${id}${route}`, textContent: `${app?.icon ?? "📌"} ${app?.name ?? route.slice(1)} · ${sp ? space.shown(sp) : `a space #${id.slice(0, 6)}`}` })).parentNode);
-        }
-        box.replaceChildren(Object.assign(document.createElement("h3"), { textContent: "Pinned in your spaces" }), a);
-        box.hidden = false;
-      };
-      pins.onChange?.(draw);
-      await draw();
-    }));
+          return { href: `#/s/${id}${route}`, text: `${app?.icon ?? "📌"} ${app?.name ?? route.slice(1)} · ${sp ? space.shown(sp) : `a space #${id.slice(0, 6)}`}` };
+        });
+      },
+      draw: list => {
+        const ul = document.createElement("ul");
+        for (const x of list) ul.append(Object.assign(document.createElement("li")).appendChild(Object.assign(document.createElement("a"), { href: x.href, textContent: x.text })).parentNode);
+        const wrap = document.createElement("div");
+        wrap.append(Object.assign(document.createElement("h3"), { textContent: "Pinned in your spaces" }), ul);
+        return wrap;
+      },
+      // (None pinned in a space: nothing shown — not a line saying so.)
+      looks: { empty: () => document.createTextNode(""), loading: () => document.createTextNode(""), failed: () => document.createTextNode("") },
+    });
     // What is new in each app: its badge, kept current.
     ctx.background("home: ctx.require", ctx.require("activity").then(a => {
       activity = a;
