@@ -78,11 +78,6 @@ export async function start(ctx) {
   // writer's feed, a place in a list) before showing what it has, the rest merged as it comes; `hint`, a fact that only
   // spares work (a space's writers bag), never waited on longer.
   const WAIT = { hint: 1500, show: 5000, ask: 30000, answer: 120000 };
-  // BACKOFF: `task` again and again — 5 s, doubling, to every 5 min — until it says it is done (`true`).
-  const backoff = task => {
-    const again = (n = 0) => setTimeout(async () => ((await ctx.optional("node: task", task(), () => false)) ? null : again(n + 1)), Math.min(5000 * 2 ** n, 300000));
-    again();
-  };
   // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is a `transient` fault with its
   // reason (`ms`, and whether the node was being reconnected to). `ms`: WAIT.ask unless said.
   // `signal` (an AbortSignal): no longer wanted — taken off the list at once (a race won by another: its losers), a
@@ -188,13 +183,87 @@ export async function start(ctx) {
       check();
     });
 
-  // READ a contract (its 32-byte id) so the core holds its state — THE page's one GET of a whole contract into the core:
-  // true when the node had it. `absent: true`: a contract the node does not have is marked "read, not there"
+  // THE DOOR (FOUNDATION §2 R6): every contract that can change is read here, ONCE, and then FOLLOWED — the first GET
+  // subscribes, the node pushes each change, the core keeps the copy (`held_state`, a tail's view). Its read state, per
+  // contract: UNKNOWN (not asked, or silent) → ASKED → HELD; ABSENT (the node answered not found); STALE (the
+  // connection was lost: what it followed may have moved). A read of a HELD contract answers `{ held: true }` with no
+  // GET — whatever the caller calls the read. ABSENT is asked again only here, on the one backoff (5 s doubling to
+  // 5 min), and only while someone follows it (`onContract`). Every GET is said in the trace with its reason (`first`,
+  // `stale`, `absent again`): a page's reads are counted where they are made.
+  //   contract(hexId, what, { frames, match, ms }) → `{ held: true }` | the node's answer (`get-failed`: absent)
+  //   onContract(hexId, fn)   fn(said) on each push, and when an absent one appears
+  //   changed(hexId)          this page wrote it: read again on the next ask (its own write's answer is not a push)
+  const reads = new Map(); // hexId → { s, p, said, n, at, fns, timer, frames, match, what }
+  const AGAIN = n => Math.min(5000 * 2 ** n, 300000);
+  const isAbsent = said => said.kind === "get-failed";
+  function contract(hexId, what, { frames, match, ms = WAIT.ask }) {
+    let r = reads.get(hexId);
+    if (!r) reads.set(hexId, (r = { s: "UNKNOWN", n: 0, fns: new Set() }));
+    Object.assign(r, { frames, match, what });
+    if (r.s === "HELD") return Promise.resolve({ held: true });
+    if (r.s === "ASKED") return r.p;
+    if (r.s === "ABSENT" && Date.now() - r.at < AGAIN(r.n)) return Promise.resolve(r.said);
+    const why = r.s === "UNKNOWN" ? "first" : r.s === "STALE" ? "stale" : "absent again";
+    r.n = r.s === "ABSENT" ? r.n + 1 : 0;
+    r.s = "ASKED";
+    r.gets = (r.gets ?? 0) + 1;
+    if (why !== "first") ctx.log("read", { what: `${what} (${why})` });
+    r.p = ask(frames(), match, what, ms).then(
+      said => {
+        r.said = said;
+        r.at = Date.now();
+        r.s = isAbsent(said) ? "ABSENT" : "HELD";
+        if (r.s === "ABSENT" && r.fns.size) again(hexId);
+        return said;
+      },
+      e => ((r.s = "UNKNOWN"), Promise.reject(e)),
+    );
+    return r.p;
+  }
+  // ABSENT and followed: asked again on the backoff until it appears (then its followers are told), or nobody follows.
+  function again(hexId) {
+    const r = reads.get(hexId);
+    if (!r || r.timer) return;
+    r.timer = setTimeout(async () => {
+      r.timer = null;
+      if (!r.fns.size || r.s !== "ABSENT") return;
+      const said = await ctx.optional("node: contract again", contract(hexId, r.what, r), () => null);
+      if (said && !isAbsent(said)) for (const f of r.fns) f(said);
+    }, AGAIN(r.n));
+  }
+  function onContract(hexId, fn) {
+    let r = reads.get(hexId);
+    if (!r) reads.set(hexId, (r = { s: "UNKNOWN", n: 0, fns: new Set() }));
+    r.fns.add(fn);
+    if (r.s === "ABSENT") again(hexId);
+    return () => r.fns.delete(fn);
+  }
+  // (Its copy dropped too: the core's steps then want it read, and the door reads it — never a step on the old state.)
+  const changed = hexId => {
+    core.take_got(hexId);
+    const r = reads.get(hexId);
+    if (r && r.s !== "ASKED") r.s = "STALE";
+  };
+  // A PUSH: the core holds the new state (a tail's view, or `held_state`); the contract is HELD, its followers told.
+  listen(said => {
+    const hexId = said.kind === "changed" ? said.id : said.kind?.startsWith("tail") ? said.id : null;
+    const r = hexId && reads.get(hexId);
+    if (!r) return;
+    if (r.s !== "ASKED") r.s = "HELD";
+    for (const f of r.fns) f(said);
+  });
+  // The connection lost and back: what was followed may have moved meanwhile — each read again once (and followed again).
+  addEventListener("craftworks:node-back", () => {
+    for (const r of reads.values()) if (r.s === "HELD") r.s = "STALE";
+  });
+
+  // READ a contract (its 32-byte id) so the core holds its state (`held_state`): true when the node has it. Through the
+  // door: read once, then followed. `absent: true`: a contract the node does not have is marked "read, not there"
   // (`core.not_there`), so the core's steps tell it from "not read yet".
   async function read(id, what, { absent = false, ms = 30000 } = {}) {
-    const [hexId, frames] = core.frames_get(id);
-    // (No answer in time throws, as `ask` does: the caller decides whether silence is "not there".)
-    const said = await ask(frames, s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, what, ms);
+    const hexId = [...id].map(x => x.toString(16).padStart(2, "0")).join("");
+    const said = await contract(hexId, what, { frames: () => core.frames_follow(id)[1], match: s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, ms });
+    if (said.held) return true;
     if (said.kind !== "got" && absent) core.not_there(id);
     return said.kind === "got";
   }
@@ -202,5 +271,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, read, slot, listen, url, drop: () => ws.close(), WAIT, backoff, idle, busy: () => waiters.length, inFlight, waits };
+  return { core, glue, ask, read, contract, onContract, changed, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
 }

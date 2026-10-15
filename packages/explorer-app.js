@@ -56,7 +56,7 @@ export async function mount(ctx, el) {
   const stateOf = async idBytes => {
     const idHex = hexOf(idBytes);
     await tokens.read(idHex);
-    return core.take_got(idHex) ?? null;
+    return core.held_state(idHex) ?? null;
   };
 
   async function draw() {

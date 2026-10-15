@@ -9,6 +9,8 @@ node "$(cd "$(dirname "$0")" && pwd)/tools/style-check.mjs"
 node "$(cd "$(dirname "$0")" && pwd)/tools/failure-check.mjs"
 # LETTING SOMEONE INTO A GROUP HAS ONE IMPLEMENTATION: one request, one rule, one welcome, one turn (tools/group-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/group-check.mjs"
+# EVERY CONTRACT THAT CAN CHANGE IS READ ONCE, THEN FOLLOWED: one door, no GET or retry loop elsewhere (tools/read-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/read-check.mjs"
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"

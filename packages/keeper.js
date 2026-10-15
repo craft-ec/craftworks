@@ -94,7 +94,7 @@ export async function start(ctx) {
       const key = n.key.toLowerCase();
       const id = tokens.hexOf(Core.keeper_record_id(standingCode, beaconCode, tokens.beacon, tokens.bytes(key)));
       await tokens.read(id);
-      const rec = core.take_got(id);
+      const rec = core.held_state(id);
       const answered = (rec ? Core.standing_read(rec) : []).find(x => x.epoch === epoch - 1)?.answers ?? 0;
       if (!best || answered > best.answered || (answered === best.answered && key < best.key)) best = { key, answered };
     }
@@ -195,7 +195,7 @@ export async function start(ctx) {
         const hashes = [];
         for (const id of asked) {
           await tokens.read(id);
-          const piece = core.take_got(id) ?? new Uint8Array(0);
+          const piece = core.held_state(id) ?? new Uint8Array(0);
           hashes.push([id, await beaconSvc.sealed(public_, bytes(id), piece, out)]);
         }
         const r = await run(sigs => core.keeper_answer(standingCode, beaconCode, beacon, public_, x, out, self.hosted, hashes, sigs));

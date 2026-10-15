@@ -26,7 +26,7 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   // Who may read and write a table here: the person's grant for this site, and the table's key that comes with it.
   const access = await ctx.require("access");
-  const { core, glue, ask, listen, WAIT, backoff } = await ctx.require("node");
+  const { core, glue, ask, listen, WAIT, contract, onContract, changed: wrote } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
   // A table's tree lives in Sealed contracts, sealed whole (a public table's, in Block contracts): the core names them
   // from this code.
@@ -529,11 +529,15 @@ export async function start(ctx) {
 
     // Read it and follow it. None on the network: its first write is a PUT. No answer at all: the same as none, so
     // it opens empty; a first write the network then refuses resets it and reads it again.
-    async function read(ms = wait) {
-      const [, frames] = core.tail_get(id);
+    // Through the DOOR (FOUNDATION §2 R6): read once and followed; a HELD tail answers from the core's copy (its view,
+    // with whatever keys are held now) — no GET. `again`: this page knows its copy is wrong (a write refused, its tail
+    // reset): read from the node.
+    async function read(ms = wait, { again = false } = {}) {
+      if (again) wrote(idHex);
       let said;
       try {
-        said = await ask(frames, x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, `reading ${app}`, ms);
+        said = await contract(idHex, `reading ${app}`, { frames: () => core.tail_get(id)[1], match: x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, ms });
+        if (said.held) said = JSON.parse(core.tail_view(id));
         answered = true;
       } catch (e) {
         // SILENT: shown empty, but UNKNOWN — never "not there" (R1: nothing is made over a table not answered for).
@@ -604,7 +608,7 @@ export async function start(ctx) {
           const t0 = Date.now();
           for (let wait = 250; core.tail_next(id) <= e.forkedAt && Date.now() - t0 < FORK_WAIT; wait = Math.min(wait * 2, 4000)) {
             await new Promise(r => setTimeout(r, wait));
-            await read();
+            await read(undefined, { again: true });
           }
           if (core.tail_next(id) > e.forkedAt) {
             await new Promise(r => setTimeout(r, 50 + Math.random() * 250 * Math.min(attempt + 1, 4)));
@@ -671,7 +675,7 @@ export async function start(ctx) {
       });
       if (refused) {
         core.tail_reset(id);
-        await read();
+        await read(wait, { again: true });
         const err = new Error(`the write was refused: ${refused}`);
         const fork = /WouldFork \{ last_seq: (\d+) \}/.exec(refused);
         if (fork) err.forkedAt = Number(fork[1]);
@@ -781,7 +785,7 @@ export async function start(ctx) {
             await blocks.put(f.puts, app);
           } catch (e) {
             core.tail_reset(id);
-            await read();
+            await read(wait, { again: true });
             throw e;
           }
           return (made = f);
@@ -1032,14 +1036,12 @@ export async function start(ctx) {
   // A writer's catalog not there yet (a device that has not written here): asked again, soon at first (it may be
   // writing now), then less and less often, to every 5 min — each ask of a missing contract is a whole network search
   // (6 s to over a minute on the node). ONE poll per catalog, however many tables wait on it (each follows its changes).
+  // Followed through the door (R6): the door alone asks again on its backoff, and says when it appears.
   const polled = new Set();
   function absentCatalog(c) {
     if (polled.has(c)) return;
     polled.add(c);
-    backoff(async () => {
-      await ctx.background("storage: c.reread", c.reread());
-      return !c.absent && polled.delete(c);
-    });
+    const stop = onContract(hexOf(c.id), () => ctx.background("storage: c.reread", c.reread().then(() => !c.absent && (polled.delete(c), stop()))));
   }
 
   // A TABLE: the merge of its writers' feeds, and this node's feed to write.
@@ -1087,18 +1089,17 @@ export async function start(ctx) {
       }
   }
 
-  // The bag READ AGAIN now and then (5 s, doubling, to every 5 min): each read's set handed to every table of the
-  // space that waits on new writers — one read for the whole space, however many tables.
+  // The bag FOLLOWED (R6): each change the node pushes hands its set to every table of the space that waits on new
+  // writers — one follow for the whole space, however many tables; never read again on a timer.
   const bagPolls = new Map(); // space id → [fn]
   function pollBag(sp, scope, fn) {
     if (bagPolls.has(sp.id)) return void bagPolls.get(sp.id).push(fn);
     const fns = [fn];
     bagPolls.set(sp.id, fns);
-    backoff(async () => {
+    ctx.background("storage: bag follow", ctx.require("index").then(index => index.watchSpace(sp, "writers", async () => {
       const b = await ctx.optional("storage: scope.bag", scope.bag(true), () => null);
       if (b) for (const f of fns) f(b.set);
-      return false;
-    });
+    })));
   }
 
   const tables = new Map(); // scope + name -> Promise<table>

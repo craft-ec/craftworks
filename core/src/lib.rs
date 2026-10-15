@@ -782,12 +782,18 @@ impl Core {
                 key,
                 state: Some(state),
             } => {
-                match freenet_stdlib::prelude::ContractInstanceId::from_base58(&key)
-                    .ok()
-                    .and_then(|i| self.tail_state(*i, &state))
-                {
+                let Some(id) = freenet_stdlib::prelude::ContractInstanceId::from_base58(&key).ok().map(|i| *i) else {
+                    return json!({ "kind": "changed", "key": key });
+                };
+                match self.tail_state(id, &state) {
                     Some(v) => v,
-                    None => json!({ "kind": "changed", "key": key }),
+                    // ANY OTHER followed contract (a bag, a key log, a register): its pushed state HELD as its copy
+                    // (FOUNDATION §2 R6) — a read of it answers from here, never another GET (10-15: the state was dropped
+                    // and every reader asked the node again).
+                    None => {
+                        self.got.insert(id, state);
+                        json!({ "kind": "changed", "key": key, "id": hex(&id) })
+                    }
                 }
             }
             Incoming::Ack(AckKind::Updated(key)) => json!({ "kind": "updated", "key": key }),
@@ -3650,7 +3656,14 @@ mod js {
 
     #[wasm_bindgen]
     impl CraftworksCore {
-        /// The state the node sent for a contract (hex id), taken: or null.
+        /// A FOLLOWED contract's state as held (hex id) — its first read's, or its newest push's: or null. Not taken: it
+        /// is the page's copy (FOUNDATION §2 R6), read as often as wanted with no GET.
+        pub fn held_state(&self, id_hex: &str) -> Result<JsValue, JsValue> {
+            let id = bytes32("held", id_hex).map_err(err)?;
+            Ok(self.0.got(&id).map(|s| JsValue::from(js_sys::Uint8Array::from(s))).unwrap_or(JsValue::NULL))
+        }
+
+        /// The state the node sent for an immutable read (a block, a file piece: hex id), taken — freed once used: or null.
         pub fn take_got(&mut self, id_hex: &str) -> Result<JsValue, JsValue> {
             let id = bytes32("got", id_hex).map_err(err)?;
             Ok(self

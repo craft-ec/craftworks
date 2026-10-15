@@ -59,7 +59,7 @@ export async function mount(ctx, el) {
     const stateOf = async idBytes => {
       const id = hexOf(idBytes);
       await tokens.read(id);
-      return core.take_got(id) ?? null;
+      return core.held_state(id) ?? null;
     };
     // The witness SEAT: the account's place among the VALID STAKERS of this claims epoch (and the next, as far as its
     // claims are accepted yet), naming one node's key.

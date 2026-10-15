@@ -58,8 +58,7 @@ self.onmessage = async e => {
 
   // READ it (`node.read`): its state (bytes), or null (not there yet).
   async function read() {
-    core.take_got(id);
-    return (await ctx.optional("beacon: node.read", node.read(idBytes, "reading the beacon"), () => false)) ? core.take_got(id) : null;
+    return (await ctx.optional("beacon: node.read", node.read(idBytes, "reading the beacon"), () => false)) ? core.held_state(id) : null;
   }
   const heightOf = st => (st ? glue.CraftworksCore.beacon_state_height(st) : null);
 

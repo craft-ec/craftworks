@@ -35,6 +35,8 @@ export async function start(ctx) {
   async function put(p, what) {
     const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", what, 60000);
     if (said.kind !== "put") throw new Error(`the node refused ${what} (${said.said})`);
+    // Written here: the door's copy is the old one — read again on the next ask.
+    if (p.idBytes) node.changed([...p.idBytes].map(x => x.toString(16).padStart(2, "0")).join(""));
   }
   const get = (id, what) => node.read(id, what);
   const codes = () => Promise.all(["idlog-wasm", "register-wasm", "devices-wasm"].map(n => ctx.require(n)));

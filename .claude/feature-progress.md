@@ -1,3 +1,24 @@
+# Reads: once, then followed (FOUNDATION §2 R6) — started 10-15
+
+Owner 10-15: "we should not be making unnecessary call … i feel like we are getting the data new all the time";
+"do the whole fix" (no release of the 4f6804d patches on their own).
+
+Phases (each: build, fx probe with a control, commit):
+- [x] 1 core: a pushed change of ANY followed contract stores its state (`HeadChanged` → `got`), not only tails.
+- [x] 2 node: `node.contract(id)` — the one door, read state per contract (UNKNOWN/ASKED/HELD/ABSENT/STALE),
+      subscribe on first read, HELD answers from the copy, ABSENT re-asked by the door's one backoff, reconnect → STALE,
+      `onContract(id, fn)`; `node.read` and `take_got` callers moved onto it.
+- [x] 3 index: bags through the door (inbox, requests, pointers, sealed bags, chains); watchers from `onContract`.
+- [x] 4 storage: tails through the door; `reread`/`writersBag(fresh)`/`pollBag`/`absentCatalog` retired.
+- [x] 5 build check `tools/read-check.mjs` (GET doors, take_got, backoff, fresh flags) with a positive control.
+- [~] 6 fx probe: reload 37 contracts / 46 GETs (repeats: an absent catalog on the door's backoff, the health bag's
+      own read-back); frames sent per reload 155 → 117 vs old; other-space key events: bag reads 5 → 0; two-page write
+      race 97/97; admission with A's page open + loop check pass. OPEN: A's node never let C in with A's page closed —
+      the pre-door control fails the same on the crowded fx (≈ a dozen accounts), so not the door; whether 2de2571
+      (live v392) or crowding: settle with a delegate test (N members on one node, wake-ups until each is served).
+- [ ] 7 R3: the 6 `location.reload`s retired (reopen on key arrival).
+Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.
+
 # Auth, identity and data — progress
 
 Owner (2026-09-27): build auth, identity and data together, to the end design (ARCHITECTURE §4, in

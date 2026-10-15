@@ -40,7 +40,7 @@ export async function start(ctx) {
   async function putOne(p) {
     const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", "putting a token contract", 60000);
     if (said.kind !== "put") throw new Error(`the node refused it (${said.said})`);
-    core.take_got(hexOf(p.idBytes));
+    node.changed(hexOf(p.idBytes)); // written here: read again on the next ask (the door's copy is the old one)
   }
   // KEPT TO QUEUE (audit 10-11): each new entry's queue item and witness container recorded as soon as its put is
   // taken, and queued from there — one that fails is queued again on the next put, never left unwitnessed.

@@ -115,6 +115,16 @@ t.onState(fn)
 - **R5 — A merged table is decided when its own feed and every listed writer's feed are**; a sealed or unread writer
   list makes it `unreadable`, never an empty `present`.
 - **Defaults deny.** A policy, card or role not read is `unknown` and treated as the narrowest choice, never "anyone".
+- **R6 — Read once, then followed (owner 10-15: "we should not be making unnecessary calls … not using the same data
+  already available").** Every contract that can change (a tail, a bag, a key log, a register) is read through ONE door,
+  `node.contract(id)`, which keeps its read state per contract: `UNKNOWN → ASKED → HELD`, `ABSENT`, `STALE`. The first
+  read SUBSCRIBES; a push keeps the core's copy current (`HeadChanged` stores the state for every contract, not only
+  tails) and fires `node.onContract(id)`. A read of a `HELD` contract answers from that copy — no GET, whatever the
+  caller calls it (`fresh`, `strict`, a re-read on an event). `ABSENT` is asked again only by the door, on its one
+  backoff (5 s doubling to 5 min) while someone follows it. A reconnect marks every `HELD` contract `STALE`: read again
+  once, subscribed again. Work done once per device (the key-history walk) is never re-derived on load. Content-addressed
+  reads (tree blocks, file pieces, the site) never change: read once per page, held. `tools/read-check.mjs` fails the
+  build on a GET, a consuming `take_got`, a `backoff` or a fresh flag anywhere else.
 
 Callers: `const st = await t.decided(); if (st.s === "absent") create…; else if (st.s !== "present") wait`.
 `ordering.tail.from()` returns `undefined` on unknown; `commitFrom` passes it through.
@@ -324,7 +334,8 @@ happening again.
    group `MEMBER`; **group** with failure reasons; every `setInterval` moved into a scope.
 5. **Page, app, save, delete**: save on change with the drafts table, resume on open (an update is a resume), unmount
    on close, save states shown from one place, one delete path.
-6. **R3/R4/R5**: caches, re-open on key arrival, merged tables; remove the reload and the polling loops.
+6. **R3/R4/R5/R6**: caches, re-open on key arrival, merged tables; one door that reads each contract once and then
+   follows it; remove the reload and the polling loops.
 7. **Apps**: `absentOnly` for reads, `present()` for messages; retire the private retry loops.
 8. **Desktop** (ARCHITECTURE §1): apps installed (each its own manifest, an installed-apps table, per-app grants;
    their own frames and the system API before any app not ours is offered); Home screen, App Store, Spaces and Settings apps; a space's enabled capabilities

@@ -24,7 +24,7 @@
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
-  const { core, glue, ask, WAIT, listen } = await ctx.require("node");
+  const { core, glue, ask, WAIT, listen, contract, onContract, changed: wrote } = await ctx.require("node");
   const bagCode = await ctx.require("bag-wasm");
   const Core = glue.CraftworksCore;
   const enc = new TextEncoder();
@@ -38,6 +38,7 @@ export async function start(ctx) {
     const name = Core.id_name(bytes(idHex));
     const said = await ask(frames, x => (x.kind === "put" && x.key === name) || x.kind === "refused", what, 60000);
     if (said.kind === "refused") throw new Error(`${what}: the node said ${said.said}`);
+    wrote(idHex); // the door's copy is the old one: read again on the next ask
   }
 
   // This account's own inbox, made (empty) — before anyone is told where it is.
@@ -93,12 +94,13 @@ export async function start(ctx) {
   // what members announced since).
   // `strict`: NO ANSWER throws ("no answer: …") instead of reading as empty — for what must not be decided over a bag
   // that did not answer (a statement, an assignment, a scan cursor): silence is not "nothing there".
+  // Through the DOOR (`node.contract`, FOUNDATION §2 R6): read once and followed — every bag, so its copy is never
+  // stale; a held bag answers from the copy with no GET (`follow` kept for its callers: every read follows now).
   async function read(address, what, { show = false, follow = false, strict = false } = {}) {
     const id = Core.bag_id(bagCode, address);
     const full = (async () => {
-      const [, frames] = follow ? core.frames_follow(bytes(id)) : core.frames_get(bytes(id));
-      const said = await ctx.optional("index: ask", ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, what, WAIT.answer), () => ({ kind: "silent" }));
-      if (said.kind === "got") return held(address, id);
+      const said = await ctx.optional("index: ask", contract(id, what, { frames: () => core.frames_follow(bytes(id))[1], match: x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, ms: WAIT.answer }), () => ({ kind: "silent" }));
+      if (said.held || said.kind === "got") return held(address, id);
       if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), ctx.optional("index: drop", drop(address, new Uint8Array(0), `making ${what}`), () => madeBags.delete(id));
       if (said.kind === "silent" && strict) throw new Error(`no answer: ${what}`);
       return [];
@@ -167,6 +169,8 @@ export async function start(ctx) {
   // key (`epoch ‖ nonce ‖ AES-GCM`) — only members read it; a member removed reads nothing added after. Its size shows
   // to whoever knows the space's id, never what is in it.
   const sealedAddress = async (sp, name) => refAddress(`space ${glue.space_table_key(sp.idBytes, `bag-${name}`)}`);
+  // A space's sealed bag FOLLOWED: `fn` on each change the node pushes (the door's copy current already).
+  const watchSpace = async (sp, name, fn) => onContract(Core.bag_id(bagCode, await sealedAddress(sp, name)), fn);
   const aes = async keyHex => crypto.subtle.importKey("raw", bytes(keyHex), "AES-GCM", false, ["encrypt", "decrypt"]);
   // Sealed with the space's newest epoch — or, for its WRITERS list, with the SPACE's OWN key (from its id: `OPEN`):
   // every member reads it whatever epochs they hold — behind, ahead, on another branch of a fork, or missing the
@@ -313,5 +317,5 @@ export async function start(ctx) {
     return out;
   }
   const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag", opts = {}) => read(address, what, opts), chained, chain };
-  return { bag, onChange: f => changed.push(f), send, inbox: ctx.total("index.inbox", () => [], inbox), sendTo, inboxWith, makeInbox, request, requests: ctx.total("index.requests", () => [], requests), openRequests, openPointers, point, pointers: ctx.total("index.pointers", () => [], pointers), watch, listSpace, spaces: ctx.total("index.spaces", () => [], spaces), health, spacePoint, spacePointers: ctx.total("index.spacePointers", () => [], spacePointers), discoverPoint, discoverPointers: ctx.total("index.discoverPointers", () => [], discoverPointers), monthOf, monthsSince, OPEN };
+  return { bag, onChange: f => changed.push(f), send, inbox: ctx.total("index.inbox", () => [], inbox), sendTo, inboxWith, makeInbox, request, requests: ctx.total("index.requests", () => [], requests), openRequests, openPointers, point, pointers: ctx.total("index.pointers", () => [], pointers), watch, listSpace, spaces: ctx.total("index.spaces", () => [], spaces), health, spacePoint, watchSpace, spacePointers: ctx.total("index.spacePointers", () => [], spacePointers), discoverPoint, discoverPointers: ctx.total("index.discoverPointers", () => [], discoverPointers), monthOf, monthsSince, OPEN };
 }
