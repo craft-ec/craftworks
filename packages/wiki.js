@@ -60,14 +60,13 @@ export async function mount(ctx, el) {
       dialog.wk-history .v .b { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: hidden; font-size: var(--cw-text-sm); }
     }</style>
     <div class="wk"></div>`;
-  const root = el.querySelector(".wk");
+  const outer = el.querySelector(".wk");
+  // Where a page draws: the view's box being built (`ctx.view` render), or the page itself for the maker.
+  let root = outer;
   const said = (text, ok = false) => h("p", { className: ok ? "said ok" : "said", textContent: text });
   const when = t => (t ? new Date(t).toLocaleString() : "");
   const errText = e => e?.message ?? String(e);
   let editing = false; // an editor open: what changes underneath does not redraw it away
-  // What is shown (its wiki, and what its pages held when drawn): a change elsewhere redraws only if it changed them.
-  let current = null;
-  const sigOf = pages => pages.map(p => `${p.ref}:${p.versions.map(v => `${v.h}.${v.at}.${v.declined.length}`).join(",")}`).join("|");
   let drawing = 0;
 
   async function draw() {
@@ -76,7 +75,7 @@ export async function mount(ctx, el) {
     try {
       at = await where.of({ kind: "wiki", app: "wiki", yours: "Your wiki" });
     } catch (e) {
-      return root.replaceChildren(said(errText(e)));
+      return outer.replaceChildren(said(errText(e)));
     }
     const sub = at.sub;
     // A CIRCLE of yours opened as a space (an item's link): your own wiki.
@@ -84,26 +83,39 @@ export async function mount(ctx, el) {
     at.tabs([], { yoursOn: !sub, create: at.discover || at.saved ? null : { label: "New page", href: at.href("new"), on: sub === "new" || sub.startsWith("new/") } });
     // DISCOVER: every public wiki page (people's, public spaces'), each opened in its own wiki. The global wiki — one
     // for everyone, owned by nobody — comes after Vote.
-    if (at.discover) return pages(at, "📖 Public wiki pages", "No public wiki pages yet.");
-    if (at.saved) return pages(at, "📖 Saved pages", "Nothing saved: ☆ on a page keeps it here.");
-    root.replaceChildren(theme.loading("Opening the wiki…"));
-    let wiki;
-    try {
-      wiki = await W.of(at);
-    } catch (e) {
-      return root.replaceChildren(said(errText(e)));
+    view?.stop();
+    view = null;
+    // A NEW PAGE (the maker): drawn once — never again under its writer.
+    if (sub === "new" || sub.startsWith("new/")) {
+      root = outer;
+      outer.replaceChildren(theme.loading("Opening the wiki…"));
+      const wiki = await W.of(at).catch(e => (outer.replaceChildren(said(errText(e))), null));
+      if (wiki && n === drawing) await create({ at, wiki, n }, decodeURIComponent(sub.slice(4))).catch(e => outer.replaceChildren(said(errText(e))));
+      return;
     }
-    if (n !== drawing) return;
-    const view = { at, wiki, n };
-    try {
-      if (sub === "new" || sub.startsWith("new/")) return await create(view, decodeURIComponent(sub.slice(4)));
-      if (sub.startsWith("t/")) return await show(view, decodeURIComponent(sub.slice(2)));
-      if (sub.startsWith("p/")) return await show(view, decodeURIComponent(sub.slice(2)));
-      return await index(view);
-    } catch (e) {
-      if (n === drawing) root.replaceChildren(said(`The wiki did not read: ${errText(e)}`));
-    }
+    // EVERY OTHER PAGE: a VIEW (`ctx.view`, render form) — built again when pages change (another editor, another
+    // device), put in place only when it differs; never while a section's editor is open (`hold`).
+    view = ctx.view(outer, {
+      render: async () => {
+        const box = h("div", { style: "display:contents" });
+        root = box;
+        // DISCOVER: every public wiki page (people's, public spaces'), each opened in its own wiki.
+        if (at.discover) await pages(at, "📖 Public wiki pages", "No public wiki pages yet.");
+        else if (at.saved) await pages(at, "📖 Saved pages", "Nothing saved: ☆ on a page keeps it here.");
+        else {
+          const wiki = await W.of(at);
+          const v = { at, wiki, n };
+          if (sub.startsWith("t/")) await show(v, decodeURIComponent(sub.slice(2)));
+          else if (sub.startsWith("p/")) await show(v, decodeURIComponent(sub.slice(2)));
+          else await index(v);
+        }
+        return box;
+      },
+      hold: () => editing,
+      looks: { loading: () => theme.loading("Opening the wiki…") },
+    });
   }
+  let view = null;
   // Where a title is read in this wiki.
   const titleHref = (at, title) => at.href(`t/${encodeURIComponent(W.cleanTitle(title))}`);
   // Whose wiki this is, for its heading.
@@ -132,7 +144,6 @@ export async function mount(ctx, el) {
   async function index({ at, wiki, n }) {
     const pages = await wiki.pages();
     if (n !== drawing) return;
-    current = { wiki, sig: sigOf(pages) };
     const find = h("input", { type: "search", className: "find", placeholder: "Find a page (its title or text)", ariaLabel: "Find a page" });
     const list = h("div", {});
     const badges = p => [
@@ -234,7 +245,6 @@ export async function mount(ctx, el) {
     if (n !== drawing) return;
     const all = await wiki.pages({ fresh: false });
     const keys = new Set(all.map(x => x.key));
-    current = { wiki, sig: sigOf(all) };
     const back = h("a", { href: at.href(""), textContent: "← Index" });
     if (!p) {
       const title = /^(space:|did:)/.test(keyOrRef) ? "" : W.cleanTitle(keyOrRef);
@@ -500,18 +510,5 @@ export async function mount(ctx, el) {
 
   await draw();
   // A route within the app (another page, the index, another place): drawn again.
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/wiki" && ((editing = false), (current = null), draw()));
-  // Written elsewhere (another editor, another device): drawn again when what is shown changed — never under an open
-  // editor.
-  let soon = null;
-  items.onChange(() => {
-    if (!el.isConnected || ctx.route !== "/wiki" || editing || !current) return;
-    clearTimeout(soon);
-    soon = setTimeout(async () => {
-      const was = current;
-      if (!was || editing) return;
-      const now = await ctx.optional("wiki: was.wiki.pages", was.wiki.pages(), () => null);
-      if (now && current === was && !editing && sigOf(now) !== was.sig) draw();
-    }, 1500);
-  });
+  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/wiki" && ((editing = false), draw()));
 }

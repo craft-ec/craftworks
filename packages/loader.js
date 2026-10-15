@@ -224,7 +224,11 @@ export async function run(boot) {
   // CHANGE (`craftworks:data`: a push, a write) read again and drawn again — only if what it read differs, and never
   // while the person is typing inside it (drawn once they leave the field). `looks: { loading, empty, notRead, failed }`:
   // the app's own (each `() => element` or text), the theme's by default. Returns `{ refresh(), stop() }`.
-  ctx.view = (el, { read, draw, empty = d => Array.isArray(d) && d.length === 0, looks = {} }) => {
+  // `{ render }` in place of `{ read, draw }`: a screen that builds itself in one step (its reads and its elements
+  // interleaved) — built again on each data change, put in place only when what it built differs (the same rules).
+  // `hold()`: true while the screen must not be drawn again (an editor open in it, focused or not) — as the typing.
+  ctx.view = (el, { read, draw, render = null, hold = () => false, empty = d => Array.isArray(d) && d.length === 0, looks = {} }) => {
+    if (render) ((read = render), (draw = n => n), (empty = () => false));
     let seen = null; // what was last drawn (its JSON), so an unchanged read draws nothing
     let running = null;
     let again = false;
@@ -236,6 +240,7 @@ export async function run(boot) {
       return Object.assign(document.createElement("p"), { className: k === "failed" ? "said" : "none", textContent: text });
     };
     const typing = () => {
+      if (hold()) return true;
       const a = document.activeElement;
       return !!a && el.contains(a) && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
     };
@@ -255,6 +260,7 @@ export async function run(boot) {
       const st = data?.state?.s;
       const key = (() => {
         try {
+          if (data instanceof Node) return data.outerHTML ?? data.textContent; // (a built screen: as it reads)
           return JSON.stringify([st ?? null, data]);
         } catch {
           return String(Math.random());

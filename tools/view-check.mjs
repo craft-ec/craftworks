@@ -13,7 +13,7 @@ const pkgs = join(root, "packages");
 // Screens that hand their element to a view elsewhere (`places.side`, the Settings page, a space's home).
 const DELEGATES = new Set(["places-side", "settings", "space-home"]);
 // SCREENS NOT YET ON A VIEW (10-15): only ever shorter.
-const NOT_YET = new Set(["account", "blog", "chat", "explorer-app", "form", "mail", "nodes-app", "note", "vote", "wallet-app", "wiki"]);
+const NOT_YET = new Set(["account", "blog", "chat", "explorer-app", "form", "mail", "nodes-app", "note", "wallet-app"]);
 const bad = [];
 for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {
   const name = f.slice(0, -3);

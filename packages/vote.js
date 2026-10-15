@@ -45,7 +45,9 @@ export async function mount(ctx, el) {
       .vt .graph path { stroke: var(--cw-muted); fill: none; }
     }</style>
     <div class="vt"></div>`;
-  const root = el.querySelector(".vt");
+  const outer = el.querySelector(".vt");
+  // Where a page draws: the view's box being built (`ctx.view` render), or the page itself for a maker.
+  let root = outer;
   const me = await space.me();
   const refIn = s => decodeURIComponent(s.slice(2));
   const fail = (said, e) => (said.textContent = ctx.say(e));
@@ -369,47 +371,42 @@ export async function mount(ctx, el) {
     body.replaceChildren(...parts);
   }
 
-  let shown = ""; // the view drawn (a maker is never drawn again under its writer)
   async function draw() {
     let at;
     try {
       at = await (await ctx.require("where")).of({ kind: "poll", kinds: ["poll", "proposal"], app: "vote", yours: "Your votes" });
     } catch (e) {
-      return root.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
+      return outer.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
     }
-    const s = (shown = at.sub);
+    const s = at.sub;
     // A space this person is IN (read from outside: its public polls and proposals, nothing of a member's to do).
     const inSp = at.who === "space" && !at.outside;
     at.tabs(inSp ? [{ label: "Delegation", href: at.href("delegation"), on: s === "delegation" }, { label: "Graph", href: at.href("graph"), on: s === "graph" }, { label: "＋ New proposal", href: at.href("new-proposal"), on: s === "new-proposal" }] : [], { yoursOn: !s, ...(at.who === "mine" || inSp ? { create: { label: "New poll", href: inSp ? at.href("new-poll") : "#/vote/new-poll", on: s === "new-poll" } } : {}) });
-    root.replaceChildren(theme.loading("Opening…"));
-    try {
-      if (s.startsWith("p/")) {
-        const it = await getItem(refIn(s));
-        if (!it) return root.replaceChildren(h("p", { className: "none", textContent: "This is not there, or not yours to see." }));
-        return await (it.kind === "poll" ? pollPage(it, at) : proposalPage(it, at));
-      }
-      if (inSp && s.startsWith("g/")) return await graphPage(at, refIn(s));
-      if (inSp && s === "graph") return await graphPage(at, null);
-      if (inSp && s === "delegation") return await delegationPage(at);
-      if (inSp && s === "new-proposal") return await proposalMaker(at);
-      if (s === "new-poll" && (at.who === "mine" || inSp)) return await pollMaker(at);
-      return await list(at);
-    } catch (e) {
-      root.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }));
-    }
+    view?.stop();
+    view = null;
+    // A MAKER (a poll, a proposal): drawn once — never again under its writer.
+    if (inSp && s === "new-proposal") return void ((root = outer), await proposalMaker(at).catch(e => outer.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }))));
+    if (s === "new-poll" && (at.who === "mine" || inSp)) return void ((root = outer), await pollMaker(at).catch(e => outer.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }))));
+    // EVERY OTHER PAGE: a VIEW (`ctx.view`, render form) — built, and built again when votes or polls change (another
+    // member's vote, a finalization), put in place only when it differs and never while a choice is being made.
+    view = ctx.view(outer, {
+      render: async () => {
+        const box = h("div", { style: "display:contents" });
+        root = box;
+        if (s.startsWith("p/")) {
+          const it = await getItem(refIn(s));
+          if (!it) return h("p", { className: "none", textContent: "This is not there, or not yours to see." });
+          await (it.kind === "poll" ? pollPage(it, at) : proposalPage(it, at));
+        } else if (inSp && s.startsWith("g/")) await graphPage(at, refIn(s));
+        else if (inSp && s === "graph") await graphPage(at, null);
+        else if (inSp && s === "delegation") await delegationPage(at);
+        else await list(at);
+        return box;
+      },
+      looks: { loading: () => theme.loading("Opening…") },
+    });
   }
+  let view = null;
   await draw();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/vote" && draw());
-  // Written elsewhere (another member's vote, a finalization): drawn again — never on a maker, never while this person
-  // is choosing (a focused option or field).
-  let soon = null;
-  items.onChange(() => {
-    clearTimeout(soon);
-    soon = setTimeout(() => {
-      if (!el.isConnected || ctx.route !== "/vote" || /^new-/.test(shown)) return;
-      const f = document.activeElement;
-      if (f && root.contains(f) && /^(INPUT|TEXTAREA|SELECT)$/.test(f.tagName)) return;
-      draw();
-    }, 1500);
-  });
 }
