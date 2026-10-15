@@ -201,6 +201,17 @@ The app machine makes each app what a separately published site already is, and 
   prompt at install for its `uses`, the rest asked when first used.
 - **Anyone can publish an app**: it is a contract like any page; a catalog of apps is a catalog (already a capability).
 
+- **The OS and the apps (10-15).** The OS is what every app stands on, and stays in the page: Home, Settings, the
+  account, Spaces and a space's home, the App Store, Tag (search across every kind), Contacts, Chat and Mail (the
+  MLS groups and their keys), and the token pages (Wallet, Nodes, Network). Everything else is an APP and runs framed:
+  Paste and the sample (framed already), then Wiki, Vote, Forms, Notes, Board, Blog, Videos/Audio/Images/Books,
+  Captions, Drive, Bundles. `tools/app-check.mjs` holds the line: an app module not framed fails the build unless it
+  is on its NOT-YET list, which only shrinks (an app moved is taken off it in the same change).
+- **System controls are SYSTEM PICKERS.** A frame cannot draw the host's elements, and a copy of a control inside the
+  frame would be a second implementation. So an app ASKS (`api.pick("audience", { space, kind })`, `api.pick("files",
+  …)`, `api.pick("sort")`): the system shows its own control above the frame, the person chooses, the value comes
+  back. The item page (votes, comments, actions) is already drawn this way, under the frame.
+
 Cost: one frame per open app and messages instead of calls; packages shared by hash so a capability is loaded once per
 frame at most. Order: after the lifecycle mechanism (phase 3), as part of the app machine (phase 5) — the boundary is
 drawn once, where `OPENING`/`CLOSED` already are.

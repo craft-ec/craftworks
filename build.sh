@@ -13,6 +13,8 @@ node "$(cd "$(dirname "$0")" && pwd)/tools/group-check.mjs"
 node "$(cd "$(dirname "$0")" && pwd)/tools/read-check.mjs"
 # A TIMER IS A JOB OR A VIEW'S CLOCK: background work in lifecycle jobs, a view's clock through ctx.every (tools/job-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/job-check.mjs"
+# AN APP RUNS IN ITS OWN FRAME: a page module is the OS's or framed; the not-yet list only shrinks (tools/app-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/app-check.mjs"
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"
