@@ -19,9 +19,8 @@ export async function mount(ctx, el) {
   const C_ROUTE = APPS[ctx.route] ? ctx.route : "/video";
   const C = APPS[C_ROUTE];
   const VIDEO = kinds.inDomain(C.domain);
-  let only = null; // a SUB-TYPE the list is filtered to (null: all)
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
-  const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
+  const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw(), kinds: VIDEO.map(k => ({ id: k, label: kinds.of(k).label })) });
   const me = await space.me();
   el.innerHTML = `
     <style>@layer apps {
@@ -35,12 +34,10 @@ export async function mount(ctx, el) {
       .vd .by:hover { color: var(--cw-fg); }
       .vd .none { color: var(--cw-muted); text-align: center; padding: var(--cw-space-5); }
       .vd .row { display: flex; gap: var(--cw-space-3); align-items: center; flex-wrap: wrap; }
-      .vd .chips button.on { background: var(--cw-accent); color: var(--cw-accent-fg); border-color: transparent; }
       .vd form { display: grid; gap: var(--cw-space-2); max-width: 640px; }
       .vd input:not(.cw-pc input), .vd textarea, .vd select:not(.cw-pc select) { font: inherit; padding: 6px 8px; border-radius: var(--cw-radius-sm); border: 1px solid var(--cw-line); background: var(--cw-surface); color: var(--cw-fg); }
       .vd .said { color: var(--cw-danger); margin: 0; }
       .vd .chips { flex-basis: 100%; display: flex; gap: 6px; flex-wrap: wrap; }
-      .vd .chips button { padding: 3px 12px; font-size: var(--cw-text-sm); }
       .vd .grid.sq { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
       .vd .grid.shelf { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
       .vd .wall { columns: 240px; column-gap: var(--cw-space-2); }
@@ -88,9 +85,8 @@ export async function mount(ctx, el) {
     // In a space, it is a CHANNEL (the space named in this app's own words).
     const title = at.space ? `${C.icon} ${space.shown(at.space)} · channel` : `${C.icon} ${C.name}`;
     // The SUB-TYPES (a filter): all, or one kind of the domain.
-    const chips = w.watch || w.up ? null : h("div", { className: "chips" }, ...[null, ...VIDEO].map(k => h("button", { type: "button", className: only === k ? "on" : "", textContent: k ? kinds.of(k).label : "All", onclick: () => ((only = k), draw()) })));
     const feedBar = w.watch || w.up || w.saved ? null : h("div", { className: "chips" }, bar.el());
-    return h("div", { className: "top" }, h("h2", { textContent: title }), chips, feedBar);
+    return h("div", { className: "top" }, h("h2", { textContent: title }), feedBar);
   }
 
   // A video's or a track's CARD: its kind's look (`cards`), opened here (in Discover: from outside).
@@ -99,17 +95,24 @@ export async function mount(ctx, el) {
   // (owner 10-06: feeds show items; their page acts on one).
   const card = v => (C.picture ? cards.picture : cards.card)(v, { href: `${base()}/p/${v.ref}`, actions: [] });
 
-  async function list(w) {
-    // SAVED: what this person saved (`actions`: any kind, one key) — of this app's kinds.
-    // SAVED: `where`'s (what you saved, of this app's kinds).
-    const vs = w.saved
-      ? await at.read()
-      : bar.reorder(await items.list(w, bar.sort(), VIDEO, bar.options()));
-    const shown = only ? vs.filter(v => v.kind === only) : vs;
-    const when = bar.span();
-    const none = w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} ${when} from you or what you follow.` : w.discover ? `No public ${C.ones} ${when}.` : w.by === me ? `Nothing ${when}: upload a ${C.one}.` : `No ${C.ones} ${when}.`;
-    const older = w.saved ? null : bar.older("Older", shown.length);
-    return shown.length ? h("div", {}, h("div", { className: C.picture ? "wall" : `grid${C.audio ? " sq" : C.shelf ? " shelf" : ""}` }, ...shown.map(card)), older) : h("div", {}, h("p", { className: "none", textContent: none }), older);
+  // THE LIST: a VIEW (`ctx.view` — loading, empty, redrawn when what it read changes); its own grid and cards.
+  let listView = null;
+  function list(w) {
+    const host = h("div");
+    const none = () => {
+      const when = bar.span();
+      return w.saved ? `Nothing saved: “Save” on a ${C.one} keeps it here.` : w.feed ? `No ${C.ones} ${when} from you or what you follow.` : w.discover ? `No public ${C.ones} ${when}.` : w.by === me ? `Nothing ${when}: upload a ${C.one}.` : `No ${C.ones} ${when}.`;
+    };
+    listView = ctx.view(host, {
+      // SAVED: `where`'s (what you saved, of this app's kinds).
+      read: async () => {
+        const vs = w.saved ? await at.read() : bar.reorder(await items.list(w, bar.sort(), VIDEO, bar.options()));
+        return bar.kind() ? vs.filter(v => v.kind === bar.kind()) : vs;
+      },
+      draw: shown => h("div", {}, h("div", { className: C.picture ? "wall" : `grid${C.audio ? " sq" : C.shelf ? " shelf" : ""}` }, ...shown.map(card)), w.saved ? null : bar.older("Older", shown.length)),
+      looks: { empty: () => h("div", {}, h("p", { className: "none", textContent: none() }), w.saved ? null : bar.older("Older", 0)), loading: () => theme.loading(`Reading the ${C.ones}…`) },
+    });
+    return host;
   }
 
   // ITS PAGE: the one item page (`item-page`) — its player, likes, comments — framed here.
@@ -124,14 +127,15 @@ export async function mount(ctx, el) {
 
   let drawn = "";
   async function draw() {
+    listView?.stop();
+    listView = null;
     at = await where.of({ kinds: VIDEO, app: C.app, yours: "Following" });
     const w = route();
     drawn = where.key();
     root.replaceChildren(top(w), theme.loading(w.watch ? `Opening the ${C.one}…` : `Reading the ${C.ones}…`));
-    const body = await (w.watch ? watch(w.watch) : w.up ? upload() : list(w)).catch(e => h("p", { className: "said", textContent: ctx.say(e) }));
+    const body = await Promise.resolve(w.watch ? watch(w.watch) : w.up ? upload() : list(w)).catch(e => h("p", { className: "said", textContent: ctx.say(e) }));
     if (drawn === where.key()) root.replaceChildren(top(w), ...(w.by && w.by !== me && !w.watch ? [h("div", { className: "row" }, h("h3", {}, who(w.by)), h("button", { type: "button", textContent: "Follow…", onclick: e => person.open(e.currentTarget, w.by) }))] : []), body);
   }
   await draw();
-  items.onChange(() => el.isConnected && !route().watch && !route().up && draw());
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === C_ROUTE && where.key() !== drawn && draw());
 }

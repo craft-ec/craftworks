@@ -54,7 +54,7 @@ export async function start(ctx) {
       // The version it is NOW is not an earlier one.
       vs = (await items.history(ref)).filter(v => !current || stamp(v) !== stamp(current));
     } catch (e) {
-      said.textContent = `Its history did not read: ${e?.message ?? e}`;
+      said.textContent = `Its history did not read: ${ctx.say(e)}`;
     }
     if (!vs.length) {
       list.replaceChildren(h("p", { className: "none", textContent: "No earlier versions" }));
@@ -73,7 +73,7 @@ export async function start(ctx) {
               d.close();
               restored(v);
             } catch (e) {
-              said.textContent = `Not restored: ${e?.message ?? e}`;
+              said.textContent = `Not restored: ${ctx.say(e)}`;
               restore.disabled = false;
             }
           };

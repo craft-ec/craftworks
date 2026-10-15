@@ -74,7 +74,7 @@ export async function mount(ctx, el) {
   const root = el.querySelector(".bl");
   const ago = cards.ago;
   const day = at => new Date(at).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
-  const fail = (host, e) => host.replaceChildren(h("p", { className: "said", textContent: e?.message ?? String(e) }));
+  const fail = (host, e) => host.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }));
   const blogOf = it => (it?.meta?.blog && typeof it.meta.blog === "object" ? it.meta.blog : {});
   const minutes = it => press.readingTime(it.body).minutes;
   const thumbOf = it => {
@@ -327,7 +327,7 @@ export async function mount(ctx, el) {
           guard();
           await fn();
         } catch (e) {
-          said.textContent = e?.message ?? String(e);
+          said.textContent = ctx.say(e);
           throw e;
         }
       }, words);

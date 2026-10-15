@@ -327,7 +327,9 @@ export function mount(ctx, el) {
   const draw = () => {
     switcher();
     const actions = el.querySelector(".actions");
-    const all = ctx.actions[ctx.route] ?? [];
+    // THE SIDE PANEL is the app's navigation where it shows (owner 10-15: "remove the top navigation and maintain only
+    // side navigation"): here, only its search boxes. Chat (no side panel) keeps its menu here.
+    const all = (ctx.actions[ctx.route] ?? []).filter(a => !ctx.sideNav || a.search);
     const item = link;
     el.querySelector(".end").replaceChildren(
       // At the END (right): a link (a create page) or a button (Log out, Compose).

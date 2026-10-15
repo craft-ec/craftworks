@@ -13,7 +13,7 @@ export async function mount(ctx, el) {
   const [posts, directory, person, theme, space, roles, cards] = await Promise.all(["items", "directory", "person", "theme", "space", "roles", "cards"].map(n => ctx.require(n)));
   const me = await space.me();
   // The FEED BAR (shared by every content app, as Grid's): the feed, its window, and a sort of what is shown.
-  const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() });
+  const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() });
   // WHERE Board is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.
   const whereCap = await ctx.require("where");
   let at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });

@@ -77,7 +77,7 @@ export async function start(ctx) {
           await run();
           if (openBox === box) draw();
         } catch (e) {
-          said.textContent = `${label}: ${e?.message ?? e}`;
+          said.textContent = `${label}: ${ctx.say(e)}`;
           b.disabled = false;
         }
       };

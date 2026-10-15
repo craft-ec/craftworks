@@ -203,7 +203,7 @@ export async function mount(ctx, el) {
         if (box === "sent") draw();
         else location.hash = `${base}/sent`;
       } catch (err) {
-        said.textContent = `Not sent: ${err?.message ?? err}`;
+        said.textContent = `Not sent: ${ctx.say(err)}`;
         said.hidden = false;
         throw err;
       }

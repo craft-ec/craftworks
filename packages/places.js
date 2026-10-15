@@ -120,35 +120,62 @@ export async function start(ctx) {
     return host;
   }
 
-  // THE SIDE PANEL (owner 10-15: "for all app, move spaces to side panel" — YouTube's, Reddit's): every app's places
-  // as a list — You, each space that has the app (its unread count), Discover — and "＋ Join or make a space". A VIEW
-  // (`ctx.view`): drawn when read, again when spaces change. Nothing when the app has one place or none (Home,
-  // Settings, the token pages). Chat keeps its rail (its page has no side panel).
+  // THE SIDE PANEL — THE APP's ONE NAVIGATION (owner 10-15: "remove the top navigation and maintain only side
+  // navigation and load discover by default. also separate the spaces with you/discover into its own section. show join /
+  // follow"). Three sections, a VIEW (`ctx.view`: drawn when read, again when the app's entries, its places or the
+  // spaces change):
+  //   the APP — its own entries (`ctx.actions`, what `where.tabs` gives every app: Discover first, then Following /
+  //     Yours / Saved / its extras, ＋ its create), else You and Discover;
+  //   THIS SPACE — a space seen from outside: Join or Request (`join-button`) and Follow;
+  //   SPACES — each of yours that has the app (its unread count), ＋ Join or make a space.
+  // Search boxes stay in the header (a tool, not a place). Nothing when the app has one place and no entries.
   function side(host) {
     host.classList.add("cw-side");
-    return ctx.view(host, {
+    const entry = a => ({ label: a.label, href: a.href ?? null, on: !!a.on, end: !!a.end, menu: a.menu ? a.menu.map(m => ({ label: m.label, href: m.href ?? null, on: !!m.on })) : null, run: !!a.run && !a.href });
+    let runs = new Map(); // label → the entry's own run (a button that is not a link)
+    const v = ctx.view(host, {
       read: async () => {
         const ps = await list();
-        return ps.length < 2 ? [] : ps.map(p => ({ id: p.id, label: p.label, href: p.href, on: p.on, count: p.count ?? 0 }));
+        const acts = (ctx.actions?.[ctx.route] ?? []).filter(a => !a.search);
+        runs = new Map(acts.filter(a => a.run && !a.href).map(a => [a.label, a.run]));
+        const own = acts.map(entry);
+        // Discover FIRST (the app's front door), the rest in the app's order, its create at the end.
+        const disc = own.filter(a => a.href?.startsWith("#/discover/"));
+        const app = own.length ? [...disc, ...own.filter(a => !disc.includes(a) && !a.end), ...own.filter(a => a.end)] : ps.filter(p => p.id === "" || p.id === "discover").sort((a, b) => (b.id === "discover") - (a.id === "discover")).map(p => ({ label: p.label, href: p.href, on: p.on }));
+        const spaces = ps.filter(p => p.id && p.id !== "discover").map(p => ({ label: p.label, href: p.href, on: p.on, count: p.count ?? 0 }));
+        // A SPACE SEEN FROM OUTSIDE (in it nowhere: Discover's, a link): Join / Follow there.
+        const here = ctx.space && ctx.space !== "discover" && !spaces.some(p => p.on) ? ctx.space : null;
+        return app.length + spaces.length + (here ? 1 : 0) < 2 && !here ? [] : { app, spaces, here };
       },
-      draw: ps =>
-        h(
-          "nav",
-          { ariaLabel: "Places" },
-          h(
-            "ul",
-            {},
-            ...ps.map(p => {
-              const a = h("a", { href: p.href, className: p.on ? "on" : "", textContent: p.label });
-              if (p.on) a.setAttribute("aria-current", "page");
-              if (p.count) a.append(h("span", { className: "cw-badge", textContent: String(p.count) }));
-              return h("li", {}, a);
-            }),
-          ),
-          h("a", { className: "more", href: "#/spaces", textContent: "＋ Join or make a space" }),
-        ),
+      empty: d => Array.isArray(d) && !d.length,
+      draw: async ({ app, spaces, here }) => {
+        const link = (x, cls = "") => {
+          const a = x.href ? h("a", { href: x.href, className: `${cls}${x.on ? " on" : ""}`.trim(), textContent: x.label }) : h("button", { type: "button", className: `cw-flat ${cls}`.trim(), textContent: x.label, onclick: () => runs.get(x.label)?.() });
+          if (x.on) a.setAttribute("aria-current", "page");
+          if (x.count) a.append(h("span", { className: "cw-badge", textContent: String(x.count) }));
+          return a;
+        };
+        const items = xs => h("ul", {}, ...xs.flatMap(x => (x.menu ? [h("li", { className: "group" }, x.label), ...x.menu.map(m => h("li", {}, link(m, "sub")))] : [h("li", {}, link(x, x.end ? "make" : ""))])));
+        const sections = [h("section", { ariaLabel: "This app" }, items(app))];
+        if (here) {
+          const join = await ctx.optional("places: join", (async () => {
+            const items = await ctx.require("items");
+            const d = await items.publicSpace(here);
+            if (!d) return null;
+            const pr = await (await ctx.require("roles")).ofPublic(d);
+            await pr.settled;
+            const ctl = await (await ctx.require("join-button")).control(d, { open: `#/spaces/${d.id}`, joinable: pr.policy("", "join") === "anyone" });
+            return h("section", { ariaLabel: "This space" }, h("h4", { textContent: d.name ?? "This space" }), ctl);
+          })(), null);
+          if (join) sections.push(join);
+        }
+        sections.push(h("section", { ariaLabel: "Spaces" }, h("h4", { textContent: "Spaces" }), items(spaces), h("a", { className: "more", href: "#/spaces", textContent: "＋ Join or make a space" })));
+        return h("nav", { ariaLabel: "Places" }, ...sections);
+      },
       looks: { empty: () => document.createTextNode(""), loading: () => document.createTextNode(""), failed: () => document.createTextNode("") },
     });
+    addEventListener("craftworks:actions", () => (host.isConnected ? v.refresh() : null));
+    return v;
   }
 
   return { list, rail, group, picker, attach, side };

@@ -169,7 +169,7 @@ export async function mount(ctx, el) {
       if (first) openChannel(first);
       else roomEl.replaceChildren();
     } catch (e) {
-      say(`Could not open the server: ${e?.message ?? e}`);
+      say(`Could not open the server: ${ctx.say(e)}`);
     }
   }
 
@@ -203,7 +203,7 @@ export async function mount(ctx, el) {
 
   async function addChannel() {
     const name = await ask("Channel name");
-    if (name) await channelOps.add(name).catch(e => say(`Could not add it: ${e?.message ?? e}`));
+    if (name) await channelOps.add(name).catch(e => say(`Could not add it: ${ctx.say(e)}`));
   }
 
   // The server's members: the accounts in its group, with their roles. A click: what can be done with that person.
@@ -334,7 +334,7 @@ export async function mount(ctx, el) {
         const sp = dids.length > 1 ? await conversation.group(dids, d.querySelector('input[name="group"]').value) : await conversation.direct(dids[0]);
         location.hash = `#/chat/${sp.id}`;
       } catch (e) {
-        say(`Could not start it: ${e?.message ?? e}`);
+        say(`Could not start it: ${ctx.say(e)}`);
       }
     };
     d.showModal();

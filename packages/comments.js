@@ -52,7 +52,7 @@ export async function start(ctx) {
     if (s < 60) return "just now";
     for (const [n, u] of [[31536000, "y"], [2592000, "mo"], [86400, "d"], [3600, "h"], [60, "m"]]) if (s >= n) return `${Math.floor(s / n)}${u} ago`;
   };
-  const errorTo = said => e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
+  const errorTo = said => e => ((said.textContent = ctx.say(e)), (said.hidden = false));
 
   async function create({ item, outside = null, app = "board" }) {
     const ref = item.ref;

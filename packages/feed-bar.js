@@ -5,7 +5,8 @@
 // over the same window (`items.list`). A SORT then only reorders what is shown: by time, votes, comments or views, ▲▼.
 // What is read is that window, never all.
 //
-//   const bar = (await ctx.require("feed-bar")).create({ onChange: draw })
+//   const bar = (await ctx.require("feed-bar")).create({ onChange: draw, kinds: [{ id, label }] })   // one setup for all
+//   bar.kind()                                     // the kind chosen (null: all)
 //   host.append(bar.el())                         // the controls (drawn again with each list)
 //   await items.list(where, bar.sort(), kind, bar.options())   // the feed and its window
 //   bar.reorder(list)                              // the shown set in the chosen sort
@@ -31,14 +32,21 @@ export async function start() {
 }`;
   document.head.append(style);
 
-  function create({ onChange = () => {}, start = "new" } = {}) {
-    const st = { sort: start, window: "week", by: "votes", reorder: "ranked", desc: true, months: 1, counts: [] };
+  // ONE CONFIGURATION for every app (owner 10-15: "why filter is not standard and one implementation across? board has
+  // period for new. but video doesn't. consolidate one implementation"; "new should not has period. because it is limited
+  // to pagination and smart loading only"): no app picks its own start — every feed opens on New (paged: Older, and
+  // more as its end is scrolled to — no period); the RANKED feeds have their period; an app's sub-kinds are the bar's
+  // own KIND filter (`kinds`: e.g. movie, episode, short), never chips of its own.
+  function create({ onChange = () => {}, kinds = [] } = {}) {
+    const st = { sort: "new", window: "week", by: "votes", reorder: "ranked", desc: true, months: 1, counts: [], kind: null };
     const changed = () => onChange(st);
     const pick = (options, value, set) => h("select", { onchange: e => (set(e.target.value), changed()) }, ...options.map(([v, t]) => h("option", { value: v, textContent: t, selected: v === value })));
     return {
       state: st,
       sort: () => st.sort,
       options: () => ({ window: st.sort === "new" ? 30 * st.months : st.window, by: st.by }),
+      // The KIND chosen (null: all of the app's kinds).
+      kind: () => st.kind,
       el: () =>
         h(
           "div",
@@ -46,6 +54,7 @@ export async function start() {
           h("span", { className: "lbl", textContent: "feed" }),
           pick([["new", "✨ New"], ["hot", "🔥 Hot"], ["best", "👍 Best"], ["rising", "📈 Rising"], ["top", "🏆 Top"], ["popular", "👁 Popular"]], st.sort, v => ((st.sort = v), (st.months = 1), (st.counts = []))),
           st.sort === "new" ? null : pick([["day", "Today"], ["week", "This week"], ["month", "This month"]], st.window, v => (st.window = v)),
+          kinds.length > 1 ? pick([["", "All kinds"], ...kinds.map(k => [k.id, k.label])], st.kind ?? "", v => (st.kind = v || null)) : null,
           st.sort === "top" ? pick([["votes", "Top votes"], ["comments", "Top comments"]], st.by, v => (st.by = v)) : null,
           h("span", { className: "lbl", textContent: "sort" }),
           pick([["ranked", "Default"], ["time", "Time"], ["votes", "Votes"], ["comments", "Comments"], ["views", "Views"]], st.reorder, v => (st.reorder = v)),

@@ -122,7 +122,7 @@ export async function mount(ctx, el) {
     if (drawing || !el.isConnected || (h != null && h - drawnAt < 8)) return;
     drawing = true;
     drawnAt = h ?? drawnAt;
-    await draw().catch(e => (said.textContent = `Could not read: ${e?.message ?? e}`));
+    await draw().catch(e => (said.textContent = `Could not read: ${ctx.say(e)}`));
     drawing = false;
   };
   beaconSvc.onHeight(refresh);

@@ -60,7 +60,7 @@ export async function mount(ctx, el) {
   const me = await space.me();
   const refIn = s => decodeURIComponent(s.slice(2));
   const metaOf = form => ({ fields: [], open: true, once: false, editable: true, ...(form?.meta ?? {}) });
-  const fail = (said, e) => (said.textContent = e?.message ?? String(e));
+  const fail = (said, e) => (said.textContent = ctx.say(e));
 
   // ONE FORM, read where it is: a space this person is in, or from outside (a public space's, a person's).
   async function getForm(ref) {
@@ -478,7 +478,7 @@ export async function mount(ctx, el) {
       if (s === "sent") return await sent();
       return await place(at);
     } catch (e) {
-      root.replaceChildren(h("p", { className: "said", textContent: e?.message ?? String(e) }));
+      root.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }));
     }
   }
   await draw();

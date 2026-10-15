@@ -64,7 +64,7 @@ export async function mount(ctx, el) {
       d.showModal();
       input.select();
     });
-  const fail = e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
+  const fail = e => ((said.textContent = ctx.say(e)), (said.hidden = false));
   const ups = h("div", { className: "ups" });
   // WHO SEES IT: asked per upload — what is chosen is each file's own (an item's audience), never the page's. The one
   // picker (`audience`): yours start Only you, a space's its members.

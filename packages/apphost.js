@@ -69,7 +69,9 @@ export async function start(ctx) {
     const appEl = document.getElementById("cw-app");
     const tell = () => parent.postMessage({ event: "height", h: Math.ceil(appEl.getBoundingClientRect().height) + 8 }, "*");
     new ResizeObserver(tell).observe(appEl);
-    import(document.currentScript.dataset.src).then(m => m.mount(api, appEl)).catch(e => (appEl.textContent = "This app did not start: " + (e?.message ?? e)));
+    // (A failure in its kind's words: the host says them.)
+    const words = e => call("say", String(e && e.message ? e.message : e));
+    import(document.currentScript.dataset.src).then(m => m.mount(api, appEl)).catch(e => words(e).then(t => (appEl.textContent = "This app did not start: " + t)));
   `;
 
   function mount(el, { app, bytes, kinds: own = [] }) {

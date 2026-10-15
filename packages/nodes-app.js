@@ -152,7 +152,7 @@ export async function mount(ctx, el) {
 
   async function show() {
     body.replaceChildren(Object.assign(document.createElement("p"), { className: "note", textContent: "Reading…" }));
-    const parts = await (page === "keeper" ? keeper() : page === "data" ? data() : nodes()).catch(e => [Object.assign(document.createElement("p"), { className: "note", textContent: `Could not read: ${e?.message ?? e}` })]);
+    const parts = await (page === "keeper" ? keeper() : page === "data" ? data() : nodes()).catch(e => [Object.assign(document.createElement("p"), { className: "note", textContent: `Could not read: ${ctx.say(e)}` })]);
     body.replaceChildren(...parts);
   }
   await show();

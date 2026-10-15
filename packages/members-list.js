@@ -46,14 +46,14 @@ export async function start(ctx) {
         e.stopPropagation();
         if (!armed) return ((armed = true), (b.textContent = `Confirm: ${confirm}`), setTimeout(() => ((armed = false), (b.textContent = label)), 5000));
         b.disabled = true;
-        await run().then(() => r.refresh(), err => say(`${label}: ${err?.message ?? err}`));
+        await run().then(() => r.refresh(), err => say(`${label}: ${ctx.say(err)}`));
         b.disabled = false;
       };
       return b;
     };
     const tick = (label, on, run) => {
       const c = h("input", { type: "checkbox", checked: on });
-      c.onchange = () => (say(""), run(c.checked).then(() => r.refresh(), err => say(`Role: ${err?.message ?? err}`)));
+      c.onchange = () => (say(""), run(c.checked).then(() => r.refresh(), err => say(`Role: ${ctx.say(err)}`)));
       return h("label", { className: "chip", onclick: e => e.stopPropagation() }, c, label);
     };
     // EACH MEMBER's KEYS (`conversation.keyStatus`: what their devices announced) — seen by any member, so nobody has

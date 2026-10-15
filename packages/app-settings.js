@@ -177,7 +177,7 @@ export async function start(ctx) {
       said.textContent = "";
       submit().catch(err => (said.textContent = ctx.say(err)));
     };
-    if (S.extra) await S.extra(more, r, sp).catch(err => more.append(h("p", { className: "said", textContent: err?.message ?? String(err) })));
+    if (S.extra) await S.extra(more, r, sp).catch(err => more.append(h("p", { className: "said", textContent: ctx.say(err) })));
     return form;
   }
   // THE SPACE's PAGE (the Settings app): the space's own section only — its apps' settings are in each app, its

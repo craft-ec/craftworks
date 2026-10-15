@@ -3,7 +3,7 @@
 // own, its author's (`items.tagsOf`: what it is, for everyone); NSFW stays hidden unless chosen (`items.list`).
 export async function mount(ctx, el) {
   const [items, cards, actions, theme, kinds] = await Promise.all(["items", "cards", "actions", "theme", "kinds"].map(n => ctx.require(n)));
-  const bar = (await ctx.require("feed-bar")).create({ start: "hot", onChange: () => draw() }); // (draw: below)
+  const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() }); // (draw: below)
   const tagNow = () => decodeURIComponent(String(ctx.sub ?? "").split("/")[0] ?? "").toLowerCase();
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);

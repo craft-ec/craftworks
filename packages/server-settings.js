@@ -110,7 +110,7 @@ export async function start(ctx) {
           await r.refresh();
           draw();
         } catch (err) {
-          say(`${label}: ${err?.message ?? err}`);
+          say(`${label}: ${ctx.say(err)}`);
         } finally {
           b.disabled = false;
         }
@@ -190,7 +190,7 @@ export async function start(ctx) {
         );
         const slot = el("div");
         main.append(slot);
-        ctx.require("members-list").then(ml => ml.show(server, { manage: true })).then(list => slot.replaceWith(list), err => say(err?.message ?? err));
+        ctx.require("members-list").then(ml => ml.show(server, { manage: true })).then(list => slot.replaceWith(list), err => say(ctx.say(err)));
       },
       // ROLES: composed by who may (`roles`: the owner and admins), each a name and what it may — never more than its
       // maker may. Any app's rule can name one (who may read, post, comment… there).
@@ -215,7 +215,7 @@ export async function start(ctx) {
               await r.refresh();
               draw();
             } catch (err) {
-              say(`Role: ${err?.message ?? err}`);
+              say(`Role: ${ctx.say(err)}`);
             }
           };
           const del = ro && mayCompose
@@ -226,7 +226,7 @@ export async function start(ctx) {
                   await r.refresh();
                   draw();
                 } catch (err) {
-                  say(`Role: ${err?.message ?? err}`);
+                  say(`Role: ${ctx.say(err)}`);
                 }
               } })
             : null;
@@ -290,7 +290,7 @@ export async function start(ctx) {
                 : el("p", { className: "note", textContent: "Nobody yet." }),
             );
           },
-          e => asking.replaceChildren(el("p", { className: "note", textContent: `Could not read who asked: ${e?.message ?? e}` })),
+          e => asking.replaceChildren(el("p", { className: "note", textContent: `Could not read who asked: ${ctx.say(e)}` })),
         );
         const who = el("input", { placeholder: "name#abc123 or did:craftec:…", style: "min-width: 18em" });
         main.append(
@@ -355,7 +355,7 @@ export async function start(ctx) {
         main.append(el("h3", { textContent: "Capabilities" }), el("p", { className: "note", textContent: can ? "What this space enables: an app shows the space when what it needs is on. Each one's rules — who may read, post, edit — beside it." : "What this space enables (its owner and admins keep this list)." }));
         for (const cap of r.capabilities()) {
           const box = el("input", { type: "checkbox", checked: on.has(cap), disabled: !can || base.has(cap), title: base.has(cap) ? "Always on in a space" : "" });
-          box.onchange = () => r.enable(cap, box.checked).then(() => r.refresh().then(draw), e => ((box.checked = !box.checked), say(e?.message ?? e)));
+          box.onchange = () => r.enable(cap, box.checked).then(() => r.refresh().then(draw), e => ((box.checked = !box.checked), say(ctx.say(e))));
           const row = el("label", { className: "cap" }, box, el("span", { textContent: `${WORDS[cap] ?? cap}${base.has(cap) ? " — always on" : ""}` }));
           if (!can || !on.has(cap) || !(r.domains?.() ?? []).includes(cap)) {
             main.append(row);

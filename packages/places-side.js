@@ -19,6 +19,12 @@ export async function mount(ctx, el) {
       .cw-side a.on { background: var(--cw-hover); font-weight: 600; }
       .cw-side a .cw-badge { margin-left: auto; }
       .cw-side .more { margin-top: var(--cw-space-2); color: var(--cw-muted); font-size: var(--cw-text-sm); }
+      .cw-side section + section { margin-top: var(--cw-space-3); padding-top: var(--cw-space-3); border-top: 1px solid var(--cw-line); }
+      .cw-side h4 { margin: 0 0 4px; padding: 0 var(--cw-space-2); font-size: var(--cw-text-xs); text-transform: uppercase; letter-spacing: .04em; color: var(--cw-muted); }
+      .cw-side li.group { padding: 6px var(--cw-space-2) 2px; font-size: var(--cw-text-sm); color: var(--cw-muted); }
+      .cw-side a.sub { padding-left: var(--cw-space-4); }
+      .cw-side .make { font-weight: 600; }
+      .cw-side button.cw-flat { display: block; width: 100%; text-align: left; padding: 6px var(--cw-space-2); }
       .cw-side-open { display: none; }
       @media (max-width: 760px) {
         .cw-side-open { display: inline-flex; position: fixed; left: 8px; bottom: 56px; z-index: 41; border-radius: 999px; padding: 8px 12px; box-shadow: var(--cw-shadow-lg); }
@@ -36,6 +42,14 @@ export async function mount(ctx, el) {
   addEventListener("pointerdown", e => !el.contains(e.target) && e.target !== open && slot()?.classList.remove("open"), { signal: ctx.signal });
   ctx.signal?.addEventListener("abort", () => open.remove());
   places.side(panel);
-  // The ☰ only where the panel has places to show.
-  new MutationObserver(() => (open.hidden = !panel.childElementCount)).observe(panel, { childList: true });
+  // The ☰ only where the panel has something to show; and while it does, the header leaves the app's entries to it
+  // (`sideNav`, on the page's own ctx: what the header reads).
+  const base = Object.getPrototypeOf(ctx);
+  const showing = () => {
+    const on = !!panel.childElementCount && !!panel.textContent.trim();
+    open.hidden = !on;
+    if (base.sideNav !== on) (base.sideNav = on), dispatchEvent(new CustomEvent("craftworks:actions"));
+  };
+  new MutationObserver(showing).observe(panel, { childList: true });
+  ctx.signal?.addEventListener("abort", () => base.sideNav && ((base.sideNav = false), dispatchEvent(new CustomEvent("craftworks:actions"))));
 }

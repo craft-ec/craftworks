@@ -254,7 +254,7 @@ export async function mount(ctx, el) {
     const out = h("div");
     give.onclick = async () => {
       give.disabled = true;
-      await usage.contribute(amount.value, days.value).catch(e => (out.textContent = `✕ ${e?.message ?? e}`));
+      await usage.contribute(amount.value, days.value).catch(e => (out.textContent = `✕ ${ctx.say(e)}`));
       give.disabled = false;
       draw();
     };

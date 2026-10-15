@@ -48,7 +48,7 @@ export async function mount(ctx, el) {
   const root = el.querySelector(".vt");
   const me = await space.me();
   const refIn = s => decodeURIComponent(s.slice(2));
-  const fail = (said, e) => (said.textContent = e?.message ?? String(e));
+  const fail = (said, e) => (said.textContent = ctx.say(e));
   const WORD = { yes: "Yes", no: "No", abstain: "Abstain" };
   // NAMES, read once per draw (the graph and the sentences are text, not elements).
   const names = new Map();
@@ -395,7 +395,7 @@ export async function mount(ctx, el) {
       if (s === "new-poll" && (at.who === "mine" || inSp)) return await pollMaker(at);
       return await list(at);
     } catch (e) {
-      root.replaceChildren(h("p", { className: "said", textContent: e?.message ?? String(e) }));
+      root.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }));
     }
   }
   await draw();

@@ -6,7 +6,7 @@
 export async function mount(ctx, el) {
   const [subs, items, directory, theme, space, cards] = await Promise.all(["caption-store", "items", "directory", "theme", "space", "cards"].map(n => ctx.require(n)));
   // The FEED BAR (every content app's): which tracks, over which window, in which order.
-  const bar = (await ctx.require("feed-bar")).create({ start: "new", onChange: () => draw() });
+  const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() });
   const me = await space.me();
   el.innerHTML = `
     <style>@layer apps {

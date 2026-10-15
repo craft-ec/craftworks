@@ -33,7 +33,7 @@ export async function mount(ctx, el) {
       const did = await conversation.person(form.elements.who.value);
       person.open(form.elements.who, did);
     } catch (err) {
-      said.textContent = err?.message ?? String(err);
+      said.textContent = ctx.say(err);
       said.hidden = false;
     }
   };
@@ -43,27 +43,37 @@ export async function mount(ctx, el) {
   box.onchange = () =>
     directory.listMe(box.checked).catch(e => {
       box.checked = !box.checked;
-      said.textContent = e?.message ?? String(e);
+      said.textContent = ctx.say(e);
       said.hidden = false;
     });
   await list.show(el.querySelector(".list"));
   // EVERY SPACE's PEOPLE, here too (owner 10-13: contact is in every space — its members — so Contact shows them all,
   // as it chooses: each space its own section, opened when wanted; no switching between spaces).
   const [ml, space] = await Promise.all([ctx.require("members-list"), ctx.require("space")]);
-  const spaces = (await space.mine()).filter(s => s.kind === "server");
-  for (const sp of spaces) {
-    const d = Object.assign(document.createElement("details"), { className: "space-people" });
-    d.style.cssText = "padding:0 var(--cw-space-3)";
-    const sum = Object.assign(document.createElement("summary"), { textContent: `${space.shown(sp)} · people` });
-    d.append(sum);
-    let shown = false;
-    d.ontoggle = async () => {
-      if (!d.open || shown) return;
-      shown = true;
-      d.append(await ml.show(sp, { manage: false }).catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) })));
-    };
-    el.querySelector(".ct").append(d);
-  }
+  // (A VIEW: a space joined on another device gets its section here with no page change.)
+  const sections = document.createElement("div");
+  el.querySelector(".ct").append(sections);
+  ctx.view(sections, {
+    read: async () => (await space.mine()).filter(s => s.kind === "server").map(s => ({ id: s.id, name: space.shown(s) })),
+    draw: list => {
+      const all = document.createElement("div");
+      for (const { id, name } of list) {
+        const d = Object.assign(document.createElement("details"), { className: "space-people" });
+        d.style.cssText = "padding:0 var(--cw-space-3)";
+        d.append(Object.assign(document.createElement("summary"), { textContent: `${name} · people` }));
+        let shown = false;
+        d.ontoggle = async () => {
+          if (!d.open || shown) return;
+          shown = true;
+          const sp = (await space.mine()).find(x => x.id === id);
+          d.append(sp ? await ml.show(sp, { manage: false }).catch(e => Object.assign(document.createElement("p"), { textContent: ctx.say(e) })) : Object.assign(document.createElement("p"), { textContent: "Not one of your spaces now." }));
+        };
+        all.append(d);
+      }
+      return all;
+    },
+    looks: { empty: () => document.createTextNode(""), loading: () => document.createTextNode("") },
+  });
 }
 
 // A SPACE's Contact: its people and their roles — the one list (`members-list`), with its tools for who may — and,
@@ -106,22 +116,28 @@ async function people(ctx, el, { directory, person }) {
     }</style>
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
-  grid.replaceChildren(theme.loading("Finding people…"));
-  const lists = await ctx.optional("contact: moderation.lists", moderation.lists(), () => null);
-  const dids = (await directory.listed()).filter(d => !lists?.flagged({ by: d }));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(Boolean));
     return e;
   };
-  grid.replaceChildren(
-    ...(dids.length
-      ? dids.map(d => {
+  // A VIEW: who chose to be shown, drawn again when that changes.
+  ctx.view(grid, {
+    read: async () => {
+      const lists = await ctx.optional("contact: moderation.lists", moderation.lists(), () => null);
+      return (await directory.listed()).filter(d => !lists?.flagged({ by: d }));
+    },
+    draw: dids =>
+      h(
+        "div",
+        { style: "display:contents" },
+        ...dids.map(d => {
           const name = directory.nameEl(d, "b");
           const about = h("span", { textContent: "public profile" });
           ctx.background("contact: posts.list", posts.list({ by: d }).then(ps => (about.textContent = `${ps.length} public post${ps.length === 1 ? "" : "s"}`)));
           return h("div", { className: "card", onclick: e => person.open(e.currentTarget, d) }, name, about);
-        })
-      : [h("p", { className: "note", textContent: "Nobody listed" })]),
-  );
+        }),
+      ),
+    looks: { empty: () => h("p", { className: "note", textContent: "Nobody listed" }), loading: () => theme.loading("Finding people…") },
+  });
 }

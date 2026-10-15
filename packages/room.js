@@ -127,7 +127,7 @@ export async function start(ctx) {
     const bodyOf = (text, files = []) => el("div", { className: "text" }, markdown.render(text ?? "", files));
     // This person MENTIONED: by their id (`[@…](person:DID)`), or as written before (`@name#abc123`).
     const mentionsMe = text => String(text ?? "").includes(`(person:${me})`) || [...String(text ?? "").matchAll(MENTION)].some(m => m[0].endsWith(`#${me.replace(/^did:craftec:/, "").slice(0, 6)}`));
-    const fail = what => err => say(`${what}: ${err?.message ?? err}`);
+    const fail = what => err => say(`${what}: ${ctx.say(err)}`);
 
     function message(m, byId) {
       const li = el("li", { className: m.kind === "system" ? "msg system" : `msg${m.by !== me && mentionsMe(m.body) ? " me-mentioned" : ""}` });

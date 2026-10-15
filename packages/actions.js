@@ -206,7 +206,7 @@ export async function start(ctx) {
   function bar(it, { outside = null, open = null, edit = null, removed = null, changed = null, discover = false, comments = true, extra = [], vote = false, link = null } = {}) {
     const voteEl = vote ? votes(it, { outside, row: true, ...(vote === true ? {} : vote) }) : null;
     const said = h("span", { className: "said", hidden: true });
-    const fail = e => ((said.textContent = e?.message ?? String(e)), (said.hidden = false));
+    const fail = e => ((said.textContent = ctx.say(e)), (said.hidden = false));
     const btn = (textContent, run, extra = {}) => h("button", { type: "button", textContent, ...extra, onclick: e => (e.stopPropagation(), e.preventDefault(), run(e)) });
     const el = h("div", { className: "cw-acts" });
 

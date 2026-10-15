@@ -48,7 +48,7 @@ export async function mount(ctx, el) {
           if (c?.handle) cardForm.elements.handle.value = c.handle;
           cardSaid.textContent = c ? `Published as ${directory.shown(s.did, c.handle)}.` : "Not published yet.";
         })
-        .catch(e => (cardSaid.textContent = `Could not read your card: ${e?.message ?? e}`));
+        .catch(e => (cardSaid.textContent = `Could not read your card: ${ctx.say(e)}`));
       cardForm.onsubmit = async e => {
         e.preventDefault();
         cardSaid.textContent = "Publishing…";
@@ -56,7 +56,7 @@ export async function mount(ctx, el) {
           const c = await directory.publish({ handle: cardForm.elements.handle.value.trim() || null });
           cardSaid.textContent = `Published as ${directory.shown(s.did, c.handle)}.`;
         } catch (err) {
-          cardSaid.textContent = `Could not publish: ${err?.message ?? err}`;
+          cardSaid.textContent = `Could not publish: ${ctx.say(err)}`;
         }
       };
     },
@@ -126,7 +126,7 @@ export async function mount(ctx, el) {
                       await membership.remove(m.index, entropy);
                       words.value = "";
                     } catch (e) {
-                      said.textContent = `Could not remove it: ${e?.message ?? e}`;
+                      said.textContent = `Could not remove it: ${ctx.say(e)}`;
                       go.disabled = back.disabled = false;
                       return;
                     } finally {
@@ -141,7 +141,7 @@ export async function mount(ctx, el) {
             }
             at.replaceWith(ul);
           },
-          e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${e?.message ?? e}`),
+          e => (dev.querySelector(".line").textContent = `Could not read your nodes: ${ctx.say(e)}`),
         );
       drawNodes();
     },
@@ -194,7 +194,7 @@ export async function mount(ctx, el) {
         };
         sec.append(repair);
       }
-      drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${e?.message ?? e}`));
+      drawSecurity().catch(e => (sec.querySelector(".facts").textContent = `Could not read: ${ctx.say(e)}`));
 
     },
 
@@ -254,14 +254,14 @@ export async function mount(ctx, el) {
           const b = blocks.stats();
           sto.querySelector(".blocks").textContent = `This page read ${b.read} tree block${b.read === 1 ? "" : "s"}; ${b.rebuilt} came from their recovery group first (rebuilt and checked).`;
         },
-        e => (sto.querySelector("tbody").textContent = `Could not read: ${e?.message ?? e}`),
+        e => (sto.querySelector("tbody").textContent = `Could not read: ${ctx.say(e)}`),
       );
       draw();
       sto.querySelector(".keep-now").onclick = async e => {
         e.target.disabled = true;
         const said = sto.querySelector(".kept-said");
         said.textContent = "Keeping every table…";
-        const out = await keep.now({ onProgress: p => (said.textContent = `Keeping ${p.done + 1} of ${p.of}: ${p.name}…`) }).catch(err => [{ error: err?.message ?? String(err) }]);
+        const out = await keep.now({ onProgress: p => (said.textContent = `Keeping ${p.done + 1} of ${p.of}: ${p.name}…`) }).catch(err => [{ error: ctx.say(err) }]);
         const bad = out.filter(k => k.error || k.damaged);
         // What needs attention, named (a table not kept in time, one damaged).
         said.textContent = `${out.length - bad.length} of ${out.length} kept${bad.length ? `; not kept: ${bad.map(k => k.name ?? (k.file ? `file ${k.file.slice(0, 8)}…` : "?")).join(", ")}` : ""}.`;
@@ -301,7 +301,7 @@ export async function mount(ctx, el) {
           ul.append(li);
         }
       };
-      drawGrants().catch(e => (access.querySelector(".grants").textContent = `Could not read: ${e?.message ?? e}`));
+      drawGrants().catch(e => (access.querySelector(".grants").textContent = `Could not read: ${ctx.say(e)}`));
     },
 
     async recovery() {
@@ -417,7 +417,7 @@ export async function mount(ctx, el) {
             if (!now || before) throw new Error("the account's key log did not take the change: try again");
             said.textContent = "Done. Your new words open your account; the old ones no longer do.";
           } catch (err) {
-            said.textContent = `Could not change them: ${err?.message ?? err}`;
+            said.textContent = `Could not change them: ${ctx.say(err)}`;
           }
           reset();
         };
@@ -455,7 +455,7 @@ export async function mount(ctx, el) {
           recSaid.textContent = "Set. On a new device: Log in → Use a passphrase instead.";
           recState();
         } catch (err) {
-          recSaid.textContent = `Not set: ${err?.message ?? err}`;
+          recSaid.textContent = `Not set: ${ctx.say(err)}`;
         }
       };
       pass.querySelector(".clear").onclick = async () => {
