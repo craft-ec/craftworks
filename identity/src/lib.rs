@@ -371,6 +371,11 @@ pub struct Mandate {
     /// The group: its epoch and its MLS state.
     pub epoch: u64,
     pub state: Vec<u8>,
+    /// WHO MAY LET PEOPLE IN (the kind's rule): what `craftworks_rules::admission` decides over, with the keys spent
+    /// (`UpkeepMandate::spent`) and the welcomes made (upkeep reads the space's writers list itself) — 10-13: one rule
+    /// for the page and upkeep; without it upkeep lets nobody in.
+    #[serde(default)]
+    pub admitters: Vec<String>,
 }
 
 /// Someone upkeep let in: into `space`, by `code` ("open": no code), at `at` (ms), the group then at `epoch`.
@@ -437,6 +442,10 @@ pub enum Answer {
         /// Spaces of the last mandate not taken (upkeep's group is newer); what upkeep last did or met.
         stale: Vec<[u8; 32]>,
         said: Option<String>,
+        /// What it DECIDED about each request (the `member` lifecycle's moves, by the node): the page moves the machine.
+        decided: Vec<Decided>,
+        /// The wake-up its last admission round for this member began at (None: never).
+        round_at: Option<u64>,
     },
     EpochSecrets { epochs: Vec<(u64, [u8; 32])> },
     /// The witness mandate is kept (`Request::WitnessMandate`).
@@ -555,6 +564,8 @@ pub fn upkeep_status<H: Host>(h: &H, m: Option<&[u8; KEY_LEN]>) -> Answer {
             let all: Vec<String> = lines.lines().map(str::to_string).chain(why).filter(|l| !l.is_empty()).collect();
             (!all.is_empty()).then(|| all.join("\n"))
         },
+        decided: m.map(|m| upkeep_decided(h, m)).unwrap_or_default(),
+        round_at: m.and_then(|m| upkeep_round_at(h, m)),
     }
 }
 
@@ -578,6 +589,43 @@ pub const UPKEEP_ADMITTED: &[u8] = b"identity_upkeep/admitted/";
 pub const UPKEEP_MOVED: &[u8] = b"identity_upkeep/moved/";
 pub const UPKEEP_STALE: &[u8] = b"identity_upkeep/stale/";
 pub const UPKEEP_SAID: &[u8] = b"identity_upkeep/said/";
+pub const UPKEEP_DECIDED: &[u8] = b"identity_upkeep/decided/";
+/// The wake-up the member's last admission round began at (said in the status: a member never served shows).
+pub const UPKEEP_ROUND_AT: &[u8] = b"identity_upkeep/round-at/";
+pub fn upkeep_round_at<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<u64> {
+    u64_of(h.get_secret(&of(UPKEEP_ROUND_AT, m)))
+}
+pub fn upkeep_set_round_at<H: Host>(h: &mut H, m: &[u8; KEY_LEN], wakeup: u64) -> bool {
+    h.set_secret(&of(UPKEEP_ROUND_AT, m), &wakeup.to_le_bytes())
+}
+
+/// A REQUEST's step, as the node took it (owner 10-14: what another user faces is read in the health reports — the
+/// node's decisions are the `member` lifecycle's moves too, `by: node`; a page moves the machine from them): `q` its
+/// key's tag (zeros: a request with no key), `step` the machine's event (`skip`, `welcomed`, `fail`), and why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Decided {
+    pub space: [u8; 32],
+    pub did: String,
+    pub q: [u8; 16],
+    pub at: u64,
+    pub step: String,
+    pub why: String,
+}
+pub fn upkeep_decided<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Vec<Decided> {
+    h.get_secret(&of(UPKEEP_DECIDED, m)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+/// One more step recorded — once per (request, step, why): a round reading the same request again adds nothing — the
+/// last 32 kept.
+pub fn upkeep_decide<H: Host>(h: &mut H, m: &[u8; KEY_LEN], d: Decided) {
+    let mut all = upkeep_decided(h, m);
+    if all.iter().any(|x| x.space == d.space && x.did == d.did && x.q == d.q && x.step == d.step && x.why == d.why) {
+        return;
+    }
+    all.push(d);
+    let over = all.len().saturating_sub(32);
+    all.drain(..over);
+    h.set_secret(&of(UPKEEP_DECIDED, m), &bincode::serialize(&all).expect("decisions encode"));
+}
 /// The key packages the member's account used already (from the page, with the mandate).
 pub const UPKEEP_SPENT: &[u8] = b"identity_upkeep/spent/";
 pub fn upkeep_spent<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Vec<[u8; 16]> {
@@ -957,6 +1005,59 @@ fn note_space<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -
 
 fn latest_in<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> Option<u64> {
     h.get_secret(&in_space(EPOCH_LATEST, m, space)).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes)
+}
+
+/// A space's EARLIER epochs' secrets held here (below `below`): what a welcome hands a joiner (`welcome_message`), and
+/// what a member asks for (`Request::EpochSecrets`).
+pub fn epochs_below<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], below: u64) -> Vec<(u64, [u8; 32])> {
+    let space = Some(space);
+    (0..below.min(100_000)).filter_map(|e| secret_in(h, m, &space, e).map(|s| (e, s))).collect()
+}
+
+/// THE WELCOME's MESSAGE — ONE builder (owner 10-14: the node's welcome was a second format, without the key it was
+/// made for, when, or the history — its joiner's request never showed joined, and it read nothing before its epoch):
+/// the page's `conversation.welcome` (through the core) and upkeep's. What the space is, the welcome, the TAG of the
+/// key package it was made for, when, the request it answers, the owner's branch for a repair, and the space's earlier
+/// epochs' secrets (`history`).
+pub struct Welcome<'a> {
+    pub space: [u8; 32],
+    pub space_kind: &'a str,
+    pub from: &'a str,
+    pub owner: &'a str,
+    pub nonce: Option<&'a str>,
+    pub name: &'a str,
+    pub welcome: &'a [u8],
+    pub kp: [u8; 16],
+    pub made: u64,
+    pub code: Option<&'a str>,
+    pub circle: Option<&'a str>,
+    pub group: Option<&'a str>,
+    pub repair: Option<(u64, &'a str)>,
+    pub history: &'a [(u64, [u8; 32])],
+}
+pub fn welcome_message(w: &Welcome) -> serde_json::Value {
+    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let mut m = serde_json::json!({
+        "kind": "welcome", "space": hex(&w.space), "spaceKind": w.space_kind, "from": w.from, "owner": w.owner,
+        "nonce": w.nonce, "name": w.name, "welcome": hex(w.welcome), "kp": hex(&w.kp), "made": w.made,
+    });
+    let o = m.as_object_mut().expect("an object");
+    if let Some(c) = w.code {
+        o.insert("code".into(), c.into());
+    }
+    if let Some(c) = w.circle {
+        o.insert("circle".into(), c.into());
+    }
+    if let Some(g) = w.group {
+        o.insert("group".into(), g.into());
+    }
+    if let Some((epoch, branch)) = w.repair {
+        o.insert("repair".into(), serde_json::json!({ "epoch": epoch, "branch": branch }));
+    }
+    if !w.history.is_empty() {
+        o.insert("history".into(), w.history.iter().map(|(e, s)| serde_json::json!([e, hex(s)])).collect());
+    }
+    m
 }
 
 fn secret_in<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>, epoch: u64) -> Option<[u8; 32]> {
@@ -1454,9 +1555,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            let m = a.public();
-            let space = Some(space);
-            EpochSecrets { epochs: (0..below.min(100_000)).filter_map(|e| secret_in(h, &m, &space, e).map(|s| (e, s))).collect() }
+            EpochSecrets { epochs: epochs_below(h, &a.public(), space, below) }
         }
         Request::UpkeepAck { admitted } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };

@@ -125,13 +125,49 @@ Callers: `const st = await t.decided(); if (st.s === "absent") create…; else i
 |---|---|---|
 | **page** | `BOOTING → RESUMING → RUNNING ⇄ HIDDEN`, `UPDATING` | No shutdown state (see below). `RESUMING` restores what the last page left; `UPDATING` waits for **save** to have nothing owed; `HIDDEN` sends everything owed |
 | **session** | `GUEST → UNLOCKING \| HANDING_OVER \| RECOVERING \| REGISTERING → OPEN \| OPEN_KEYLESS → LOCKED \| REMOVED` | `OPEN_KEYLESS` is derived on every load (logged in, the account's keys not held here) and blocks every write to the card, key packages, welcomes and asks; the page says "keys not recovered" and offers recovery again |
-| **account group** (per device) | `NONE, CONFIRMING_CHANNEL, WALKING, JOINING, CREATING, MEMBER, MEMBER_PARTIAL_HISTORY, COMMITTING, JOIN_FAILED, REMOVED` | `CREATING` only from session `REGISTERING` and only when the channel is `absent` (§2); `JOINING` only with group info `present`; `keep()` writes `e/0`/`info` only in `CREATING`; a device removal holds `COMMITTING` (persisted) until its commit is in the log |
-| **space** (per device) | `UNKNOWN, LOADING, HELD, NOT_HELD, AWAITING_WELCOME, JOINING, BEHIND, STUCK_OWN, OFF_BRANCH, REFRESH_OWED, WELCOME_FAILED{reason}, REMOVED` | `LOADING` needs account group `MEMBER`; only `WELCOME_FAILED{package-not-held}` may renew key packages or ask for a welcome again; a new device of a member gets space keys from the account's `spacekeys` table (keys.js:699-718) |
+| **group** (per MLS group, on this device) | `UNKNOWN → HELD ⇄ BEHIND`, `OFF_BRANCH`, `NOT_HELD`, `UNREADABLE`, `STUCK`, `REMOVED`; its steps (`commit`, `join`, `join-failed`, `adopt-delegate`, `log-*`, `history-*`) | ONE machine for EVERY group (below): `CREATING` only by its maker on a channel answered absent (§2); `BEHIND` applies commits in order; `OFF_BRANCH` repairs onto the branch the owner announced; `HISTORY_GAP` asks the group's earlier keys of THIS ACCOUNT's own devices first, then its admins; every STEP its keys take (a commit and why, a join, a log written or mended, history handed) a step of this machine — kept in the account's JOURNAL and reported (the `keyevents` table it replaces) |
+| **member** (per REQUEST, on each decider: a page, or the node — `by`) | `SKIPPED{why} → ADMITTING → WELCOMED`, `KEPT{why}` (sent later), `FAILED{why}` | admitted ONLY with the key the person's REQUEST carries (and only if that key's credential is theirs, by their key log); only the member whose turn it is; never again for the same request — no member re-adds anyone on its own (the loop that drained cards and ran a space to epoch 478). The node's decisions are moves of this machine too (`identity::Decided`, moved by the page's `absorb`) |
+| **join** (per REQUEST, on the asking device) | `ASKED → WAITING{why} → MEMBER`, `FAILED{reason} → ASKED (a new request)` | every request carries ITS OWN key package, made by this device for it (its secret kept in the account: any device of it opens the welcome) — the right key to the right invite by construction; one TOLD it is in, BEHIND, OFF the owner's branch or whose welcome did not open asks in again itself with a new key. No key packages on the card. `join` and `member` share the REQUEST's key (`q:<its key's tag>`): every move one health report, so one person's request is read whole from anywhere |
 | **app** (per open app) | `OPENING → OPEN → CLOSED`, `FAILED{fault}` | `OPENING` needs page `RUNNING` and, for login-only apps, session `OPEN`; `CLOSED` ends its scope at once — its changes were already saved as made |
 | **save** (per change) | `EDITING → OWED → PREPARED → SENT → HELD`, `REFUSED{fault}`, `RETRYING` | Every change is saved as it is made (below); `OWED` only on a decided tail (§2 R1); `RETRYING` by §4 POLICY; the page shows "saving…/saved/not saved" from this state, one place |
 | **delete** (per object) | `REQUESTED → HIDDEN → GONE`, `REFUSED{fault}` | one path for items, spaces, devices and files; who may delete is the object's rule (roles), checked in `REQUESTED`; `GONE` only where the network can forget (a tail can hide, not erase — said to the person) |
 | **job** (per background task) | `IDLE → RUNNING → IDLE`, `PAUSED`, `STOPPED` | upkeep, renew, sync, usage flush, heartbeat: each declares the states it needs (e.g. upkeep needs session `OPEN` + account group `MEMBER`) and is `PAUSED` otherwise; `HIDDEN` pauses jobs that only serve the screen |
 
+
+### Groups: one machine family for every MLS group (owner 10-13)
+
+Every access-controlled thing is an MLS group, and all of them need the same operations — let someone in (a key and a
+welcome), take someone out, catch up on commits, repair a branch, hand over history. So there is ONE implementation and
+each group KIND supplies only its POLICY: who may let in, and who is entitled to ask.
+
+| Kind | Members | Who lets in | Entitled to ask |
+|---|---|---|---|
+| the account | its devices | its owner | the recovery words (the walk of its channel) |
+| a space | people | its members who may invite | a JOIN: an invite code, the open door, a level; AGAIN: a member by its acts |
+| an audience (a role, chosen people) | people | the space's admins | being in the role or the list |
+| a circle (friends, followers) | people | its owner | being a friend |
+| a conversation (direct, group) | people | its members | the other of a direct one; a group's member, or one its maker told |
+| a level group (PRO, VIP) | people | any member | the card's level |
+
+LETTING SOMEONE IN, one path (built 10-13):
+
+- **A request carries its asker's own key** (`conversation.askIn`, the one request site): a key package this device
+  makes for it. A JOIN goes in a code's, the open door's or a level's bag; AGAIN (a member by the acts — told it is
+  in, behind, off the owner's branch, its welcome never opened) in the space's member bag (`stuck <id>`), with where
+  its keys are. Being added by someone (an invite, a conversation started) is being TOLD (`tell`): the person's own
+  device then asks in. The card carries no key packages.
+- **One rule decides** (`rules::admission`, Rust; the page runs it through the core, the identity delegate natively):
+  only the request's own key; never a key spent or welcomed already; ONCE per request (a welcome at or after it
+  answers it — only a newer request, a new key, is let in again); a join from someone the group holds, or an again
+  from a member not behind, is not; ONE admitter — every member ranks those who may let in the same way (`turn`, the
+  one ranking: `ordering.turn` and the delegate's re-key turns are it), the k-th only after k × takeover.
+- **One admitter path** (`conversation.admit`, every space kind; the delegate's `upkeep` with no page open) and one
+  welcome (`conversation.welcome`: the asker's old entries out and the new one in, ONE commit), recorded in the group's
+  shared list (`{ welcomed, kp, at }` in its writers list) that every member and node decides over.
+
+ENFORCED: `tools/group-check.mjs` (the build) fails on a second request site, a second rule call, a second re-add, a key
+package made but for a request, a card's key packages, a retired `welcome-again`, or a turn ranking of its own (Rust
+included). Its positive control: the tree before 10-13 fails it on ten sites.
 
 ### Apps are installed, not built in
 
@@ -284,8 +320,8 @@ happening again.
 1. **Faults**: `fault.js`, the loader collector, `node.ask`/`WAIT` (one timeout), `blocks`/`index` throwing kinds.
 2. **Reads**: `state`/`decided()` in `tailAt` + R1 (closes every create-on-unknown at once), then R2.
 3. **Lifecycle mechanism** + **account group** (taking over keys.js:290-376 and :102); **session** in shadow first.
-4. **Gates and jobs**: `directory.publish`/`renew`, welcome-again asks and upkeep become **jobs** gated on account
-   group `MEMBER`; **space** with failure reasons; every `setInterval` moved into a scope.
+4. **Gates and jobs**: `directory.publish`, asking in (`askIn`) and upkeep become **jobs** gated on account
+   group `MEMBER`; **group** with failure reasons; every `setInterval` moved into a scope.
 5. **Page, app, save, delete**: save on change with the drafts table, resume on open (an update is a resume), unmount
    on close, save states shown from one place, one delete path.
 6. **R3/R4/R5**: caches, re-open on key arrival, merged tables; remove the reload and the polling loops.

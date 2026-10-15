@@ -47,19 +47,6 @@ export function sharedTags(pointers) {
   for (const p of pointers ?? []) if (p && typeof p.kp === "string" && TAG.test(p.kp) && !out.has(p.kp)) out.set(p.kp, String(p.w ?? ""));
   return out;
 }
-// The card's packages FREE to welcome with: by index into `tags` (the card's, in its order), none this account used
-// (`ownSpent`: a Set of tags) and none another member used (`shared`: tag → who). `skipped`: the tags left out ONLY
-// because someone else used them — what this account alone would have picked again (the 10-11 double welcome).
-export function freePackages(tags, ownSpent, shared) {
-  const free = [];
-  const skipped = [];
-  tags.forEach((t, i) => {
-    if (ownSpent.has(t)) return;
-    if (shared.has(t)) return void skipped.push(t);
-    free.push(i);
-  });
-  return { free, skipped };
-}
 // A kept welcome's wait before its next try (`tries`: made so far): 2 minutes, doubling, at most an hour.
 export const resendWait = tries => Math.min(3600e3, 120e3 * 2 ** Math.max(0, (Number(tries) || 1) - 1));
 
@@ -67,86 +54,54 @@ export async function start(ctx) {
   const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
-  // WELCOME a person into a space: they (their DID) added to its group by a key package from their card, and the welcome
-  // — what the space is — sealed into their inbox. `name`: what the space is called for them.
-  // `code`: the request it answers (an invite code, or "open"), so the asker knows which of theirs is answered.
+  // WELCOME a person into a space: they (their DID) added to its group WITH THE KEY THEIR REQUEST CARRIES (`key`: `{ kp,
+  // tag }`, what `admit` — `rules::admission` — chose; owner 10-13: "the right key to the right invite") and the welcome
+  // — what the space is — sealed into their inbox. `name`: what the space is called for them. `code`: the request it
+  // answers (a code, "open", "level"), so the asker knows which of theirs is answered. `repair`: the owner's branch, for
+  // a member off it.
   // A welcome's FINGERPRINT (sha-256 of its bytes, 8 hex): the same welcome named alike where it is sent and received.
   const fingerprint = async hex => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(hex))))].slice(0, 4).map(x => x.toString(16).padStart(2, "0")).join("");
-  async function welcome(sp, did, name, code = null, repair = null) {
+  async function welcome(sp, did, name, code, key, repair = null) {
     const me = await space.account.strict();
     if (!me) throw space.loginNeeded();
     if (did === me.id) throw new Error("that is you");
-    // Their card AS IT IS NOW (read again, never a copy this page read before): key packages work once and are
-    // replaced — one from an older read is spent, or lost with what held its secret, and the welcome never opens.
-    const card = await directory.card.strict(did, { fresh: true });
-    if (!card?.inbox || !card.keyPackage) throw new Error("that person has no card yet");
-    // A key package works ONCE: never one this account used already (a card read before its person renewed it still
-    // lists the one used last time) — kept in the account's table `keypacks`.
+    if (!key?.kp || !key?.tag) throw new Error("no key of their request: a welcome is made only with the key their request carries");
+    const card = await directory.card.strict(did);
+    if (!card?.inbox) throw new Error("that person has no card yet");
     const used = await (await ctx.require("storage")).table("keypacks");
     await used.settled;
-    const tagOf = async kp => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
-    const tags = await Promise.all(card.keyPackages.map(tagOf));
-    const spent = new Set(used.rows().filter(r => r.value).map(r => r.key));
-    // …NOR ONE ANOTHER MEMBER USED (10-11: two welcomes for one package, one of them never opens — and its person, stuck,
-    // is re-added again and again, an epoch each). Read from THIS space's writers list as it is now, and from every
-    // other space this account reads, as upkeep last mirrored them here (`shared:<tag>` rows: `mirrorShared`) — a
-    // package is the person's, not the space's: one spent welcoming them into A is spent for B. (Chosen over waiting
-    // for the person to renew their card: renewal needs THEIR page open, and the welcomes that collide are exactly
-    // the ones made while it is not.) Still unseen: a package another account used in a space this one is not in, or
-    // one a node used that its account's page has not absorbed yet — the person's page renews the card then.
-    const shared = sharedTags(await index.spacePointers(sp, "writers"));
-    for (const r of used.rows()) if (r.value && r.key.startsWith("shared:") && !shared.has(r.key.slice(7))) shared.set(r.key.slice(7), String(r.value));
-    const { free, skipped } = freePackages(tags, spent, shared);
-    if (skipped.length) {
-      ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: ${skipped.length} key package(s) on their card used by another member (${skipped.map(t => `${t.slice(0, 8)} by ${String(shared.get(t)).slice(0, 8)}`).join(", ")}) — not used again; ${free.length} left` });
-      ctx.background("conversation: index.health", index.health({ k: "welcome-pkg-shared", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), d: { skipped: skipped.length, left: free.length, card: tags.length } }));
-    }
-    const unused = free.map(i => card.keyPackages[i]);
-    if (!unused.length) {
-      // Told so, once per card (its packages as they are): their page puts a fresh set on it and asks again.
-      const k = `renew-asked:${did}|${tags.join("").slice(0, 32)}`;
-      if (!used.rows().some(r => r.key === k && r.value))
-        await ctx.background("conversation: index.send", index.send(did, { kind: "renew-keys", from: me.id, at: Date.now() }).then(() => used.put(k, String(Date.now()))));
-      throw new Error("their card has no key package left unused (asked to renew it; it renews when they are next online): try again then");
-    }
-    const kp = unused[Math.floor(Math.random() * unused.length)];
-    const tag = tags[card.keyPackages.indexOf(kp)];
+    const { kp, tag } = key;
     await used.put(tag, String(Date.now()));
-    // WELCOMED AGAIN (a welcome that never opened — its key package lost — or a member who lost the space): whatever
-    // of theirs the group still holds is taken out first; the group admits one entry per key.
     const g = keys.group(sp);
     const { glue } = await ctx.require("node");
     const didOfCred = h => glue.did_of(new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16))));
-    // In ONE commit (`readd`): a removal then an add cost two epochs, and every epoch leaves whoever is behind further
-    // behind (10-08: Ivvor's New Space at 450 epochs for 5 members).
+    // In ONE commit (`readd`): whatever of theirs the group still holds out, the new entry in (a removal then an add
+    // cost two epochs, and every epoch leaves whoever is behind further behind).
     const stale = ((await g.ready.strict())?.members ?? []).filter(m => m.cred && didOfCred(m.cred) === did).map(m => m.index);
     const welcome = stale.length ? await g.readd(stale, kp) : await g.add(kp);
     if (stale.length) ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: its earlier entry in the group replaced, in one commit` });
-    // MADE FOR THAT PACKAGE, or not sent: a welcome named another key package of theirs (an old one, used already) —
-    // it could never open, and it spent a fresh one; said, with both, never sent.
+    // MADE FOR THAT PACKAGE, or not sent: a welcome naming another key package could never open.
     const made = await keys.welcomeFor(welcome, kp);
     if (!made.ok) {
       ctx.log("conversation", { what: `a welcome for ${directory.shown(did, card.handle)} was made for key package ${made.aimed.join(", ")}, not the one asked (${made.asked}): not sent` });
       throw new Error(`the group made a welcome for another key package of theirs (${made.aimed.join(", ")}), not ${made.asked}`);
     }
-    // ITS PACKAGE SPENT, said to every member (the space's writers list): committed, it is spent whether or not the
-    // welcome reaches them — no other member's welcome may use it (`sharedTags`).
-    await index.spacePoint(sp, "writers", { w: sp.self, welcomed: did, kp: tag, at: Date.now() }).catch(e => ctx.failed("conversation", e, `${directory.shown(did, card.handle)}: its key package ${tag.slice(0, 8)} not listed as used in the space: ${e?.message ?? e}`));
+    // THE GROUP'S SHARED LIST of welcomes made (`{ welcomed, kp, at }` in the writers list): what every member's — and
+    // every node's — `rules::admission` reads: this request answered, its key spent.
+    await index.spacePoint(sp, "writers", { w: sp.self, welcomed: did, kp: tag, at: Date.now() }).catch(e => ctx.failed("conversation", e, `${directory.shown(did, card.handle)}: the welcome (key ${tag.slice(0, 8)}) not listed in the space: ${e?.message ?? e}`));
     // An earlier welcome to them here still kept unsent (below): its entry replaced by this commit, it could never open.
     for (const r of used.rows().filter(x => x.value && x.key.startsWith(`outbox:${sp.id}|${did}|`))) await ctx.background("conversation: used.remove", used.remove(r.key));
     const { owner, nonce } = sp.governance;
-    // ITS HISTORY: the space's earlier epochs' secrets held here — the joiner reads everything before it at once, never
-    // walking a log per epoch (one log missing cut a late joiner off from all before it).
+    // ITS HISTORY: the space's earlier epochs' secrets held here — the joiner reads everything before it at once.
     const at = (await g.ready())?.epoch ?? 0;
-    // `kp`: the TAG of the key package it is made for (what the person's page names when it does not open).
-    const msg = { kind: "welcome", space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce, name, welcome, kp: tag, made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) };
-    // SENT, or KEPT TO SEND AGAIN (10-11): the commit above already replaced their entry in the group — a welcome lost
-    // here left them out with no way in, and every member's next re-add cost another epoch. Kept in `keypacks`
-    // (`outbox:<space>|<did>|<tag>`: the message less its history, read again when sent — no epoch secret kept twice)
-    // and sent again by upkeep (`resendWelcomes`). Their entry IS in the group: the welcome counts as made.
+    // THE ONE WELCOME (`identity::welcome_message` through the core — the node's too): `msg` is its input less the
+    // history, which is added when it is sent (`welcomeMsg`).
+    const msg = { space: sp.id, spaceKind: sp.kind, from: me.id, owner, nonce: nonce ?? null, name, welcome, kp: tag, made: Date.now(), ...(code ? { code } : {}), ...(sp.circle ? { circle: sp.circle } : {}), ...(sp.group ? { group: sp.group } : {}), ...(repair ? { repair } : {}) };
+    // SENT, or KEPT TO SEND AGAIN (10-11): the commit above already replaced their entry in the group — kept in
+    // `keypacks` (`outbox:<space>|<did>|<tag>`: the message less its history) and sent again by upkeep (`resendWelcomes`).
     const newestKey = `newest:${sp.id}|${did}`;
     try {
-      await index.send(did, { ...msg, ...(await historyAt(sp, at)) });
+      await index.send(did, await welcomeMsg(msg, sp, at));
     } catch (e) {
       const why = String(e?.message ?? e).slice(0, 160);
       const was = used.rows().find(r => r.key === newestKey)?.value ?? null;
@@ -154,19 +109,19 @@ export async function start(ctx) {
         ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: the welcome not sent (${why}) and not kept to send again (${k?.message ?? k})` });
         return Promise.reject(e);
       });
-      ctx.background("conversation: index.health", index.health({ k: "welcome-send-failed", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why, d: { tries: 1, kept: true } }));
       ctx.log("conversation", { what: `${directory.shown(did, card.handle)}: the welcome (tag ${tag.slice(0, 8)}) not sent (${why}) — kept, sent again by upkeep` });
-      return card;
+      return { card, kept: why };
     }
-    // Their NEWEST welcome here (its key package's tag): an ask to welcome again about an older one is stale.
+    // Their NEWEST welcome here (its key package's tag).
     await ctx.background("conversation: used.put", used.put(newestKey, tag));
     ctx.log("conversation", { what: `${directory.shown(did, card.handle)} welcomed into a ${sp.kind} (welcome ${await fingerprint(welcome)}, aimed at ${made.aimed.join(", ")}, tag ${tag.slice(0, 8)})` });
-    return card;
+    return { card, kept: null };
   }
-  // A welcome's HISTORY (`{ history }` or nothing): the space's epochs below `at` held here.
-  async function historyAt(sp, at) {
+  // A welcome's MESSAGE as sent: its input (`msg`) with the space's HISTORY (its epochs below `at` held here), built by
+  // the one builder.
+  async function welcomeMsg(msg, sp, at) {
     const history = sp.idBytes && at > 0 ? await ctx.optional("conversation: identity", (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, at), () => []) : [];
-    return history.length ? { history } : {};
+    return JSON.parse((await ctx.require("node")).glue.welcome_message(JSON.stringify({ ...msg, history })));
   }
   // THE WELCOME OUTBOX, sent again (upkeep, every tick): each kept welcome tried after a wait doubling from 2 minutes
   // to an hour; given up after a day (reported: `welcome-send-failed`, final) — their own page asks again from there
@@ -197,14 +152,14 @@ export async function start(ctx) {
       if (!sp || superseded || now - (o.first ?? now) > WAIT.giveUp) {
         if (!sp || superseded) ctx.log("conversation", { what: `a kept welcome for ${short(did)} dropped: ${!sp ? "the space is no longer this account's" : "a newer welcome to them went out"}` });
         else {
-          ctx.background("conversation: index.health", index.health({ k: "welcome-send-failed", s: spId.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: String(o.why ?? "").slice(0, 160), d: { tries: o.tries, kept: false, final: true } }));
+          (await ctx.require("lifecycle")).transition("member", reqKey(tag), "fail", { by: "page", s: spId.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: `its welcome not sent in a day: ${String(o.why ?? "").slice(0, 120)}`, tries: o.tries });
           ctx.log("conversation", { what: `a kept welcome for ${short(did)} (tag ${tag.slice(0, 8)}) given up after ${o.tries} tries over a day: ${o.why}` });
         }
         await ctx.background("conversation: used.remove", used.remove(r.key));
         continue;
       }
       try {
-        await index.send(did, { ...o.msg, ...(await historyAt(sp, o.at)) });
+        await index.send(did, await welcomeMsg(o.msg, sp, o.at));
       } catch (e) {
         await ctx.background("conversation: used.put", used.put(r.key, JSON.stringify({ ...o, last: Date.now(), tries: (o.tries ?? 1) + 1, why: String(e?.message ?? e).slice(0, 160) })));
         continue;
@@ -212,6 +167,7 @@ export async function start(ctx) {
       await ctx.background("conversation: used.put", used.put(`newest:${spId}|${did}`, tag));
       await ctx.background("conversation: used.remove", used.remove(r.key));
       sent += 1;
+      (await ctx.require("lifecycle")).transition("member", reqKey(tag), "welcomed", { by: "page", s: spId.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), tries: (o.tries ?? 1) + 1 });
       ctx.log("conversation", { what: `a kept welcome for ${short(did)} into ${sp.name ?? sp.kind} (tag ${tag.slice(0, 8)}) sent, try ${(o.tries ?? 1) + 1}` });
     }
     return sent;
@@ -233,7 +189,45 @@ export async function start(ctx) {
     return n;
   }
 
-  // DIRECT: a two-person space, the other welcomed — or the one this person already has with them.
+  // ASKING IN — every request to be let into a group, ONE way (`rules::admission`; owner 10-13): it carries a key
+  // package THIS DEVICE makes for it, and its welcome is made with that key and no other. `bag`: a code's, the open
+  // door's, a level's (a JOIN) — or the space's MEMBER bag (`memberBag`: AGAIN, from a member by the acts: told it is
+  // invited, behind, off the owner's branch, its welcome never opened; `epoch`/`branch`: where its keys are, if any).
+  const memberBag = id => `stuck ${id}`;
+  // Its STORY is the `join` machine's, keyed by the request (`reqKey`: its key's tag) — the deciders' `member` moves
+  // under the same key (lifecycle: every move one health report). The tag returned (kept with the ask: `q`).
+  async function askIn(bag, extra = {}, name = null) {
+    const me = await space.account.strict();
+    if (!me) throw space.loginNeeded();
+    const [kp] = await keys.keyPackages(1);
+    const tag = (await ctx.require("node")).glue.admission_tag(kp);
+    await index.openRequests(bag);
+    await index.request(bag, { kind: "join", did: me.id, at: Date.now(), kp, ...extra });
+    const s = /^(stuck|open|level) ([0-9a-f]{6})/.exec(bag)?.[2] ?? null;
+    (await ctx.require("lifecycle")).transition("join", reqKey(tag), "ask", { s, entry: extra.kind === "stuck" ? "again" : "join", e: extra.epoch ?? null, ...(name ? { name } : {}) });
+    return tag;
+  }
+  // A REQUEST's key in the lifecycle (and so in health): its key package's tag — the same for the asker and every
+  // decider, page or node. A request with no key of its own (an old app): by who asked.
+  const reqKey = (tag, did = "") => (tag && !/^0+$/.test(tag) ? `q:${String(tag).slice(0, 10)}` : `q:${String(did).replace(/^did:craftec:/, "").slice(0, 6)}-nokey`);
+  const askAgainIn = (id, extra = {}) => askIn(memberBag(id), { kind: "stuck", ...extra });
+  // A space's member bag MADE (once a page, by its members): it is read every tick here and by the node, and a bag never
+  // put costs a whole network search on each read.
+  const bagsOpen = new Set();
+  const openMemberBag = sp => (bagsOpen.has(sp.id) ? null : index.openRequests(memberBag(sp.id)).then(() => bagsOpen.add(sp.id)));
+  // TOLD: who a space's own rule says is in — a server's `added` act, the other of a direct conversation, a group
+  // conversation's people (recorded `invited:<space>|<did>` in the account's `keypacks`: those kinds keep no acts) —
+  // told in their inbox; their device asks in (`askAgainIn`) and is let in by `admit`, like every request.
+  async function tell(sp, did, name) {
+    const me = await space.account.strict();
+    if (!me) throw space.loginNeeded();
+    if (!(await directory.card.strict(did))) throw new Error("that person has no card yet");
+    const used = await (await ctx.require("storage")).table("keypacks");
+    await used.put(`invited:${sp.id}|${did}`, String(Date.now()));
+    await index.send(did, { kind: "invited", space: sp.id, spaceKind: sp.kind, from: me.id, name, at: Date.now() });
+    ctx.log("conversation", { what: `${short(did)} told they are in ${sp.name ?? "a conversation"}: their device asks in` });
+  }
+  // DIRECT: a two-person space, the other told — or the one this person already has with them.
   async function direct(did) {
     const had = (await space.mine.strict()).find(s => s.kind === "direct" && s.with === did);
     if (had) return had;
@@ -241,19 +235,17 @@ export async function start(ctx) {
     const card = await directory.card.strict(did);
     if (!card) throw new Error("that person has no card yet");
     const sp = await space.create("direct", card.handle ?? short(did), { with: did });
-    await welcome(sp, did, (await directory.card.strict(me.id))?.handle ?? short(me.id));
+    await tell(sp, did, (await directory.card.strict(me.id))?.handle ?? short(me.id));
     return sp;
   }
 
-  // INVITE a person into a space this node is in (a server): their nodes join its group from the welcome.
-  // (Recorded as `added`: someone removed before is back by this.) THE ACT FIRST, then the group: the acts decide, MLS
-  // carries out (welcomed first, a removed member is in the group while the acts still say out — `moderation.enforce`
-  // takes such a one out).
+  // INVITE a person into a space this node is in (a server): recorded as `added` (someone removed before is back by
+  // this), then told — THE ACT FIRST: the acts decide, the group carries out (`admit`, on their own request).
   async function invite(sp, did) {
     const r = await (await ctx.require("roles")).of(sp);
     if (r.banned(did)) throw new Error("they are banned from this server");
     await r.act({ act: "added", did });
-    return welcome(sp, did, sp.name);
+    return tell(sp, did, sp.name);
   }
 
   const people = () => ctx.require("edge").then(e => e.people());
@@ -334,7 +326,7 @@ export async function start(ctx) {
       const devs = await directory.devices(m.did);
       const anns = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
       const a = anns[0] ?? null;
-      const repaired = ptrs.filter(p => p?.repair === m.did);
+      const repaired = ptrs.filter(p => p?.repair === m.did || p?.welcomed === m.did);
       const by = repaired.length ? await Promise.all(repaired.map(async p => (await ctx.optional("conversation: directory.name", directory.name(Object.keys(await whoseDevice(p.w, r)).at(0) ?? ""), () => null)) ?? short(p.w ?? ""))) : [];
       // NO DEVICES READ here is not "not announced": what this page could not read, said as such.
       const unreadDevs = !devs.length ? directory.devicesWhy(m.did) : null;
@@ -396,12 +388,10 @@ export async function start(ctx) {
     return {};
   }
   // BEHIND: this node's keys of a space not on the owner's branch at the owner's epoch (a welcome that opened onto an
-  // older branch; a restored account's) — it reads nothing new there. On EVERY LOAD it asks the owner, the admins and
-  // the other members to welcome it again onto the owner's branch (`welcome-again`, a repair: each ask answered by any
-  // member on that branch — nobody new is let in), until it is on it.
+  // older branch; a restored account's) — it reads nothing new there. It ASKS IN AGAIN (`askAgainIn`, the space's
+  // member bag, carrying where its keys are): one member lets it in (`admit`) — onto the owner's branch.
   // SAFE (owner 10-06, after an ask from a page only briefly behind took its asker out): asked only once BEHIND FOR
-  // 10 minutes in this page (a key change still being processed never asks), carrying where this node is (epoch,
-  // branch) — the answer checks it, and the asker's own announcement, before welcoming anyone again.
+  // 10 minutes in this page (a key change still being processed never asks).
   const BEHIND_FOR = 10 * 60 * 1000;
   // Kept in the page (the app's frame is sandboxed: no localStorage): a page behind for 10 minutes asks; a reload
   // starts the clock again — on the safe side.
@@ -422,52 +412,10 @@ export async function start(ctx) {
     const since = behindSince(sp.id);
     if (!since) return (setBehind(sp.id, Date.now()), false);
     if (Date.now() - since < BEHIND_FOR) return false;
-    ctx.background("conversation: index.health", index.health({ k: "behind", s: sp.id.slice(0, 6), e: st.epoch, oe: own.epoch }));
     caughtUpAsked.add(sp.id);
-    const r = await ctx.optional("conversation: of", (await ctx.require("roles")).of(sp), () => null);
-    // Its people as the public acts list them too (this node may read none of the space's own acts yet).
-    const pub = await ctx.optional("conversation: ofPublic", (await ctx.require("roles")).ofPublic(sp).then(async p => (await p.settled, p.members())), () => []);
-    const byRole = [...(r?.members() ?? []), ...pub].sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role));
-    const to = [...new Set([r?.owner ?? sp.governance?.owner, ...byRole.map(m => m.did)].filter(d => d && d !== me.id))].slice(0, 12);
-    for (const did of to) await index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, repair: true, epoch: st.epoch, branch: mine, at: Date.now() }).catch(e => ctx.failed("conversation", e, `${sp.name}: asking ${short(did)} for its keys: ${e.message}`));
-    if (st.epoch < own.epoch) await askNodes(sp, me, st.epoch);
-    ctx.log("conversation", { what: `${sp.name}: this node's keys are behind the owner's (epoch ${st.epoch}, theirs ${own.epoch}) — asked ${to.length} to welcome it onto theirs` });
+    await askAgainIn(sp.id, { epoch: st.epoch, branch: mine, seen: own.epoch });
+    ctx.log("conversation", { what: `${sp.name}: this node's keys are behind the owner's (epoch ${st.epoch}, theirs ${own.epoch}) — asked in again` });
     return true;
-  }
-  // REPAIR (a fork's heal, for forks from before snapshots): a member whose announced branch is not this node's —
-  // where this node is on the OWNER's — welcomed again onto it (`welcome`: their old entry out, a fresh one in; their
-  // node keeps its branch's keys, nothing they wrote is lost). Once per divergence, by whichever member gets there
-  // first: the repair is recorded in the writers list (`{ repair, for }`), and a member repaired after their last
-  // announcement is waited for. A node off the owner's branch repairs nobody: it is repaired.
-  async function repair(sp) {
-    const me = await space.account.strict();
-    const g = keys.group(sp);
-    const st = await g.ready();
-    if (!me || !st || st.removed) return [];
-    const own = await ctx.optional("conversation: ownerBranch", ownerBranch(sp), () => null);
-    if (!own || st.epoch < own.epoch || (await g.fingerprint.strict(own.epoch)) !== own.branch) return [];
-    const ptrs = await index.spacePointers.strict(sp, "writers");
-    const done = new Set(ptrs.filter(p => p?.repair).map(p => `${p.repair}|${p.for}`));
-    const r = await (await ctx.require("roles")).of(sp);
-    const out = [];
-    for (const { did } of r.members()) {
-      if (did === me.id) continue;
-      const devs = await directory.devices.strict(did);
-      const ann = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch)[0];
-      if (!ann || ann.epoch > st.epoch || done.has(`${did}|${ann.branch}`)) continue;
-      const fp = await g.fingerprint(ann.epoch);
-      if (!fp || fp === ann.branch) continue;
-      try {
-        await welcome(sp, did, sp.name, null, { epoch: own.epoch, branch: own.branch });
-        keys.event("repair-sent", { space: sp.id, to: did, theirEpoch: ann.epoch, theirBranch: String(ann.branch).slice(0, 8), ownerEpoch: own.epoch });
-        await markWelcomed(sp, did, ann.epoch, ann.branch);
-        ctx.log("conversation", { what: `${sp.name}: ${short(did)} was on another branch of its keys — welcomed back onto the owner's` });
-        out.push(did);
-      } catch (e) {
-        ctx.failed("conversation", e, `${sp.name}: repairing ${short(did)}: ${e.message}`);
-      }
-    }
-    return out;
   }
   // A space's HISTORY handed over (a welcome's, or an answer to a history ask): each earlier epoch's secret kept.
   async function keepHistory(sp, history) {
@@ -476,7 +424,7 @@ export async function start(ctx) {
     let n = 0;
     for (const [e, s] of history) if (typeof e === "number" && typeof s === "string") await ctx.background("conversation: identity.epochKeep", identity.epochKeep(e, bytesOf(s), sp.idBytes).then(() => (n += 1)));
     if (n) {
-      keys.event("history-received", { space: sp.id, epochs: n, from: history.length ? `${history[0][0]}..${history.at(-1)[0]}` : null });
+      (await ctx.require("lifecycle")).transition("group", sp.id, "history-received", { space: sp.id, epochs: n, from: history.length ? `${history[0][0]}..${history.at(-1)[0]}` : null });
       ctx.log("conversation", { what: `${sp.name ?? "a space"}: ${n} earlier epoch(s) of its history handed over` });
       dispatchEvent(new CustomEvent("craftworks:keys"));
     }
@@ -503,80 +451,13 @@ export async function start(ctx) {
     for (const did of to) await ctx.background("conversation: index.send", index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }));
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
-  const saidAgain = new Set();
-  // WELCOMED AGAIN ALREADY, at or past `epoch`, by any member (the space's writers record — what the members list shows
-  // as "caught up by"): a member behind at an epoch is let in again ONCE for it, whoever answers and however often it
-  // asks from there. (10-09: #HLt27K behind at 46 of 56 in Craftworks — every member re-added it each time its page
-  // loaded, each re-add a commit: the epoch climbed with nothing changed.)
-  async function welcomedAgain(sp, did, epoch) {
-    if (epoch == null) return false;
-    return (await index.spacePointers(sp, "writers")).some(x => x?.repair === did && Number(x.epoch) >= Number(epoch));
-  }
-  const markWelcomed = (sp, did, epoch, branch) => (
-    ctx.background("conversation: index.health", index.health({ k: "welcomed-again", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), e: Number(epoch) })),
-    ctx.background("conversation: index.spacePoint", index.spacePoint(sp, "writers", { w: sp.self, repair: did, epoch: Number(epoch), ...(branch ? { for: branch } : {}) }))
-  );
   // The DIDs in this node's group of a space (its MLS members' credentials).
   async function groupDids(sp) {
     const { glue } = await ctx.require("node");
     const st = await keys.group(sp).ready();
     return [...new Set((st?.members ?? []).filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))))))];
   }
-  // STUCK behind its own commit (`keys`): its members asked — once a page — to welcome this device again. Its group's
-  // own members (who to ask when the acts are unread here) and the space's by its acts.
-  // The space's STUCK bag: any current member's NODE that may invite welcomes this device again in one commit, with no
-  // page open (`delegate upkeep`) — a device stuck behind its own commit, or BEHIND (10-08: B behind at 256 of 450
-  // for a day, answered only by members' open pages, and none was).
-  const askNodes = (sp, me, epoch) =>
-    index
-      .openRequests(`stuck ${sp.id}`)
-      .then(() => index.request(`stuck ${sp.id}`, { kind: "stuck", did: me.id, epoch, at: Date.now() }))
-      .catch(e => ctx.failed("conversation", e, `${sp.name}: the ask for members' nodes: ${e?.message ?? e}`));
-  // ANSWERED by an OPEN page too: a node stands aside while its person's page is open (the delegate runs a round only
-  // for a page away), so the page reads the space's STUCK bag itself, on the node's rules — the asker a member already,
-  // behind this page's group, not welcomed since its ask; one member answers (turns), in one commit (`welcome`: readd).
-  // (10-08: B asked at epoch 256 and waited while the current members' apps were open — nobody read the bag.)
-  async function answerStuck(sp) {
-    const me = await space.account.strict();
-    const st = await keys.group(sp).ready();
-    if (!me || !st || st.removed) return [];
-    const r = await (await ctx.require("roles")).of(sp);
-    await r.settled;
-    if (!r.can(me.id, "invite")) return [];
-    const once = await (await ctx.require("storage")).table("keypacks");
-    const ordering = await ctx.require("ordering");
-    const asks = await index.requests(`stuck ${sp.id}`);
-    const out = [];
-    for (const q of asks) {
-      if (q?.kind !== "stuck" || !q.did || q.did === me.id || !(Number(q.epoch) < st.epoch)) continue;
-      const k = `stuck-bag:${sp.id}|${q.did}|${q.at}`;
-      if (once.rows().some(x => x.key === k && x.value)) continue;
-      if (!r.members().some(m => m.did === q.did) || r.banned?.(q.did)) continue;
-      if (await welcomedAgain(sp, q.did, q.epoch)) {
-        await once.put(k, `welcomed again at ${q.epoch} already`);
-        continue;
-      }
-      const turn = ordering.turn(`stuck:${sp.id}|${q.did}|${q.epoch}`, (await groupDids(sp)).filter(d => d !== q.did), me.id);
-      if (turn < 0 || Date.now() - (Number(q.at) || 0) < turn * ordering.TAKEOVER) continue;
-      // Welcomed since (by an earlier turn, or a node): its device announced a newer epoch after the ask.
-      const devs = await directory.devices(q.did);
-      if ((await index.spacePointers(sp, "writers")).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(q.epoch) && Number(x.at) > Number(q.at))) {
-        await ctx.background("conversation: once.put", once.put(k, `welcomed since ${Date.now()}`));
-        continue;
-      }
-      try {
-        await welcome(sp, q.did, sp.name);
-        await markWelcomed(sp, q.did, q.epoch);
-        await once.put(k, String(Date.now()));
-        keys.event("welcome-again-sent", { space: sp.id, to: q.did, stuck: true, bag: true, theirEpoch: q.epoch, ownEpoch: st.epoch });
-        ctx.log("conversation", { what: `${short(q.did)} asked from epoch ${q.epoch} in ${sp.name} (here ${st.epoch}): welcomed again` });
-        out.push(q.did);
-      } catch (e) {
-        ctx.failed("conversation", e, `${sp.name}: welcoming ${short(q.did)} again: ${e.message}`);
-      }
-    }
-    return out;
-  }
+  // STUCK behind its own commit (`keys`): asked in again, once a page.
   const askedStuck = new Set();
   addEventListener("craftworks:keys-stuck", async ({ detail }) => {
     if (askedStuck.has(detail.space)) return;
@@ -584,13 +465,9 @@ export async function start(ctx) {
     const me = await space.account.strict();
     const sp = (await space.mine.strict()).find(s => s.id === detail.space);
     if (!me || !sp) return;
-    const r = await ctx.optional("conversation: of", (await ctx.require("roles")).of(sp), () => null);
-    const to = [...new Set([...(r?.members() ?? []).map(m => m.did), ...(detail.dids ?? [])].filter(d => d && d !== me.id))].slice(0, 12);
-    for (const did of to) await ctx.background("conversation: index.send", index.send(did, { kind: "welcome-again", space: sp.id, from: me.id, stuck: true, epoch: detail.epoch, branch: detail.branch, at: Date.now() }));
-    await askNodes(sp, me, detail.epoch);
-    ctx.log("conversation", { what: `${sp.name}: stuck behind its own change at epoch ${detail.epoch} — ${to.length} member(s) asked to welcome it again` });
+    await askAgainIn(sp.id, { epoch: detail.epoch, branch: detail.branch, seen: detail.epoch + 1 }).catch(e => ctx.failed("conversation", e, `${sp.name}: asking in again: ${e?.message ?? e}`));
+    ctx.log("conversation", { what: `${sp.name}: stuck behind its own change at epoch ${detail.epoch} — asked in again` });
   });
-  let renewedForWelcomes = false;
   // ONE AT A TIME (the chat page and upkeep both ask): two passes taking the same welcome at once — one joins, spending
   // its key package; the other finds it not held and asks for another, a remove and an add more.
   // Asked again mid-pass (a welcome may have arrived after its read): one more pass after it.
@@ -614,8 +491,6 @@ export async function start(ctx) {
     const once = await (await ctx.require("storage")).table("keypacks");
     await once.settled;
     const done = k => once.rows().some(r => r.key === k && r.value);
-    let unanswerable = 0; // welcomes made for a key package this account does not hold
-    const againAsks = []; // their asks to welcome again: sent once the card is renewed (below)
     const inbox = await index.inbox.strict();
     // Each space's NEWEST welcome (its inviter's last word): an older one for the same space is from before (a removal,
     // a welcome again) — its key package spent or never to be used — set aside, never tried or asked about again.
@@ -625,127 +500,15 @@ export async function start(ctx) {
     const newestKey = it => `${it.space}|${it.from}`;
     for (const it of inbox) if (it.kind === "welcome" && it.welcome && !it.repair && !p.is("block", it.from)) newestOf.set(newestKey(it), Math.max(newestOf.get(newestKey(it)) ?? 0, Number(it.made) || 0));
     for (const it of inbox) {
-      // WELCOME AGAIN, asked by someone a welcome from this account never opened for (made from their card's key
-      // packages before they renewed them): welcomed again from their card now — into a space this account has, where
-      // they belong (the other of a direct conversation; a member of a group or a space this account may invite to).
-      if (it.kind === "welcome-again" && it.from && !p.is("block", it.from)) {
-        // Each ASK its own (asked again later — the card renewed since — answered again).
-        const k = `again:${it.space}|${it.from}|${String(it.kp ?? "").slice(0, 32)}|${it.at ?? ""}`;
-        const sp = mine.find(s => s.id === it.space);
-        if (!sp || done(k)) continue;
-        // STALE: about a welcome older than the newest this account sent them here (10-07, measured on fx/fy: asks about
-        // welcomes from before a removal waited while they were out, and once they were added back each was answered —
-        // a remove and an add each, making more dead welcomes and more asks: epochs 12 → 17 in two minutes).
-        const newest = once.rows().find(r => r.key === `newest:${it.space}|${it.from}`)?.value;
-        if (newest && it.kp && it.kp !== newest) {
-          await ctx.background("conversation: once.put", once.put(k, `stale ${Date.now()}`));
-          ctx.log("conversation", { what: `${short(it.from)} asked again about an older welcome into ${sp.name ?? "a space"}: their newest stands, not answered` });
-          continue;
-        }
-        try {
-          let belongs = sp.kind === "direct" ? sp.with === it.from : false;
-          if (sp.kind !== "direct") {
-            const r = await (await ctx.require("roles")).of(sp);
-            await r.settled;
-            // A REPAIR lets nobody new in: any member answers it (from the owner's branch, checked below).
-            belongs = r.members().some(m => m.did === it.from) && (sp.kind === "group" || it.repair || it.stuck || r.can(me.id, "invite"));
-            // STUCK: in this node's own group is enough (its acts may be unread here).
-            if (!belongs && it.stuck) belongs = (await groupDids(sp)).includes(it.from);
-          }
-          if (!belongs) continue;
-          const name = sp.kind === "direct" ? ((await directory.card.strict(me.id))?.handle ?? short(me.id)) : sp.name;
-          // STUCK behind its own change (`keys`): answered by a member who has gone PAST that epoch on the SAME branch
-          // (this node's key at their epoch is theirs: they are behind it, not elsewhere) — whoever owns the space.
-          if (it.stuck) {
-            const skip = why => (ctx.log("conversation", { what: `${short(it.from)} stuck in ${sp.name} at epoch ${it.epoch}: not answered here (${why})` }), true);
-            const mineSt = await keys.group(sp).ready();
-            if (!mineSt || mineSt.removed || !(Number(it.epoch) < mineSt.epoch)) { skip(`this node is at ${mineSt?.epoch ?? "no group"}`); continue; }
-            if ((await keys.group(sp).fingerprint(Number(it.epoch))) !== it.branch) { skip("another branch"); continue; }
-            // ONE answers: the members take turns (`ordering.turn`), a later one after (turn) × TAKEOVER — and not if
-            // the asker has announced a newer epoch since (welcomed by an earlier turn).
-            const ordering = await ctx.require("ordering");
-            const turn = ordering.turn(`stuck:${it.space}|${it.from}|${it.epoch}`, (await groupDids(sp)).filter(d => d !== it.from), me.id);
-            if (turn < 0 || Date.now() - (Number(it.at) || 0) < turn * ordering.TAKEOVER) continue;
-            if (await welcomedAgain(sp, it.from, it.epoch)) {
-              skip(`welcomed again at epoch ${it.epoch} already`);
-              await once.put(k, `answered ${Date.now()}`);
-              continue;
-            }
-            // Welcomed already by an earlier turn: its device announced a newer epoch SINCE the ask (one announced before
-            // it is the change it lost).
-            const devs = await directory.devices(it.from);
-            if ((await index.spacePointers(sp, "writers")).some(x => devs.includes(x?.w) && Number(x.epoch) > Number(it.epoch) && Number(x.at) > Number(it.at))) {
-              skip("welcomed since");
-              await once.put(k, `answered ${Date.now()}`);
-              continue;
-            }
-            await welcome(sp, it.from, name);
-            await markWelcomed(sp, it.from, it.epoch, it.branch);
-            keys.event("welcome-again-sent", { space: sp.id, to: it.from, stuck: true, theirEpoch: it.epoch, ownEpoch: mineSt.epoch });
-            await once.put(k, String(Date.now()));
-            ctx.log("conversation", { what: `${short(it.from)} was stuck behind its own change in ${sp.name} (epoch ${it.epoch}; here ${mineSt.epoch}): welcomed again` });
-            continue;
-          }
-          // A REPAIR that did not open: made again (onto the owner's branch, from their card as it is now) — whatever
-          // the space's record says was repaired already.
-          const own = it.repair ? await ctx.optional("conversation: ownerBranch", ownerBranch(sp), () => null) : null;
-          if (it.repair && !own) continue;
-          // Only from ON the owner's branch: a welcome from another branch would leave them as behind as before.
-          if (own && (await keys.group(sp).fingerprint(own.epoch)) !== own.branch) continue;
-          // CONFIRMED BEHIND, or nothing is done (a welcome again takes their entry out first): an ask that says it is
-          // on the owner's branch already, or one without where it is (from before), is not answered; nor one whose
-          // device has announced the owner's branch at the owner's epoch since.
-          if (it.repair) {
-            if (it.epoch == null || (it.epoch >= own.epoch && it.branch === own.branch)) continue;
-            const devs = await directory.devices(it.from);
-            const ann = (await index.spacePointers(sp, "writers")).filter(x => x?.branch && devs.includes(x.w));
-            if (ann.some(x => x.epoch >= own.epoch && x.branch === own.branch)) continue;
-            // ONCE for the epoch it asks from, and ONE answers (the members in turn, as a stuck ask): its ask reaches up
-            // to twelve members, and each answering re-added it — one commit each.
-            if (await welcomedAgain(sp, it.from, it.epoch)) {
-              await once.put(k, `welcomed again at ${it.epoch} already`);
-              continue;
-            }
-            const ordering = await ctx.require("ordering");
-            const turn = ordering.turn(`repair:${it.space}|${it.from}|${it.epoch}`, (await groupDids(sp)).filter(d => d !== it.from), me.id);
-            if (turn < 0 || Date.now() - (Number(it.at) || 0) < turn * ordering.TAKEOVER) continue;
-          }
-          // A MEMBER of the group asking (not a repair): re-added ONCE for the epoch it asks from, by whichever member
-          // answers first (10-11: each failed welcome asked again and each ask re-added it — one commit each, no bound).
-          const member = !it.repair && it.epoch != null && sp.kind !== "direct" && (await groupDids(sp)).includes(it.from);
-          if (member && (await welcomedAgain(sp, it.from, it.epoch))) {
-            await once.put(k, `welcomed again at ${it.epoch} already`);
-            continue;
-          }
-          await welcome(sp, it.from, name, null, own ? { epoch: own.epoch, branch: own.branch } : undefined);
-          if (member) await markWelcomed(sp, it.from, it.epoch);
-          keys.event("welcome-again-sent", { space: sp.id, to: it.from, repair: !!it.repair, theirEpoch: it.epoch ?? null, ownerEpoch: own?.epoch ?? null });
-          // A catch-up recorded in the space (who welcomed whom: `keyStatus`'s "caught up by").
-          if (own) await markWelcomed(sp, it.from, it.epoch, own.branch);
-          await once.put(k, String(Date.now()));
-          ctx.log("conversation", { what: `${short(it.from)} could not open a ${own ? "repair " : ""}welcome into ${sp.name ?? "a conversation"}: welcomed again` });
-        } catch (e) {
-          // Said once a page per ask (a node stuck itself fails every pass until it is welcomed again).
-          if (!saidAgain.has(k)) {
-            saidAgain.add(k);
-            ctx.failed("conversation", e, `welcoming ${short(it.from)} again: ${e.message}`);
-            ctx.background("conversation: index.health", index.health({ k: "welcome-again-failed", s: String(it.space ?? "").slice(0, 6), to: it.from.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }));
-          }
-        }
-        continue;
-      }
-      // RENEW, asked by someone whose welcomes to this account found every key package on its card used: a fresh set,
-      // and every request still waiting made again (once per ask).
-      if (it.kind === "renew-keys" && it.from && !p.is("block", it.from)) {
-        const k = `renewed-for:${it.from}|${it.at}`;
-        if (done(k)) continue;
-        await directory
-          .renew()
-          .then(() => askAgain())
-          .then(
-            async n => (await once.put(k, String(Date.now())), ctx.log("conversation", { what: `${short(it.from)} found this card's key packages all used: a fresh set put on it${n ? `, ${n} request(s) made again` : ""}` })),
-            e => ctx.failed("conversation", e, `renewing the card's key packages: ${e?.message ?? e}`),
-          );
+      // TOLD it is in (`tell`: a server's `added`, a direct or group conversation started with this person): asked in
+      // with this device's own key (`askAgainIn`), once per telling — let in by whoever's turn it is (`admit`).
+      if (it.kind === "invited" && it.from && it.space && !p.is("block", it.from)) {
+        const k = `invited-asked:${it.space}|${it.from}|${it.at ?? ""}`;
+        if (done(k) || mine.some(s => s.id === it.space)) continue;
+        await askAgainIn(it.space).then(
+          () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `told by ${short(it.from)} of ${it.name ?? "a conversation"}: asked in` })),
+          e => ctx.failed("conversation", e, `asking into ${it.name ?? "a conversation"}: ${e?.message ?? e}`),
+        );
         continue;
       }
       // A HISTORY ASK (a member's walk stopped): their space's earlier secrets held here, sealed to them — once each.
@@ -757,7 +520,7 @@ export async function start(ctx) {
         if (!r?.members().some(m => m.did === it.from)) continue;
         const epochs = await ctx.optional("conversation: identity", (await ctx.require("auth")).identity.epochSecrets(sp.idBytes, Math.max(0, Number(it.below) || 0)), () => []);
         if (epochs.length) await ctx.background("conversation: index.send", index.send(it.from, { kind: "history", space: sp.id, from: me.id, epochs, at: Date.now() }));
-        keys.event("history-handed", { space: sp.id, to: it.from, epochs: epochs.length, below: it.below });
+        (await ctx.require("lifecycle")).transition("group", sp.id, "history-handed", { space: sp.id, to: it.from, epochs: epochs.length, below: it.below });
         await once.put(k, String(Date.now()));
         ctx.log("conversation", { what: `${sp.name}: ${epochs.length} earlier epoch(s) of its history handed to ${short(it.from)}` });
         continue;
@@ -818,6 +581,7 @@ export async function start(ctx) {
         const answered = x => x.key === it.space || (it.code && x.key === `code:${it.code}`) || (it.code === "level" && x.key === `code:${levelCode(it.space)}`);
         if (t) for (const r of t.rows().filter(x => x.value && answered(x))) await ctx.background("conversation: t.remove", t.remove(r.key));
         out.push(sp);
+        if (it.kp) (await ctx.require("lifecycle")).become("join", reqKey(it.kp), "joined", { s: it.space.slice(0, 6), from: String(it.from ?? "").slice(0, 8), e: (await keys.group(sp).ready())?.epoch ?? null });
         ctx.log("conversation", { what: it.repair ? `${it.name ?? it.space.slice(0, 8)}: caught up onto the owner's keys — welcomed by ${short(it.from)}, ${Array.isArray(it.history) ? it.history.length : 0} earlier key(s) with it` : `joined a ${it.spaceKind} conversation with ${short(it.from)}` });
       } catch (e) {
         // NOT PAST this node's epoch (an older re-add): done with for good — never a reason to ask anyone again.
@@ -837,38 +601,28 @@ export async function start(ctx) {
           joined: !!(had && st && !st.removed),
           pk: await ctx.optional("conversation: keys.packageCounts", keys.packageCounts(), () => null),
         };
-        ctx.background("conversation: index.health", index.health({ k: "welcome-failed", s: it.space.slice(0, 6), e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160), d }));
-        // ITS MEMBERSHIP HERE: WELCOME_FAILED, with the reason that decides what may follow (FOUNDATION.md §3) — only a
-        // package not held may renew the card's packages and ask again; keys not held here, never.
+        // ITS REQUEST FAILED (the `join` machine: reported), with the reason that decides what may follow (FOUNDATION.md
+        // §3) — only a key not held asks anew; keys not held here, never.
         const reason = (await keys.writable()) !== true ? "account-keys-unreadable" : /not past/.test(e?.message ?? "") ? "not-past" : !held ? "package-not-held" : "branch";
-        (await ctx.require("lifecycle")).become("space", it.space.slice(0, 12), "welcome-failed", { reason, from: d.from });
+        (await ctx.require("lifecycle")).transition("join", reqKey(it.kp ?? it.welcome.slice(0, 32)), "fail", { s: it.space.slice(0, 6), reason, e: st?.epoch ?? null, why: String(e?.message ?? e).slice(0, 160), ...d });
         // SAID in the space (its writers record: the members list shows it), so a member stuck behind is seen WHY.
         if (had) await ctx.background("conversation: index.spacePoint", index.spacePoint(had, "writers", { w: had.self, welcomeFailed: { why: String(e?.message ?? e).slice(0, 200), from: it.from, at: Date.now() } }));
         if (!held && /WelcomeKeyPackageNotFound/.test(e?.message ?? "")) await ctx.background("conversation: once.put", once.put(`dead:${tried}`, String(Date.now())));
         // Not dead (a passing failure): tried again on the next pass.
         else welcomesTried.delete(tried);
-        // Made for a key package this account does not hold (its card from before): its sender asked — once — to
-        // welcome again from the card as it is now (renewed below). A REPAIR's too (this account on another branch of
-        // a space it has): asked again AS a repair — else it stays on that branch for good.
-        // Asked again at most once an HOUR while it keeps failing (an answer made from a card that still listed a
-        // dead package fails too — never asked only once for good).
-        const k = `asked-again:${it.space}|${(it.kp ?? it.welcome).slice(0, 32)}|${Math.floor(Date.now() / 3600e3)}`;
-        // A DUPLICATE (10-11): this account JOINED by that very package already (another welcome for it, from another
-        // member or node, opened first) — nothing lost, nothing to ask: each such ask was one more re-add, one more epoch.
+        // Made for a key package this account does not hold (a welcome from before requests carried their own): ASKED IN
+        // ANEW — a new request with a new key, once per such welcome (`rules::admission` answers each request once).
+        // A DUPLICATE (10-11: this account joined by that very package already) asks nothing.
+        const k = `asked-again:${tried}`;
         const duplicate = it.kp && done(`joined-kp:${String(it.kp).slice(0, 32)}`);
         if (duplicate) await ctx.background("conversation: once.put", once.put(`dead:${tried}`, `duplicate ${Date.now()}`));
-        // (Asking to be welcomed again is the account's write: never from a device without its keys — on 10-12 such
-        // asks were answered by re-adding the person, which can drop their original devices from the space.)
-        else if (!held && !done(k) && (await (await ctx.require("keys")).writable()) === true) {
-          unanswerable += 1;
-          const epoch = had && st && !st.removed ? st.epoch : null;
-          againAsks.push(() =>
-            index
-              .send(it.from, { kind: "welcome-again", space: it.space, from: me.id, kp: it.kp ?? it.welcome.slice(0, 32), ...(epoch != null ? { epoch } : {}), ...(it.repair || had ? { repair: !!it.repair } : {}), at: Date.now() })
-              .then(
-                () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `asked ${short(it.from)} to welcome again into ${it.name ?? "a space"} (a welcome made for a key package not held here)` })),
-                err => ctx.failed("conversation", err, `asking ${short(it.from)} to welcome again: ${err.message}`),
-              ),
+        // (Asking is the account's write: never from a device without its keys.)
+        else if (!held && !done(k) && (await keys.writable()) === true) {
+          const where = had && st && !st.removed ? { epoch: st.epoch, branch: await keys.group(had).fingerprint(st.epoch), seen: st.epoch + 1 } : {};
+          const bag = it.code === "open" ? openCode(it.space) : it.code === "level" ? levelCode(it.space) : it.code;
+          await (it.code ? askIn(bag) : askAgainIn(it.space, where)).then(
+            () => (once.put(k, String(Date.now())), ctx.log("conversation", { what: `a welcome into ${it.name ?? "a space"} made for a key not held here: asked in anew` })),
+            err => ctx.failed("conversation", err, `asking into ${it.name ?? "a space"} anew: ${err?.message ?? err}`),
           );
         }
         ctx.log("conversation", {
@@ -876,37 +630,20 @@ export async function start(ctx) {
         });
       }
     }
-    // Its key package is used up: a new one on the card.
-    if (out.length) await directory.renew().catch(e => ctx.failed("conversation", e, `renewing the key package: ${e.message}`));
-    // WELCOMES THIS ACCOUNT CANNOT OPEN: each spent one of the card's key packages (the welcomer marks it used), none
-    // opened — the card's may be all spent, or not this account's. A fresh set put on it (once a page), and every request
-    // still waiting made again: the next welcome is made from these.
-    else if (unanswerable && !renewedForWelcomes) {
-      renewedForWelcomes = true;
-      await directory
-        .renew()
-        .then(() => askAgain())
-        .then(
-          n => ctx.log("conversation", { what: `${unanswerable} welcome(s) made for key packages not held here: a fresh set put on the card${n ? `, ${n} request(s) made again` : ""}` }),
-          e => ((renewedForWelcomes = false), ctx.failed("conversation", e, `renewing the card's key packages: ${e?.message ?? e}`)),
-        );
-    }
-    // THE ASKS, after the card is renewed: an answer made from the card as it was would name a spent package again.
-    for (const send of againAsks) await send();
     return out;
   }
 
   // This person's conversations (Messages): direct ones and groups.
   const list = async () => (await space.mine.strict()).filter(s => s.kind === "direct" || s.kind === "group");
 
-  // A GROUP conversation: a space of several people (no channels, no roles to set up), each welcomed.
+  // A GROUP conversation: a space of several people (no channels, no roles to set up), each told (`tell`).
   async function group(dids, name) {
     const me = await space.account.strict();
     const others = [...new Set(dids)].filter(d => d !== me.id);
     if (others.length < 2) throw new Error("a group is you and at least two others");
     const names = await Promise.all(others.map(d => directory.name(d)));
     const sp = await space.create("group", name?.trim() || names.join(", "));
-    for (const d of others) await welcome(sp, d, sp.name);
+    for (const d of others) await tell(sp, d, sp.name);
 
     return sp;
   }
@@ -955,9 +692,9 @@ export async function start(ctx) {
     if (!me) throw space.loginNeeded();
     const code = codeOf(text);
     if (code.length !== 19) throw new Error("an invite code is 16 letters and digits: xxxx-xxxx-xxxx-xxxx");
-    await ctx.background("conversation: directory.publish", directory.publish()); // the asker's card carries key packages to be added by
-    await index.request(code, { kind: "join", did: me.id, at: Date.now() });
-    await noteAsk(`code:${code}`, { code });
+    await ctx.background("conversation: directory.publish", directory.publish()); // the asker's card: its inbox, where the welcome comes
+    const q = await askIn(code);
+    await noteAsk(`code:${code}`, { code, q });
     return code;
   }
   // OPEN SPACES: who may join without a code (the space's `config` space/join: "open"). The asker drops a request in
@@ -984,8 +721,8 @@ export async function start(ctx) {
     const me = await space.account.strict();
     if (!me) throw space.loginNeeded();
     await ctx.background("conversation: directory.publish", directory.publish());
-    await index.request(levelCode(gid), { kind: "join", did: me.id, at: Date.now() });
-    await noteAsk(`code:${levelCode(gid)}`, { code: "level", name });
+    const q = await askIn(levelCode(gid), {}, name);
+    await noteAsk(`code:${levelCode(gid)}`, { code: "level", name, q });
     ctx.log("conversation", { what: `asked to join ${name ?? gid.slice(0, 8)} (a level group)` });
   }
   // LAPSED: in a level group, any member (in turn) takes out another whose card no longer reaches its level — a
@@ -1019,34 +756,17 @@ export async function start(ctx) {
     const me = await space.account.strict();
     if (!me) throw space.loginNeeded();
     await ctx.background("conversation: directory.publish", directory.publish());
-    await index.request(openCode(desc.id), { kind: "join", did: me.id, at: Date.now() });
-    await noteAsk(desc.id, { name: desc.name ?? null });
+    const q = await askIn(openCode(desc.id), {}, desc.name ?? null);
+    await noteAsk(desc.id, { name: desc.name ?? null, q });
     ctx.log("conversation", { what: `asked to join ${desc.name ?? desc.id.slice(0, 8)} (its open door)` });
   }
-  // ASK AGAIN for every request still waiting (the card's key packages renewed: a welcome made from the old ones
-  // never opens): the request made anew, so whoever admits sees one newer than the admission and welcomes again.
-  async function askAgain() {
-    const me = await space.account.strict();
-    if (!me) return 0;
-    // (Requests are the account's writes: not from a device without its keys.)
-    const may = await (await ctx.require("keys")).writable();
-    if (may !== true) return (ctx.log("conversation", { what: `requests not made again: ${may}` }), 0);
-    const t = await asks();
-    await t.settled;
-    const mine = new Set((await space.mine.strict()).map(s => s.id));
-    let n = 0;
-    for (const r of t.rows().filter(x => x.value && !mine.has(x.key))) {
-      const a = parseAsk(r);
-      if (!a) continue;
-      await index.request(r.key.startsWith("code:") ? r.key.slice(5) : openCode(r.key), { kind: "join", did: me.id, at: Date.now() }).then(() => (n += 1), e => ctx.failed("conversation", e, `asking again: ${e.message}`));
-      await noteAsk(r.key, { ...a, key: undefined });
-    }
-    return n;
-  }
-  // LET IN, NEVER IN: an open space whose public acts admit this person while they are still not in it — the welcome
-  // never opened here (made from a key package lost since): asked again, once per admission (counted, never timed:
-  // the admitter's clock is not this one's).
+  // WAITING REQUESTS KEPT ANSWERABLE (upkeep, each tick): each request this account still waits on made ANEW — with
+  // this device's own key (`askIn`) — once a page when (a) its newest in the bag carries no key (made before requests
+  // carried one: `rules::admission` lets nobody in by it), or (b) its open space's public acts let this person in
+  // while still not in (its welcome never opened here) — once per admission, counted (never timed: the admitter's
+  // clock is not this one's).
   const askedThisPage = new Set();
+  const waitSaid = new Map(); // ask → the why last said
   async function askStuck() {
     const me = await space.account.strict();
     if (!me) return 0;
@@ -1055,7 +775,7 @@ export async function start(ctx) {
     const t = await asks();
     await t.settled;
     const mine = new Set((await space.mine.strict()).map(s => s.id));
-    const waiting = t.rows().filter(x => x.value && !x.key.startsWith("code:") && !mine.has(x.key)).map(parseAsk).filter(Boolean);
+    const waiting = t.rows().filter(x => x.value && !mine.has(x.key)).map(parseAsk).filter(Boolean);
     const listed = await index.spaces();
     // THE REQUEST ITSELF where the account's copy is missing (10-11, Wren: "Requested" from the open door's bag, its
     // `asks` row gone — so never asked again): each listed space this person is not in, its door's bag read; a request
@@ -1070,12 +790,30 @@ export async function start(ctx) {
     }
     if (!waiting.length) return 0;
     const roles = await ctx.require("roles");
+    const life = await ctx.require("lifecycle");
     let n = 0;
     for (const a of waiting) {
+      // (a) Its newest request without a key of its own: made anew.
+      const bag = a.key.startsWith("code:") ? a.key.slice(5) : openCode(a.key);
+      if (!askedThisPage.has(`kp:${a.key}`)) {
+        const newest = (await index.requests(bag)).filter(q => q?.kind === "join" && q.did === me.id).sort((x, y) => (Number(y.at) || 0) - (Number(x.at) || 0))[0];
+        if (!newest?.kp) {
+          askedThisPage.add(`kp:${a.key}`);
+          const q = await askIn(bag, {}, a.name ?? null);
+          await noteAsk(a.key, { ...a, key: undefined, q });
+          ctx.log("conversation", { what: `${a.name ?? a.key.slice(0, 8)}: its request carried no key of its own — made anew with one` });
+          n += 1;
+          continue;
+        }
+      }
+      if (a.key.startsWith("code:")) continue;
       const desc = listed.find(s => s.id === a.key);
+      // WAITING, with why (the `join` machine: reported when the why changes).
       const said = (what, d) => {
+        if (waitSaid.get(a.key) === what) return;
+        waitSaid.set(a.key, what);
         ctx.log("conversation", { what: `waiting on ${a.name ?? a.key.slice(0, 8)}: ${what}` });
-        ctx.background("conversation: index.health", index.health({ k: "join-waiting", s: a.key.slice(0, 6), why: what, d: { days: Math.floor((Date.now() - (a.at ?? Date.now())) / 864e5), ...d } }));
+        if (a.q) life.transition("join", reqKey(a.q), "wait", { s: a.key.slice(0, 6), why: what, days: Math.floor((Date.now() - (a.at ?? Date.now())) / 864e5), ...d });
       };
       if (!desc) {
         said("not listed in Discover (its public acts unread)");
@@ -1091,10 +829,9 @@ export async function start(ctx) {
         continue;
       }
       askedThisPage.add(a.key);
-      await index.request(openCode(a.key), { kind: "join", did: me.id, at: Date.now() });
-      await noteAsk(a.key, { name: a.name ?? null, seen: admissions });
+      const q = await askIn(openCode(a.key), { admissions }, a.name ?? null);
+      await noteAsk(a.key, { name: a.name ?? null, seen: admissions, q });
       ctx.log("conversation", { what: `${a.name ?? a.key.slice(0, 8)}: let in, but its welcome never opened here — asked again` });
-      ctx.background("conversation: index.health", index.health({ k: "join-asked-again", s: a.key.slice(0, 6), d: { admissions } }));
       n += 1;
     }
     return n;
@@ -1162,77 +899,10 @@ export async function start(ctx) {
     // Open: listed in Discover, its acts published (who is in, how to join).
     if (how === "open") (await ctx.background("conversation: r.publish", r.publish()), await index.listSpace(sp));
   }
-  // LET IN: one asker welcomed and recorded `admitted` (by the code they asked with, or "open") — the one way in, for
-  // the automatic admit below and for a member's own Let in (`requestsOf`).
-  // The ACT FIRST, then the group (as `invite`): a welcome that fails after it is made again by `reconcile`.
-  // Its act only where the acts do not count them in already (a welcome that failed is not a second admission —
-  // each one would count a use of the code).
-  async function letIn(sp, did, code) {
-    const r = await (await ctx.require("roles")).of(sp);
-    if (!r.roster().includes(did)) await r.act({ act: "admitted", code, did });
-    await welcome(sp, did, sp.name, code);
-  }
-  // RECONCILE (the acts decide, the group carries out — any member who may invite, in turn): whoever the acts say is
-  // in and the group does not hold — an add whose act was written and whose commit never happened (a page closed
-  // between, a welcome that failed) — added now. Removals are `moderation.enforce`'s. Turns (`ordering.turn`): the
-  // first does it at once, the k-th once it has waited k × TAKEOVER (two committing at once: one wins the epoch, the
-  // other's add is undone and finds them in). Who was added.
-  const pendingSince = new Map(); // space|did → when this page first saw it pending
-  const failedAt = new Map(); // space|did → { at, n }: when adding it last failed, how many times (back-off doubles)
-  const reconcileSaid = new Map();
-  const BACKOFF = 10 * 60 * 1000;
-  const backedOff = k => {
-    const f = failedAt.get(k);
-    return !!f && Date.now() - f.at < Math.min(BACKOFF * 2 ** (f.n - 1), 6 * 3600e3);
-  };
-  const failed = k => failedAt.set(k, { at: Date.now(), n: (failedAt.get(k)?.n ?? 0) + 1 });
-  // MEASURED FIRST (10-07, dry run): Craftworks 5 in / 5 held, Ivvor's two spaces 1 / 5 and 1 / 7 — nothing to add
-  // anywhere (from an account that reads few of those acts): on.
-  const RECONCILE_DRY = false;
-  async function reconcile(sp) {
-    const me = await space.account.strict();
-    const r = await (await ctx.require("roles")).of(sp);
-    await r.refresh();
-    if (!me || r.left || !r.can(me.id, "invite")) return [];
-    const ordering = await ctx.require("ordering");
-    const inGroup = new Set(r.members().map(m => m.did));
-    const inviters = r.members().filter(m => r.can(m.did, "invite")).map(m => m.did);
-    const out = [];
-    // SAID when it changes: the acts' count against the group's (what reconcile works from).
-    const pending = r.roster().filter(d => d !== me.id && !inGroup.has(d) && !r.banned(d));
-    const said = `acts say ${r.roster().length} in, the group holds ${inGroup.size}, ${pending.length} to add${pending.length ? ` (${pending.slice(0, 3).map(short).join(", ")})` : ""}`;
-    if (reconcileSaid.get(sp.id) !== said) reconcileSaid.set(sp.id, said), ctx.log("conversation", { what: `${sp.name}: reconcile — ${said}` });
-    if (pending.length) ctx.background("conversation: index.health", index.health({ k: "reconcile", s: sp.id.slice(0, 6), d: { roster: r.roster().length, group: inGroup.size, pending: pending.length, first: pending.slice(0, 3).map(d => d.replace(/^did:craftec:/, "").slice(0, 6)) } }));
-    for (const did of r.roster()) {
-      const k = `${sp.id}|${did}`;
-      if (did === me.id || inGroup.has(did) || r.banned(did)) {
-        pendingSince.delete(k);
-        continue;
-      }
-      if (!pendingSince.has(k)) pendingSince.set(k, Date.now());
-      const turn = ordering.turn(k, inviters, me.id);
-      // Every turn waits ONE TAKEOVER first (the first too): an inviter mid-welcome finishes, a removal's act arrives
-      // after its commit — never a re-add of who was just taken out.
-      if (turn < 0 || Date.now() - pendingSince.get(k) < (turn + 1) * ordering.TAKEOVER || backedOff(k)) continue;
-      if (RECONCILE_DRY) {
-        failed(k);
-        ctx.log("conversation", { what: `${sp.name}: ${short(did)} is in by its acts, not in its group — WOULD add (turn ${turn}; dry run)` });
-        continue;
-      }
-      try {
-        await welcome(sp, did, sp.name);
-        pendingSince.delete(k);
-        out.push(did);
-        ctx.log("conversation", { what: `${sp.name}: ${short(did)} is in by its acts, not in its group — added (turn ${turn})` });
-      } catch (e) {
-        failed(k);
-        ctx.failed("conversation", e, `${sp.name}: adding ${short(did)} as its acts say: ${e.message}`);
-        ctx.background("conversation: index.health", index.health({ k: "reconcile-failed", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }));
-      }
-    }
-    return out;
-  }
-  // WHO ASKED TO JOIN this space, and who was let in: `{ waiting: [{ did, at, code }], admitted: [{ did, at, by, code }] }`
+  // LET IN by a member's own hand (Settings' Let in): that asker's request decided now, no turn waited (`admit`).
+  const letIn = (sp, did) => admit(sp, did);
+  const pendingSince = new Map(); // what `lapse` saw pending: when this page first saw it
+  // WHO ASKED TO JOIN this space, and who was let in: `{ waiting: [{ did, at, code, kp }], admitted: [{ did, at, by, code }] }`
   // — waiting: a request under its open door or a code in force, from someone not in it (nor banned), newer than their
   // last admission (one let in but never in asks again). For its Settings (who may invite sees and lets them in).
   async function requestsOf(sp) {
@@ -1263,62 +933,110 @@ export async function start(ctx) {
     for (const q of asks) {
       if (q.kind !== "join" || !q.did || r.banned(q.did) || removedSet.has(q.did) || (q.at ?? 0) <= (leftAt.get(q.did) ?? -1)) continue;
       if (inside.has(q.did) && !(admittedAt.has(q.did) && (q.at ?? 0) > admittedAt.get(q.did))) continue;
-      if (!newest.has(q.did) || (q.at ?? 0) > newest.get(q.did).at) newest.set(q.did, { did: q.did, at: q.at ?? 0, code: q.code });
+      if (!newest.has(q.did) || (q.at ?? 0) > newest.get(q.did).at) newest.set(q.did, { did: q.did, at: q.at ?? 0, code: q.code, kp: q.kp ?? null });
     }
     return {
       waiting: [...newest.values()].sort((x, y) => y.at - x.at),
       admitted: r.acts("admitted").map(a => ({ did: a.did, at: a.at ?? 0, by: a.by ?? null, code: a.code ?? null })).sort((x, y) => y.at - x.at).slice(0, 20),
     };
   }
-  async function admit(sp) {
+  // LETTING PEOPLE IN — every way into every group, ONE path (owner 10-13: "one implementation"): each request read
+  // (a server's codes, open door and level — `requestsOf`; the space's MEMBER bag, from those its rule says are in),
+  // decided by `rules::admission` through the core — the request's own key, once per request, one admitter in turn;
+  // the identity delegate runs the same rule with no page open — and let in by `welcome`. A JOIN is recorded
+  // `admitted` first (the act, then the group). `only`: a member's own Let in of that asker (no turn waited). Each
+  // request not let in is SAID why, once. Who was let in.
+  const skipSaid = new Map();
+  // ONE PASS AT A TIME per space (10-14, the journal on fx: upkeep's pass and another made two commits for one request
+  // 3 s apart — `add`, then `readd` — the second deciding before the first's welcome was seen): a pass asked while one
+  // runs waits for it, then decides over what it did.
+  const admitting = new Map();
+  const admit = (sp, only = null) => {
+    // (Waited for, not judged: its own caller reports how it ended.)
+    const run = Promise.allSettled([admitting.get(sp.id)]).then(() => admitOnce(sp, only));
+    admitting.set(sp.id, run.finally(() => admitting.get(sp.id) === run && admitting.delete(sp.id)));
+    return run;
+  };
+  async function admitOnce(sp, only = null) {
     const me = await space.account.strict();
-    const r = await (await ctx.require("roles")).of(sp);
-    await r.refresh();
-    if (!me || !r.can(me.id, "invite")) return [];
+    const g = keys.group(sp);
+    const st = await g.ready();
+    if (!me || !st || st.removed) return [];
+    const server = sp.kind === "server";
+    const r = server ? await (await ctx.require("roles")).of(sp) : null;
+    if (r) await r.refresh();
+    if (r && (r.left || !r.role(me.id))) return [];
+    const used = await (await ctx.require("storage")).table("keypacks");
+    await used.settled;
+    const held = new Set(await groupDids(sp));
+    const told = did => used.rows().some(x => x.value && x.key === `invited:${sp.id}|${did}`);
+    // WHO MAY LET IN (the kind's rule): a server's members who may invite; a conversation's members — and one this
+    // account told, by this account (no other member knows of it).
+    const admitters = server ? r.members().filter(m => r.can(m.did, "invite")).map(m => m.did) : [...held];
+    // WHO MAY ASK AGAIN (the member bag): a member by the acts; the other of a direct conversation; a group
+    // conversation's member, or one this account told.
+    const entitled = did => (server ? r.roster().includes(did) && !r.banned(did) : sp.kind === "direct" ? did === sp.with : held.has(did) || told(did));
+    const asks = [];
+    if (server && r.can(me.id, "invite")) for (const q of (await requestsOf(sp)).waiting) asks.push({ did: q.did, at: q.at, kp: q.kp, code: q.code, entry: "join" });
+    await openMemberBag(sp);
+    for (const q of await index.requests(memberBag(sp.id)))
+      if (q?.kind === "stuck" && q.did && q.did !== me.id && entitled(q.did)) asks.push({ did: q.did, at: Number(q.at) || 0, kp: q.kp ?? null, entry: "again", epoch: q.epoch ?? null, branch: q.branch ?? null, seen: q.seen ?? null });
+    const todo = asks.filter(q => !only || q.did === only);
+    if (!todo.length) return [];
+    const writers = await index.spacePointers.strict(sp, "writers");
+    const welcomed = writers.filter(p => p?.welcomed && p.kp).map(p => [p.welcomed, p.kp, Number(p.at) || 0]);
+    // KEYS SPENT: this account's record (`keypacks`) and every member's (the writers list's tags).
+    const spent = new Set([...used.rows().filter(x => x.value).map(x => x.key.replace(/^shared:/, "")).filter(k => TAG.test(k)), ...sharedTags(writers).keys()]);
+    const ordering = await ctx.require("ordering");
+    const life = await ctx.require("lifecycle");
+    const { glue } = await ctx.require("node");
+    const name = sp.kind === "direct" ? ((await directory.card.strict(me.id))?.handle ?? short(me.id)) : sp.name;
     const out = [];
-    // Each WAITING asker (`requestsOf`): its open door only while the space lets anyone in; a code while in force.
-    let inGroup = null; // this node's group's DIDs, read once (only when a let-in member asks again)
-    for (const q of (await requestsOf(sp)).waiting) {
-      // In by the acts already (let in, never in the group): `reconcile`'s — in turn, backing off — not tried again here.
-      // LET IN, IN THE GROUP, NEVER IN (10-11, Wren in Craftworks: its entry in the group made from a key package it
-      // lost, so its welcome never opened; its page, holding no group, can only ask again by a request): answered here
-      // — welcomed again in one commit (its old entry replaced), ONCE per request, the inviters in turn.
-      if (r.roster().includes(q.did)) {
-        inGroup ??= new Set(await groupDids(sp));
-        if (!inGroup.has(q.did)) continue;
-        const once = await (await ctx.require("storage")).table("keypacks");
-        await once.settled;
-        const k = `letin-again:${sp.id}|${q.did}|${q.at}`;
-        if (once.rows().some(x => x.key === k && x.value)) continue;
-        // IN SINCE (its device announced keys here after the request: a page that asked just before it opened its
-        // welcome — measured on fx 10-11, a re-add of a member who was in): nothing to do, for good.
-        const devs = await directory.devices(q.did);
-        if ((await index.spacePointers(sp, "writers")).some(x => devs.includes(x?.w) && x.epoch != null && Number(x.at) > Number(q.at))) {
-          await ctx.background("conversation: once.put", once.put(k, `in since ${Date.now()}`));
-          continue;
+    for (const q of todo) {
+      // WHERE ITS KEYS ARE (an ask again): on this branch, behind — `from` its epoch; elsewhere (another branch, none) —
+      // let in onto the OWNER's branch (a repair), only by a node on it; ahead of this node — not this node's to answer.
+      let from = null;
+      let repair = null;
+      if (q.entry === "again" && q.epoch != null) {
+        if (Number(q.epoch) > st.epoch) continue;
+        if (q.branch && (await g.fingerprint(Number(q.epoch))) === q.branch) from = Number(q.epoch);
+        else if (server) {
+          const own = await ctx.optional("conversation: ownerBranch", ownerBranch(sp), () => null);
+          if (!own || (await g.fingerprint(own.epoch)) !== own.branch) continue;
+          repair = { epoch: own.epoch, branch: own.branch };
         }
-        const ordering = await ctx.require("ordering");
-        const turn = ordering.turn(k, r.members().filter(m => r.can(m.did, "invite") && m.did !== q.did).map(m => m.did), me.id);
-        if (turn < 0 || Date.now() - (Number(q.at) || 0) < turn * ordering.TAKEOVER) continue;
-        try {
-          await welcome(sp, q.did, sp.name, q.code);
-          await once.put(k, String(Date.now()));
-          out.push(q.did);
-          ctx.log("conversation", { what: `${directory.shown(q.did)} was let into ${sp.name} but never in: welcomed again (turn ${turn})` });
-          ctx.background("conversation: index.health", index.health({ k: "letin-again", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6) }));
-        } catch (e) {
-          ctx.failed("conversation", e, `welcoming ${short(q.did)} again into ${sp.name}: ${e.message}`);
-          ctx.background("conversation: index.health", index.health({ k: "admit-failed", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }));
+      }
+      // THEIR OWN KEY, or nobody's request: its credential names them (their key log read).
+      const notTheirs = q.kp ? await directory.keyNotTheirs(q.did, q.kp) : null;
+      const solo = only || (!server && !held.has(q.did) && told(q.did));
+      const view = { me: me.id, admitters: solo ? [me.id] : admitters, spent: [...spent], welcomed, held: held.has(q.did), epoch: st.epoch, now: Date.now(), takeover: ordering.TAKEOVER };
+      const d = notTheirs ? { skip: notTheirs } : JSON.parse(glue.admission_decide(JSON.stringify({ did: q.did, kp: q.kp, at: q.at, entry: q.entry, from, seen: q.seen ?? null }), JSON.stringify(view)));
+      // ITS STORY (the `member` machine, keyed by the request: reported): not let in here and why — said when the why
+      // changes — or let in, welcomed, failed.
+      const key = reqKey(q.kp ? glue.admission_tag(q.kp) : null, q.did);
+      const about = { by: "page", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), entry: q.entry, ...(q.code ? { code: q.code === "open" || q.code === "level" ? q.code : "code" } : {}), e: st.epoch };
+      if (!d.admit) {
+        if (skipSaid.get(key) !== d.skip) {
+          skipSaid.set(key, d.skip);
+          ctx.log("conversation", { what: `${sp.name ?? "a conversation"}: ${short(q.did)}'s request (${q.entry}${q.code ? ` by ${q.code}` : ""}) not let in here — ${d.skip}` });
+          life.transition("member", key, "skip", { ...about, why: d.skip });
         }
+        if (only) throw new Error(d.skip);
         continue;
       }
+      life.transition("member", key, "admit", about);
       try {
-        await letIn(sp, q.did, q.code);
+        if (q.entry === "join" && !r.roster().includes(q.did)) await r.act({ act: "admitted", code: q.code, did: q.did });
+        const { kept } = await welcome(sp, q.did, name, q.entry === "join" ? q.code : null, d.admit, repair);
+        welcomed.push([q.did, d.admit.tag, Date.now()]);
+        spent.add(d.admit.tag);
         out.push(q.did);
-        ctx.log("conversation", { what: `${directory.shown(q.did)} ${q.code === "open" ? `joined ${sp.name} (open)` : `admitted to ${sp.name} by a code`}` });
+        life.transition("member", key, kept ? "kept" : "welcomed", { ...about, from, repair: !!repair, e: (await g.ready())?.epoch ?? null, ...(kept ? { why: kept } : {}) });
+        ctx.log("conversation", { what: `${directory.shown(q.did)} let into ${sp.name ?? "a conversation"} (${q.entry === "join" ? (q.code === "open" ? "open door" : q.code === "level" ? "level" : "a code") : repair ? "onto the owner's keys" : from != null ? `behind at ${from}` : "asked in"})` });
       } catch (e) {
-        ctx.failed("conversation", e, `could not admit ${short(q.did)}: ${e.message}`);
-        ctx.background("conversation: index.health", index.health({ k: "admit-failed", s: sp.id.slice(0, 6), to: q.did.replace(/^did:craftec:/, "").slice(0, 6), why: String(e?.message ?? e).slice(0, 160) }));
+        ctx.failed("conversation", e, `letting ${short(q.did)} into ${sp.name ?? "a conversation"}: ${e.message}`);
+        life.transition("member", key, "fail", { ...about, why: String(e?.message ?? e).slice(0, 160) });
+        if (only) throw e;
       }
     }
     return out;
@@ -1718,5 +1436,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, reconcile, answerStuck, joinLevel, lapse, levelCode, repair, catchUp, keyStatus, reportReads, selfState, observe, list, members: ctx.total("conversation.members", () => [], members), person: ctx.total("conversation.person", () => null, person), mail, createInvite, revokeInvite, join, joinOpen, asked: ctx.total("conversation.asked", () => null, asked), askedCodes: ctx.total("conversation.askedCodes", () => [], askedCodes), askAgain, askStuck, waiting: ctx.total("conversation.waiting", () => [], waiting), requestsOf, letIn, setJoin, admit, befriend, friendRequests: ctx.total("conversation.friendRequests", () => [], friendRequests), answerFriend, unfriend, channels , keepReaders, audience, resendWelcomes, mirrorShared };
+  return { direct, group, invite, accept, joinLevel, lapse, levelCode, catchUp, keyStatus, reportReads, selfState, observe, list, members: ctx.total("conversation.members", () => [], members), person: ctx.total("conversation.person", () => null, person), mail, createInvite, revokeInvite, join, joinOpen, asked: ctx.total("conversation.asked", () => null, asked), askedCodes: ctx.total("conversation.askedCodes", () => [], askedCodes), askStuck, waiting: ctx.total("conversation.waiting", () => [], waiting), requestsOf, letIn, setJoin, admit, befriend, friendRequests: ctx.total("conversation.friendRequests", () => [], friendRequests), answerFriend, unfriend, channels , keepReaders, audience, resendWelcomes, mirrorShared, openMemberBag, reqKey };
 }

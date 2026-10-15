@@ -257,10 +257,10 @@ export async function start(ctx) {
       .require("support-config")
       .then(b => JSON.parse(dec.decode(b)).support)
       .then(h => (/^[0-9a-f]{64}$/.test(h ?? "") ? bytes(h) : null)), () => null));
-  // Once a kind per space (per member it is about) per hour from a page.
+  // Once a kind per space (per member it is about, per reason) per hour from a page — a NEW reason is a new report.
   const reported = new Map();
   async function health(item) {
-    const key = `${item.k}|${item.s ?? ""}|${item.to ?? ""}`;
+    const key = `${item.k}|${item.s ?? ""}|${item.to ?? ""}|${item.why ?? ""}`;
     if (Date.now() - (reported.get(key) ?? 0) < 3600e3) return false;
     reported.set(key, Date.now());
     const day = new Date().toISOString().slice(0, 10);

@@ -121,21 +121,9 @@ pub fn governance(r: &Reading, writers: &[([u8; 32], String)], owner: &str, now_
     craftworks_gov::Gov::replay(&gov_rows, &map, Some(owner), now_ms as f64)
 }
 
-/// FNV-1a of a text (its UTF-16 code units, as a page's `hash` — ids and DIDs are ASCII).
-fn fnv(s: &str) -> u32 {
-    let mut h: u32 = 2166136261;
-    for u in s.encode_utf16() {
-        h = (h ^ u as u32).wrapping_mul(16777619);
-    }
-    h
-}
-/// This member's place among `dids` for row `id`: 0 does it now.
+/// This member's place among `dids` for row `id`: 0 does it now (the one ranking: `rules::admission::turn`).
 pub fn rank(id: &str, dids: &[String], me: &str) -> usize {
-    let mut all: Vec<&String> = dids.iter().collect();
-    all.sort();
-    all.dedup();
-    all.sort_by(|a, b| fnv(&format!("{id}|{b}")).cmp(&fnv(&format!("{id}|{a}"))).then(a.cmp(b)));
-    all.iter().position(|d| d.as_str() == me).unwrap_or(0)
+    craftworks_rules::admission::turn(id, dids, me).max(0) as usize
 }
 
 /// THE PLAN for a space now: whether a new salt is due, and the rows due with this member's turn for each.

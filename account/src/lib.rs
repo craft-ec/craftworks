@@ -357,6 +357,12 @@ pub fn member_node(did: &[u8; 32], log: &Log, cred: &[u8]) -> Option<[u8; 32]> {
     (d == *did && log.head().key == owner).then_some(node)
 }
 
+/// A DID's MEMBER in a space (its credential signed by the account's DATA key, as its key log holds it now): whether
+/// `cred` is one — what a request's key package must carry to be let in under that DID (`rules::admission`).
+pub fn space_member(did: &[u8; 32], log: &Log, cred: &[u8]) -> bool {
+    read_credential(cred).is_some_and(|(d, signer, _, _)| d == *did && log.head().data == signer)
+}
+
 /// WHO BELONGS (ARCHITECTURE: membership is self-certifying and gossiped): the account's nodes from every credential
 /// and removal gathered from the nodes' feeds. A node counts if a credential names it (checked against the key log). A
 /// removal `(by, node, epoch)` — found in `by`'s own feed — counts if `by` counts and was not itself removed first:

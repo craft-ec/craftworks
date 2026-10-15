@@ -3,10 +3,12 @@
 //! read — pure, no network and no node types, so the delegate links them beside its own node library (the page's core
 //! re-exports them).
 
+pub mod admission;
 pub mod allowance;
 pub mod editions;
 pub mod keeper;
 pub mod misdeed;
+pub mod ordering;
 pub mod statement;
 pub mod tokens;
 pub mod wallet;

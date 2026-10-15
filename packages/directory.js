@@ -7,7 +7,7 @@
 // readers learn it is that DID's).
 //
 //   const directory = await ctx.require("directory");
-//   await directory.card(did)                 // { did, handle, inbox, keyPackage, keyPackages }, or null (keyPackage: one, at random)
+//   await directory.card(did)                 // { did, handle, inbox, … }, or null (no key packages: a request carries its own)
 //   await directory.publish({ handle })       // this person's handle, and their key packages
 //   await directory.setContributions(list)    // this person's contributions, PUBLIC on their card (rewards §5a)
 //   await directory.setPay({ scan, spend })   // this person's wallet pay keys on their card (TOKEN §7f); card(did).pay
@@ -36,6 +36,16 @@ export async function start(ctx) {
     const b = didBytes(did);
     if (!(await auth.identity.readKeyLog(b))) return null;
     return core.idlog_keys(idlogCode, b);
+  }
+
+  // A REQUEST'S KEY IS THEIRS (`account::space_member`, the delegate's check too): the key package's credential names
+  // `did` under the data key their key log holds now. A request is an unsigned drop in a bag: without this, one naming
+  // someone carrying another's key would let that other in under their name. Why not, or null.
+  async function keyNotTheirs(did, kpHex) {
+    if (!(await keysOf(did))) return "their key log not read";
+    const cred = await (await ctx.require("keys")).kpCredential(kpHex);
+    if (!cred) return "the request's key does not read as a key package";
+    return core.space_member_of(idlogCode, didBytes(did), cred) ? null : "the request's key is not theirs (another account's, or a key their log moved past)";
   }
 
   const read = t => {
@@ -73,15 +83,6 @@ export async function start(ctx) {
       // Whether the account HAS a devices contract (its own word, written once it put one): readers look it up only then
       // — an absent contract is never searched for.
       hasDevices: rows.find(r => r.key === "devices")?.value === "1",
-      // The DID's key packages (a list; one picked at random for each conversation started — `keyPackages`: all).
-      ...(() => {
-        let list = [];
-        try {
-          list = JSON.parse(rows.find(r => r.key === "kp")?.value ?? "[]");
-        } catch {}
-        list = Array.isArray(list) ? list.filter(x => typeof x === "string") : [];
-        return { keyPackages: list, keyPackage: list.length ? list[Math.floor(Math.random() * list.length)] : null };
-      })(),
     };
   };
 
@@ -124,18 +125,6 @@ export async function start(ctx) {
       await (await ctx.require("index")).makeInbox();
       await t.put("inbox", k.inboxKey);
     }
-    // Its key packages ones this account answers (a card listing others — lost with their table, or a write of new
-    // ones that never landed — makes every welcome to it fail): a fresh set otherwise.
-    if (!(await (await ctx.require("keys")).answers(read(t).keyPackages))) {
-      await putKeyPackages(t);
-      ctx.log("card", { what: "its key packages answered nothing here: a fresh set put on it" });
-      // A welcome made from the old ones never opens: every request still waiting made again (whoever admits welcomes
-      // again a request newer than the admission).
-      ctx
-        .require("conversation")
-        .then(c => c.askAgain())
-        .then(n => ctx.log("card", { what: `${n} request(s) made again` }), e => ctx.failed("card", e, `asking again: ${e.message}`));
-    }
     await putNodes(t);
     return { did: sp.id, ...read(t) };
   }
@@ -174,19 +163,6 @@ export async function start(ctx) {
     if (put && !read(t).hasDevices) await t.put("devices", "1");
     if (!creds.length || JSON.stringify(creds) === JSON.stringify(read(t).nodes.slice().sort())) return;
     await t.put("nodes", JSON.stringify(creds));
-  }
-
-  // NEW key packages (one was used to add this person somewhere: each works once).
-  async function renew() {
-    await (await ctx.require("keys")).mustWrite("the card's key packages");
-    const sp = await space.account.strict();
-    await putKeyPackages(await storage.publicTail(CARD, sp.shared));
-  }
-
-  // The DID's key packages on the card: a fresh set (the ones before stay usable: their secrets are the account's).
-  async function putKeyPackages(t) {
-    const kps = await (await ctx.require("keys")).keyPackages();
-    if (kps?.length) await t.put("kp", JSON.stringify(kps));
   }
 
   // A person's HANDLE, read once per page (a name to show; the id is what makes them them).
@@ -310,5 +286,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, renew, handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
+  return { credTable, keyNotTheirs, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
 }

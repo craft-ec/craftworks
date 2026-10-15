@@ -33,6 +33,21 @@ const TABLE_KEYS: &[u8] = b"craftworks table keys";
 // A member's credential (its format and check) is the ACCOUNT's: one source, shared with `membership` in the page.
 pub use craftworks_account::{credential, read_credential};
 
+/// WHOSE KEY PACKAGE (a request carries one: `rules::admission`): its credential, only where the credential's owner
+/// signature holds and names the key package's own signing key — the caller checks the credential against the
+/// requester's key log (`craftworks_account::member_node`), so a request names nobody's DID but its maker's.
+pub fn key_package_credential(key_package: &[u8]) -> Result<Vec<u8>, String> {
+    let m = MlsMessage::from_bytes(key_package).map_err(e)?;
+    let kp = m.as_key_package().ok_or("not a key package")?;
+    let id = kp.signing_identity();
+    let basic = id.credential.as_basic().ok_or("not a basic credential")?;
+    let (_, _, _, sp) = read_credential(&basic.identifier).ok_or("the owner's signature does not hold")?;
+    if sp != id.signature_key.as_bytes() {
+        return Err("the credential names another signing key".into());
+    }
+    Ok(basic.identifier.clone())
+}
+
 /// THE ACCOUNT'S RULE for who is a member: a credential of THIS account, signed by one of its owner keys, whose
 /// signing key is the one the member uses.
 #[derive(Clone, Debug)]
@@ -783,6 +798,11 @@ mod js {
         pub fn escrow_to(&mut self, entropy: &[u8]) -> Result<(), JsValue> {
             self.1 = craftworks_account::enc_public_at(entropy, 0).ok_or_else(|| err("recovery entropy: 16 or 32 bytes"))?;
             Ok(())
+        }
+
+        /// A key package's credential (`key_package_credential`): whose it is, checked against their key log after.
+        pub fn key_package_credential(key_package: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&super::key_package_credential(key_package).map_err(err)?[..]))
         }
 
         /// An epoch's secret out of its escrow, with the words (a node joining with them recovers the epochs before).

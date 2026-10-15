@@ -3,6 +3,11 @@
 // their own flags: they ask `state`. A move from a state the table does not allow is a `bug` fault; a guard that says
 // no is a `refused` one — both thrown, so nothing happens on a wrong assumption. Every move is one health report
 // (`lifecycle-<machine>`: from, to, the event and its details), and what each machine ended in rides in the visit.
+// THE ONE RECORD (owner 10-14: "it should not be a separate instrument… the structure should support it for all
+// processes"): a machine marked `journal` also keeps every move in the account's `journal` table — this device, the
+// version, when, the details — read back with `journal(machine, key)` (the account's keys' critical actions, 10-07,
+// were a table of their own: `keyevents`, now these moves). A STEP (`to` left out) is a move that keeps the state: a
+// thing done, recorded and reported, nothing changed.
 //
 //   const life = await ctx.require("lifecycle");
 //   life.transition("account", "me", "walk", { channel: "present", info: true })
@@ -32,6 +37,7 @@ export async function start(ctx) {
     // account's channel is not there; a words login walks the channel's history and joins.
     account: {
       initial: "NONE",
+      journal: true,
       progress: {
         CONFIRMING_CHANNEL: "Recovering your account (1 of 4): finding your account's keys…",
         WALKING: "Recovering your account (2 of 4): opening your keys…",
@@ -62,19 +68,66 @@ export async function start(ctx) {
         removed: { from: "*", to: "REMOVED" },
       },
     },
-    // A SPACE's membership on this device, as upkeep finds it each round: HELD (its keys current, on the owner's
-    // branch), BEHIND (an older epoch), OFF_BRANCH, NOT_HELD (no group here), UNREADABLE (tables it cannot read),
-    // WELCOME_FAILED{reason}, REMOVED. Moved only when it changes (`become`).
-    space: {
+    // A GROUP (a space's, on this device — FOUNDATION §3 `group`): where its keys stand as upkeep finds it each round —
+    // HELD (current, on the owner's branch), BEHIND, OFF_BRANCH, NOT_HELD, UNREADABLE, STUCK (behind its own commit),
+    // REMOVED — and every STEP its keys take (a commit and why, a join, a log written or mended, history handed), each
+    // kept and reported: what moved an epoch is never unknown (10-14: an epoch moved twice and nothing said by what).
+    group: {
       initial: "UNKNOWN",
+      journal: true,
+      // Steps that are routine (still kept in the journal): not each a health report.
+      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed"],
       events: {
         held: { from: "*", to: "HELD" },
         behind: { from: "*", to: "BEHIND" },
         "off-branch": { from: "*", to: "OFF_BRANCH" },
         "not-held": { from: "*", to: "NOT_HELD" },
         unreadable: { from: "*", to: "UNREADABLE" },
-        "welcome-failed": { from: "*", to: "WELCOME_FAILED" },
         removed: { from: "*", to: "REMOVED" },
+        "stuck-own-commit": { from: "*", to: "STUCK" },
+        commit: { from: "*" },
+        applied: { from: "*" },
+        "apply-failed": { from: "*" },
+        join: { from: "*" },
+        "join-failed": { from: "*" },
+        "adopt-delegate": { from: "*" },
+        "pending-published": { from: "*" },
+        repaired: { from: "*" },
+        "log-open-written": { from: "*" },
+        "log-open-left": { from: "*" },
+        "log-back-added": { from: "*" },
+        "log-mended": { from: "*" },
+        "log-mend-cannot": { from: "*" },
+        "history-received": { from: "*" },
+        "history-handed": { from: "*" },
+      },
+    },
+    // LETTING SOMEONE INTO A GROUP (FOUNDATION §3, "Groups"), keyed by the REQUEST — `q:<its key's tag>`, the same on
+    // every side — so one request's whole story is one key in the health reports: the asker's `join`, the deciders'
+    // `member` (a page's, or the node's: `by`). Every move reported (owner 10-14: what another user faces is read here).
+    join: {
+      initial: "NONE",
+      journal: true,
+      progress: { ASKED: (_, d) => `Asking to join${d?.name ? ` ${String(d.name).slice(0, 40)}` : ""}…`, WAITING: (_, d) => `Waiting to be let in${d?.name ? ` to ${String(d.name).slice(0, 40)}` : ""}…` },
+      after: 4000,
+      ended: { FAILED: { text: "Joining stopped (the trace says why) — it asks again with a new key", ms: 15000 } },
+      events: {
+        ask: { from: "*", to: "ASKED" },
+        wait: { from: ["ASKED", "WAITING"], to: "WAITING" },
+        joined: { from: "*", to: "MEMBER" },
+        fail: { from: "*", to: "FAILED" },
+      },
+    },
+    // (A decider's states live in its page: a welcome KEPT unsent is sent — or given up — by a later page: `*`.)
+    member: {
+      initial: "NONE",
+      journal: true,
+      events: {
+        skip: { from: "*", to: "SKIPPED" },
+        admit: { from: ["NONE", "SKIPPED", "FAILED"], to: "ADMITTING" },
+        kept: { from: ["ADMITTING"], to: "KEPT" },
+        welcomed: { from: "*", to: "WELCOMED" },
+        fail: { from: "*", to: "FAILED" },
       },
     },
     // AN OPEN APP (a body component): opening → open → closed, or failed (reported; the rest are quiet — they ride in
@@ -95,6 +148,7 @@ export async function start(ctx) {
     // longer shown: a tail can hide, not erase) or GONE (forgotten), or REFUSED with why.
     delete: {
       initial: "NONE",
+      journal: true,
       progress: { REQUESTED: (_, d) => `Deleting${d?.what ? ` ${String(d.what).slice(0, 40)}` : ""}…` },
       ended: { REFUSED: { text: "Not deleted (the trace says why)", ms: 15000 } },
       events: {
@@ -120,6 +174,43 @@ export async function start(ctx) {
     },
   };
 
+  // THE JOURNAL: moves of `journal` machines, batched into the account's table (newest 500 kept).
+  const pending = [];
+  let flushing = null;
+  async function flush() {
+    flushing = null;
+    const batch = pending.splice(0);
+    if (!batch.length) return;
+    try {
+      const auth = await ctx.require("auth");
+      // (`device`: which of the account's devices made the move — never a move's own fields, e.g. a decider's `by`.)
+      const device = String((await auth.check())?.member ?? "").slice(0, 16);
+      const t = await (await ctx.require("storage")).table("journal");
+      for (const e of batch) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }));
+      const rows = t.rows().filter(r => r.value).map(r => r.key).sort();
+      for (const k of rows.slice(0, Math.max(0, rows.length - 500))) await t.remove(k);
+    } catch (e) {
+      ctx.log("lifecycle", { what: `${batch.length} move(s) not kept in the journal: ${e?.message ?? e}` });
+    }
+  }
+  // The journal's moves (`machine`; `key`: one process's), oldest first.
+  async function journal(machine = null, key = null) {
+    const t = await (await ctx.require("storage")).table("journal");
+    await t.settled;
+    return t
+      .rows()
+      .filter(r => r.value)
+      .map(r => {
+        try {
+          return JSON.parse(r.value);
+        } catch {
+          return null;
+        }
+      })
+      .filter(e => e && (!machine || e.m === machine) && (!key || e.key === key))
+      .sort((a, b) => a.at - b.at);
+  }
+
   const states = new Map(); // `${machine}|${key}` → { s, since, event, detail }
   const listeners = new Map(); // machine → [fn]
   const at = (m, k) => states.get(`${m}|${k}`) ?? { s: MACHINES[m].initial, since: null };
@@ -133,7 +224,7 @@ export async function start(ctx) {
   const report = (machine, key, from, to, event, detail) =>
     ctx.background("lifecycle: index", ctx
       .require("index")
-      .then(ix => ix.health({ k: `lifecycle-${machine}`, s: String(key).slice(0, 12), to: `${from}>${to}`, why: `${event}: ${from} → ${to}`, d: detail })));
+      .then(ix => ix.health({ k: `lifecycle-${machine}`, s: String(key).slice(0, 12), to: `${from}>${to}`, why: `${event}: ${from} → ${to}${detail?.why ? ` — ${String(detail.why).slice(0, 160)}` : ""}`, d: detail })));
 
   // THE PILL'S LINES: one per process in progress (`machine|key` → text), sent whole on every change
   // (`craftworks:progress` { lines }: the loader draws them).
@@ -174,8 +265,12 @@ export async function start(ctx) {
       throw met("lifecycle", new Fault("bug", `lifecycle: ${machine} ${event} from ${from}`, { message: `${machine}: "${event}" is not allowed from ${from}`, d: { from, event } }));
     const ok = ev.guard ? ev.guard(detail) : true;
     if (ok !== true) throw met("lifecycle", new Fault("refused", `lifecycle: ${machine} ${event} refused`, { message: `${machine}: ${ok}`, d: { from, event } }));
-    const to = ev.to;
+    const to = ev.to ?? from;
     states.set(`${machine}|${key}`, { s: to, since: Date.now(), event, detail });
+    if (m.journal) {
+      pending.push({ m: machine, key: String(key), from, to, event, at: Date.now(), v: String(ctx.shaOf?.(machine === "group" ? "keys" : "lifecycle") ?? "").slice(0, 12), ...detail });
+      flushing ??= setTimeout(flush, 3000);
+    }
     if (!m.quiet?.includes(event)) {
       ctx.log(`lifecycle ${machine}`, { what: `${String(key).slice(0, 12)}: ${from} → ${to} (${event})` });
       report(machine, key, from, to, event, detail);
@@ -260,7 +355,10 @@ export async function start(ctx) {
   const jobs = () => [...running.keys()].map(n => ({ name: n, s: at("job", n).s }));
 
   // The move `event` names, only if it changes the state (a state found again each round is not a move).
-  const become = (machine, key, event, detail = {}) => (MACHINES[machine]?.events[event]?.to === at(machine, key).s ? at(machine, key).s : transition(machine, key, event, detail));
+  const become = (machine, key, event, detail = {}) => {
+    const now = state(machine, key).s; // (an unknown machine: the table's bug fault)
+    return MACHINES[machine].events[event]?.to === now ? now : transition(machine, key, event, detail);
+  };
 
   const on = (machine, fn) => listeners.set(machine, [...(listeners.get(machine) ?? []), fn]);
   // Where every process stands now (for the visit report): `{ machine: { key: state } }`.
@@ -273,5 +371,5 @@ export async function start(ctx) {
     return out;
   };
 
-  return { MACHINES, state, transition, become, on, snapshot, job, jobs, deleting };
+  return { MACHINES, state, transition, become, on, snapshot, job, jobs, deleting, journal };
 }

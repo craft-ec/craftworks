@@ -56,11 +56,15 @@ pub fn answer_json(a: &Answer) -> Value {
             groups,
             stale,
             said,
+            decided,
+            round_at,
         } => json!({ "upkeep": {
             "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now, "codes": codes.map(|c| hex(&c)),
             "admitted": admitted.iter().map(|a| json!({ "space": hex(&a.space), "did": a.did, "code": a.code, "at": a.at, "epoch": a.epoch, "kp": hex(&a.kp) })).collect::<Vec<_>>(),
             "groups": groups.iter().map(|(s, e, st)| json!({ "space": hex(s), "epoch": e, "state": hex(st) })).collect::<Vec<_>>(),
             "stale": stale.iter().map(|s| hex(s)).collect::<Vec<_>>(), "said": said,
+            "roundAt": round_at,
+            "decided": decided.iter().map(|d| json!({ "space": hex(&d.space), "did": d.did, "q": hex(&d.q), "at": d.at, "step": d.step, "why": d.why })).collect::<Vec<_>>(),
         } }),
         Answer::HandedSpaces { spaces } => {
             json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
@@ -1220,6 +1224,8 @@ mod js {
                         members: list("members")?,
                         epoch: m.get("epoch")?.as_f64()? as u64,
                         state: unhex(&s("state")?)?,
+                        // Who may let in (`craftworks_rules::admission`).
+                        admitters: list("admitters").unwrap_or_default(),
                     })
                 })
                 .collect::<Option<Vec<_>>>()
@@ -1390,6 +1396,15 @@ mod js {
         /// WHO BELONGS to the account (`account::members`): the node keys (hex) that the gathered credentials (bytes) make
         /// members, less the removals that count (`[[by, node, epoch]]`, each found in its remover's own feed), checked
         /// against the account's (got) key log.
+        /// Whether `cred` (a request's key package's: `Mls.key_package_credential`) is `did`'s MEMBER credential under
+        /// the key its log holds now (`account::space_member`) — the key log read first (`directory`).
+        pub fn space_member_of(&self, idlog_code: &[u8], did: &[u8], cred: &[u8]) -> Result<bool, JsValue> {
+            let did = b32(did)?;
+            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
+            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
+            Ok(account::space_member(&did, &log, cred))
+        }
         pub fn account_members(
             &self,
             idlog_code: &[u8],
@@ -2223,6 +2238,107 @@ mod js {
         pub fn take(&mut self, bytes: &[u8]) -> String {
             self.0.take(bytes).to_string()
         }
+    }
+
+    /// WHO DOES A THING (`rules::admission::turn`, the one ranking — `ordering.turn` is this): `dids` JSON `[did…]`.
+    #[wasm_bindgen]
+    pub fn admission_turn(id: &str, dids: &str, me: &str) -> i32 {
+        let dids: Vec<String> = serde_json::from_str(dids).unwrap_or_default();
+        craftworks_rules::admission::turn(id, &dids, me) as i32
+    }
+
+    /// THE WELCOME's message (`identity::welcome_message`, the node's too): JSON `{ space, spaceKind, from, owner,
+    /// nonce, name, welcome (hex), kp (tag hex), made, code?, circle?, group?, repair?: { epoch, branch }, history?:
+    /// [[epoch, secret hex]] }` → the message (JSON).
+    #[wasm_bindgen]
+    pub fn welcome_message(input: &str) -> Result<String, JsValue> {
+        let v: serde_json::Value = serde_json::from_str(input).map_err(|e| err(e.to_string()))?;
+        let s = |k: &str| v[k].as_str();
+        let unhex = |t: &str| -> Option<Vec<u8>> { (0..t.len() / 2).map(|i| u8::from_str_radix(t.get(2 * i..2 * i + 2)?, 16).ok()).collect() };
+        let need = |k: &str| s(k).ok_or_else(|| err(format!("a welcome needs {k}")));
+        let space: [u8; 32] = unhex(need("space")?).and_then(|b| b.try_into().ok()).ok_or_else(|| err("space".into()))?;
+        let welcome = unhex(need("welcome")?).ok_or_else(|| err("welcome".into()))?;
+        let kp: [u8; 16] = unhex(need("kp")?).and_then(|b| b.try_into().ok()).ok_or_else(|| err("kp".into()))?;
+        let history: Vec<(u64, [u8; 32])> = v["history"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| Some((x[0].as_f64()? as u64, unhex(x[1].as_str()?)?.try_into().ok()?))).collect())
+            .unwrap_or_default();
+        let repair = v["repair"]["branch"].as_str().map(|b| (v["repair"]["epoch"].as_f64().unwrap_or(0.0) as u64, b));
+        Ok(craftworks_identity::welcome_message(&craftworks_identity::Welcome {
+            space,
+            space_kind: need("spaceKind")?,
+            from: need("from")?,
+            owner: need("owner")?,
+            nonce: s("nonce"),
+            name: s("name").unwrap_or_default(),
+            welcome: &welcome,
+            kp,
+            made: v["made"].as_f64().unwrap_or(0.0) as u64,
+            code: s("code"),
+            circle: s("circle"),
+            group: s("group"),
+            repair,
+            history: &history,
+        })
+        .to_string())
+    }
+
+    /// AN ORDERED LOG's rows (`rules::ordering`, the identity delegate's too): the rows of position `n` begin with this.
+    #[wasm_bindgen]
+    pub fn ordering_position_prefix(prefix: &str, n: f64) -> String {
+        craftworks_rules::ordering::position_prefix(prefix, n as u64)
+    }
+
+    /// …and its entry among those rows' values (JSON `[value…]`): the lowest; null: free.
+    #[wasm_bindgen]
+    pub fn ordering_entry(values: &str) -> Option<String> {
+        let vs: Vec<String> = serde_json::from_str(values).unwrap_or_default();
+        vs.into_iter().filter(|v| !v.is_empty()).min()
+    }
+
+    /// A key package's tag (hex, 16 bytes): how the shared lists name it.
+    #[wasm_bindgen]
+    pub fn admission_tag(kp: &str) -> String {
+        hex(&craftworks_rules::admission::tag(kp))
+    }
+
+    /// LETTING SOMEONE IN (`rules::admission::decide`, the rule the identity delegate runs): JSON `{ did, kp, at,
+    /// entry: "join" | "again", from }` and `{ me, admitters, spent: [tag hex], welcomed: [[did, tag hex, at]], held,
+    /// epoch, now, takeover }` → `{ admit: { kp, tag } }` or `{ skip: why }`.
+    #[wasm_bindgen]
+    pub fn admission_decide(request: &str, view: &str) -> Result<String, JsValue> {
+        use craftworks_rules::admission::{decide, Decision, Entry, Request, View, Welcomed};
+        let q: serde_json::Value = serde_json::from_str(request).map_err(|e| err(e.to_string()))?;
+        let v: serde_json::Value = serde_json::from_str(view).map_err(|e| err(e.to_string()))?;
+        let tag16 = |s: &str| -> Option<[u8; 16]> { (0..16).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok() };
+        let strs = |k: &str| -> Vec<String> { v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
+        let admitters = strs("admitters");
+        let spent: Vec<[u8; 16]> = strs("spent").iter().filter_map(|t| tag16(t)).collect();
+        let welcomed: Vec<Welcomed> = v["welcomed"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|w| Some(Welcomed { did: w[0].as_str()?.into(), kp: tag16(w[1].as_str()?)?, at: w[2].as_f64()? as u64 })).collect())
+            .unwrap_or_default();
+        let me = v["me"].as_str().unwrap_or_default();
+        let entry = match q["entry"].as_str() {
+            Some("again") => Entry::Again { from: q["from"].as_f64().map(|e| e as u64), seen: q["seen"].as_f64().map(|e| e as u64) },
+            _ => Entry::Join,
+        };
+        let request = Request { did: q["did"].as_str().unwrap_or_default(), kp: q["kp"].as_str(), at: q["at"].as_f64().unwrap_or(0.0) as u64, entry };
+        let view = View {
+            me,
+            admitters: &admitters,
+            spent: &spent,
+            welcomed: &welcomed,
+            held: v["held"].as_bool().unwrap_or(false),
+            epoch: v["epoch"].as_f64().unwrap_or(0.0) as u64,
+            now: v["now"].as_f64().unwrap_or(0.0) as u64,
+            takeover_ms: v["takeover"].as_f64().unwrap_or(120_000.0) as u64,
+        };
+        Ok(match decide(&request, &view) {
+            Decision::Admit { kp, tag } => serde_json::json!({ "admit": { "kp": kp, "tag": hex(&tag) } }),
+            Decision::Skip(why) => serde_json::json!({ "skip": why }),
+        }
+        .to_string())
     }
 
     /// `did:craftec:<base58>` of the owner's public key (the DID the identity delegate answers, as bytes).

@@ -46,7 +46,7 @@ export async function mount(ctx, el) {
         .card(s.did)
         .then(c => {
           if (c?.handle) cardForm.elements.handle.value = c.handle;
-          cardSaid.textContent = c ? `Published as ${directory.shown(s.did, c.handle)}${c.keyPackage ? "" : " (no key packages yet)"}.` : "Not published yet.";
+          cardSaid.textContent = c ? `Published as ${directory.shown(s.did, c.handle)}.` : "Not published yet.";
         })
         .catch(e => (cardSaid.textContent = `Could not read your card: ${e?.message ?? e}`));
       cardForm.onsubmit = async e => {

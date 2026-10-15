@@ -33,6 +33,8 @@
 // with no right to act — moves nobody's clock).
 export async function start(ctx) {
   const storage = await ctx.require("storage");
+  // The core: the one ranking (`turn`) and the one row rule of an ordered log (`rules`).
+  const { glue } = await ctx.require("node");
 
   const types = {
     // TAIL: rows `<prefix><position, 12 digits>~<tag>` in one of the account's tables — EACH WRITER'S ENTRY UNDER ITS
@@ -41,11 +43,11 @@ export async function start(ctx) {
     // them — the same one on every node once it has read both.
     async tail({ table, prefix, owner, known = null, sealWith = null, space = null }) {
       const t = await (owner ? storage.log(table, owner, { known, sealWith, space }) : storage.table(table));
-      const key = n => `${prefix}${String(n).padStart(12, "0")}`;
+      // THE ROW RULE is `rules::ordering`'s (through the core — the identity delegate writes and reads by it too).
+      const rowsOf = n => glue.ordering_position_prefix(prefix, n);
       const at = n => {
-        const k = key(n);
-        const all = t.rows().filter(r => r.value && r.key.startsWith(`${k}~`)).map(r => r.value);
-        return all.length ? all.sort()[0] : undefined;
+        const p = rowsOf(n);
+        return glue.ordering_entry(JSON.stringify(t.rows().filter(r => r.value && r.key.startsWith(p)).map(r => r.value))) ?? undefined;
       };
       const tag = () => [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");
       return {
@@ -60,7 +62,7 @@ export async function start(ctx) {
         async append(n, entry) {
           if (at(n) !== undefined) return { ok: false, taken: true };
           try {
-            await t.put(`${key(n)}~${tag()}`, entry);
+            await t.put(`${rowsOf(n)}${tag()}`, entry);
           } catch (e) {
             if (at(n) !== undefined) return { ok: false, taken: true };
             throw e;
@@ -118,14 +120,9 @@ export async function start(ctx) {
     return make(spec);
   }
 
-  // TURNS (a hash of the thing and each DID, FNV-1a — the identity delegate ranks the same way).
+  // TURNS: `rules::admission::turn` through the core — the ONE ranking (the identity delegate runs it too).
   const TAKEOVER = 2 * 60 * 1000;
-  const hash = s => {
-    let h = 2166136261;
-    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
-    return h;
-  };
-  const turn = (id, dids, me) => [...new Set(dids)].sort((a, b) => hash(`${id}|${b}`) - hash(`${id}|${a}`) || (a < b ? -1 : 1)).indexOf(me);
+  const turn = (id, dids, me) => glue.admission_turn(String(id), JSON.stringify([...dids]), String(me));
 
   return { open, types: Object.keys(types), turn, TAKEOVER };
 }

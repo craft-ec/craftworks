@@ -119,18 +119,41 @@ pub fn sealed_bag_address(space: &[u8; 32], name: &str) -> [u8; 32] {
     identity::inbox_address(&digest)
 }
 
+/// Where a tail's tree BLOCK is (the one placing: this reader's and upkeep's card read): a sealed tree's under the
+/// Sealed code, a public one's under the Block code.
+pub fn block_id(o: &data::Open, cid: &[u8; 32], sealed_hash: &[u8; 32], block_hash: &[u8; 32]) -> Option<[u8; 32]> {
+    let (sealed, params) = o.block_params(cid)?;
+    Some(crate::upkeep::id_of(if sealed { sealed_hash } else { block_hash }, &params))
+}
+
+/// The WRITERS list's own seal (`index.spacePoint`'s `OPEN`): the space's key from its id, read whatever epochs a
+/// member holds.
+pub const OPEN: u32 = 0xffff_ffff;
+
 /// An item of a space's sealed bag opened: `epoch (u32, big-endian) ‖ nonce (12) ‖ AES-GCM` under that epoch's key for
-/// the bag (`index.spacePoint`).
-pub fn open_bag_item(epochs: &BTreeMap<u64, [u8; 32]>, name: &str, item: &[u8]) -> Option<serde_json::Value> {
+/// the bag — or, the writers list's `OPEN`, the space's own (`index.spacePoint`).
+pub fn open_bag_item(space: &[u8; 32], epochs: &BTreeMap<u64, [u8; 32]>, name: &str, item: &[u8]) -> Option<serde_json::Value> {
     use aes_gcm::aead::{Aead, KeyInit};
     if item.len() < 17 {
         return None;
     }
-    let epoch = u32::from_be_bytes(item[..4].try_into().ok()?) as u64;
-    let key = identity::epoch_table_key(epochs.get(&epoch)?, &format!("bag-{name}"));
+    let epoch = u32::from_be_bytes(item[..4].try_into().ok()?);
+    let key = if epoch == OPEN && name == "writers" {
+        identity::space_table_key(space, "bag-writers-open")
+    } else {
+        identity::epoch_table_key(epochs.get(&(epoch as u64))?, &format!("bag-{name}"))
+    };
     let cipher = aes_gcm::Aes256Gcm::new_from_slice(&key).ok()?;
     let plain = cipher.decrypt(aes_gcm::Nonce::from_slice(&item[4..16]), &item[16..]).ok()?;
     serde_json::from_slice(&plain).ok()
+}
+
+/// An item for a space's WRITERS list, sealed `OPEN` (as `index.spacePoint` seals it): what a page writes there.
+pub fn seal_writers_item(space: &[u8; 32], value: &serde_json::Value, nonce: [u8; 12]) -> Vec<u8> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&identity::space_table_key(space, "bag-writers-open")).expect("a 32-byte key");
+    let ct = cipher.encrypt(aes_gcm::Nonce::from_slice(&nonce), value.to_string().as_bytes()).expect("sealing never fails");
+    [OPEN.to_be_bytes().as_slice(), &nonce, &ct].concat()
 }
 
 impl Reading {
@@ -288,8 +311,7 @@ impl Reading {
                 Ok(data::Step::Need(cids)) => {
                     let mut io = Vec::new();
                     for cid in cids {
-                        let Some((sealed, params)) = o.block_params(&cid) else { continue };
-                        let id = crate::upkeep::id_of(if sealed { &c.sealed_hash } else { &c.block_hash }, &params);
+                        let Some(id) = block_id(&o, &cid, &c.sealed_hash, &c.block_hash) else { continue };
                         if !self.waiting.iter().any(|(w, _, _)| *w == id) {
                             self.waiting.push((id, i, Some(cid)));
                             io.push(Io::Get { id, subscribe: false });
@@ -409,7 +431,7 @@ impl Reading {
             if let Some(st) = &state {
                 let address = sealed_bag_address(&self.space, "writers");
                 for p in craftworks_bag_contract::read(&address, st).unwrap_or_default() {
-                    if let Some(w) = open_bag_item(&self.epochs, "writers", craftworks_bag_contract::payload(&p)).and_then(|v| v["w"].as_str().and_then(unhex32)) {
+                    if let Some(w) = open_bag_item(&self.space, &self.epochs, "writers", craftworks_bag_contract::payload(&p)).and_then(|v| v["w"].as_str().and_then(unhex32)) {
                         listed.insert(w);
                     }
                 }

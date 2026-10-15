@@ -90,9 +90,9 @@ test("a job runs only while its needs hold; paused (once) with why, resumed when
 
 test("become moves only on a change", async () => {
   healths.length = 0;
-  L.become("space", "x", "held");
-  L.become("space", "x", "held");
-  L.become("space", "x", "behind", { e: 2, oe: 3 });
+  L.become("group", "x", "held");
+  L.become("group", "x", "held");
+  L.become("group", "x", "behind", { e: 2, oe: 3 });
   await tick();
   assert.deepEqual(healths.map(h => h.to), ["UNKNOWN>HELD", "HELD>BEHIND"]);
 });
@@ -130,9 +130,54 @@ test("progress is the lifecycle's: one line per process in progress, its end sai
     assert.ok(has(/4 of 4/), "how it ended is said");
     // A machine with no progress (a space's membership) never touches the pill.
     const n = seen.length;
-    L.transition("space", "s", "held", {});
+    L.transition("group", "s", "held", {});
     assert.equal(seen.length, n);
   } finally {
     globalThis.dispatchEvent = was;
   }
+});
+
+// A REQUEST TO BE LET IN (owner 10-14: what another user faces is read in the health reports): the asker's `join` and
+// every decider's `member` moves under the SAME key (the request's), each one report carrying its reason — a page's
+// and the node's alike.
+test("a request's story is one key: asked, skipped and why, let in, joined", async () => {
+  const q = "q:abcdef0123";
+  const from = healths.length;
+  L.transition("join", q, "ask", { s: "5a5a5a", entry: "join" });
+  L.transition("member", q, "skip", { by: "node", why: "another member's turn first" });
+  L.transition("member", q, "admit", { by: "page" });
+  L.transition("member", q, "welcomed", { by: "page", e: 7 });
+  L.transition("join", q, "joined", { e: 7 });
+  await tick();
+  const got = healths.slice(from);
+  assert.deepEqual(got.map(h => [h.k, h.s, h.to]), [
+    ["lifecycle-join", q, "NONE>ASKED"],
+    ["lifecycle-member", q, "NONE>SKIPPED"],
+    ["lifecycle-member", q, "SKIPPED>ADMITTING"],
+    ["lifecycle-member", q, "ADMITTING>WELCOMED"],
+    ["lifecycle-join", q, "ASKED>MEMBER"],
+  ]);
+  assert.match(got[1].why, /another member's turn first/, "the reason is in the report");
+  assert.equal(got[1].d.by, "node");
+  // A move the table does not allow is a bug, not a report: admitting again from WELCOMED.
+  assert.throws(() => L.transition("member", q, "admit", {}), e => e.kind === "bug");
+  // A FAILED attempt is tried again (the rule still answers the request once).
+  const r = "q:ffff000011";
+  L.transition("member", r, "admit", { by: "page" });
+  L.transition("member", r, "fail", { by: "page", why: "the commit was refused" });
+  assert.equal(L.transition("member", r, "admit", { by: "page" }), "ADMITTING");
+});
+
+// A GROUP's STEP (a commit, a join — 10-14: an epoch moved twice and nothing said by what): kept and reported, the
+// state unchanged; a routine step kept only (not reported); a step the table does not list is a bug, never silent.
+test("a group's commit is a step: reported, the state kept; routine steps quiet", async () => {
+  const g = "5a".repeat(32);
+  const from = healths.length;
+  L.transition("group", g, "held", { e: 4 });
+  assert.equal(L.transition("group", g, "commit", { space: g, from: 4, to: 5, intent: "add" }), "HELD");
+  L.transition("group", g, "log-open-written", { space: g, epoch: 5 });
+  await tick();
+  assert.deepEqual(healths.slice(from).map(h => [h.k, h.to]), [["lifecycle-group", "UNKNOWN>HELD"], ["lifecycle-group", "HELD>HELD"]]);
+  assert.match(healths.at(-1).why, /^commit:/);
+  assert.throws(() => L.transition("group", g, "made-up-step", {}), e => e.kind === "bug");
 });

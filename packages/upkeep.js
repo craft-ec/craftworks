@@ -29,8 +29,8 @@ export async function start(ctx) {
       const me = await space.account.strict();
       if (!me) return;
       await absorb(me).catch(e => ctx.failed("upkeep", e, `what the delegate did: ${e.message}`));
-      // THE CARD as it should be (once a page): its key packages ones this account answers — none means every welcome
-      // to it fails — a fresh set put there otherwise (whoever invites next picks one of them).
+      // THE CARD as it should be (once a page): its inbox and devices — and each request still waiting kept answerable
+      // (`askStuck`: made anew with this device's own key where it carries none, or was let in and never opened).
       if (!renewed) {
         renewed = true;
         await (await ctx.require("directory")).publish().catch(e => ((renewed = false), ctx.failed("upkeep", e, `the card: ${e.message}`)));
@@ -54,7 +54,7 @@ export async function start(ctx) {
         await node.idle();
         // REMOVED from it (its group says so): no longer in this person's list — never left shown as theirs.
         if (await ctx.optional("upkeep: group", (await ctx.require("keys")).group(sp).removed(), () => false)) {
-          (await ctx.require("lifecycle")).become("space", sp.id.slice(0, 12), "removed", {});
+          (await ctx.require("lifecycle")).become("group", sp.id, "removed", {});
           await space.forget(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: ${e.message}`));
           continue;
         }
@@ -66,10 +66,10 @@ export async function start(ctx) {
         await conversation.reportReads(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: reporting reads: ${e.message}`));
         const self = await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) }));
         seen.push(self);
-        // ITS MEMBERSHIP HERE, as a lifecycle state (FOUNDATION.md §3: `space`).
+        // ITS GROUP HERE, as a lifecycle state (FOUNDATION.md §3: `group`).
         const life = await ctx.require("lifecycle");
         const ev = self.why ? "not-held" : self.e == null ? "not-held" : self.oe != null && self.e < self.oe ? "behind" : self.on === false ? "off-branch" : self.u ? "unreadable" : "held";
-        life.become("space", sp.id.slice(0, 12), ev, { e: self.e, oe: self.oe, u: self.u, ...(self.why ? { why: self.why } : {}) });
+        life.become("group", sp.id, ev, { e: self.e, oe: self.oe, u: self.u, ...(self.why ? { why: self.why } : {}) });
         await conversation.observe(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: observing members: ${e.message}`));
         const r = await roles.of(sp);
         // AN OPEN SPACE's roster public (the owner, once a page): askers outside learn they were let in.
@@ -84,24 +84,19 @@ export async function start(ctx) {
           if (n) ctx.log("upkeep", { what: `${sp.name}: ${n} banned device(s) taken out of the group` });
           // A LEVEL GROUP: whoever's card no longer reaches its level, taken out (in turn).
           await conversation.lapse(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: lapses: ${e.message}`));
-          // A FORK's heal: members on another branch of the group's keys welcomed back onto the owner's (by any member
-          // on it — nothing new is let in: only who is a member already).
-          const fixed = await conversation.repair(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: repair: ${e.message}`), []));
-          if (fixed.length) ctx.log("upkeep", { what: `${sp.name}: ${fixed.length} member(s) on another branch welcomed back` });
           // AUDIENCES (a restricted channel's, a post's: a role, admins, chosen people): in step with who passes now — by
           // their maker, or an admin in them while the maker is away.
           await conversation.keepReaders(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: readers: ${e.message}`));
         }
         if (!r?.can(me.id, "invite")) continue;
-        // A member's ask from behind (the space's STUCK bag): answered here while this page is open — its node stands
-        // aside meanwhile.
-        const again = await conversation.answerStuck(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: stuck asks: ${e.message}`), []));
-        if (again.length) ctx.log("upkeep", { what: `${sp.name}: ${again.length} member(s) welcomed again from behind` });
-        // In by the acts, not in the group: added (in turn).
-        const added = await conversation.reconcile(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: reconcile: ${e.message}`), []));
-        if (added.length) ctx.log("upkeep", { what: `${added.length} added to ${sp.name} as its acts say` });
+        // LETTING PEOPLE IN (`conversation.admit`: every request, one rule — its node stands aside while this page is open).
         const let_in = await conversation.admit(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: ${e.message}`), []));
         if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name}` });
+      }
+      // …and into this person's CONVERSATIONS (direct, group: their people asking in, by the same rule).
+      for (const sp of (await space.mine.strict()).filter(s => s.kind === "direct" || s.kind === "group")) {
+        const let_in = await conversation.admit(sp).catch(e => (ctx.failed("upkeep", e, `${sp.name}: ${e.message}`), []));
+        if (let_in.length) ctx.log("upkeep", { what: `${let_in.length} let into ${sp.name ?? "a conversation"}` });
       }
       // THE HEARTBEAT: this page open, its version, and its state in each space (a member who stops beating, or whose
       // state turns, is seen in the day's health bag: `tools/health-watch`).
@@ -132,31 +127,30 @@ export async function start(ctx) {
       const sp = of(a.space);
       if (!sp) continue;
       written.push([a.space, a.did]);
-      // ITS KEY PACKAGE named in the space as used (`kp`, the tag the node's record carries: `conversation.sharedTags`):
-      // no member's welcome — page or node — uses it again (10-11: two welcomes for one package, one never opened).
-      // (Only once a page of this account absorbs it: until then the members cannot see the node used it.)
-      const kp = typeof a.kp === "string" && /^[0-9a-f]{32}$/.test(a.kp) ? { kp: a.kp } : {};
-      // Let in AGAIN (a member stuck behind its own commit): a member already — no act.
-      if (a.code === "stuck") {
-        // Recorded in the space as any member's welcome again (`conversation`'s once-per-epoch rule reads it).
-        await ctx.background("upkeep: index.spacePoint", index.spacePoint(sp, "writers", { w: sp.self, repair: a.did, epoch: Number(a.epoch), ...kp }));
-        ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} again (stuck behind its own change) while no page ran` });
-        continue;
-      }
-      if (kp.kp) await ctx.background("upkeep: index.spacePoint", index.spacePoint(sp, "writers", { w: sp.self, welcomed: a.did, ...kp, at: a.at || Date.now() }));
+      // (Its welcome is in the space's writers list already: the node wrote it there when it sent it.)
+      // Let in AGAIN (a member asking in again): a member already — no act.
+      if (a.code === "stuck") continue;
       const r = await roles.of.strict(sp);
       await r.refresh();
       await r.act({ act: "admitted", code: a.code, did: a.did, at: a.at });
       ctx.log("upkeep", { what: `the delegate let ${a.did.slice(12, 20)}… into ${sp.name} while no page ran` });
     }
     if (written.length) await auth.identity.upkeepAck(written);
+    // ITS DECISIONS on each request: moves of the `member` lifecycle (by the node), reported like a page's — once each.
+    const life = await ctx.require("lifecycle");
+    for (const d of st.decided ?? []) {
+      const k = `${d.q}|${d.step}|${d.why}`;
+      if (nodeDecided.has(k)) continue;
+      nodeDecided.add(k);
+      life.transition("member", conversation.reqKey(d.q, d.did), d.step, { by: "node", s: d.space.slice(0, 6), to: d.did.replace(/^did:craftec:/, "").slice(0, 6), why: d.why, at: d.at });
+    }
   }
+  const nodeDecided = new Set();
   // Out of a level group by a lapse alone (no removal, ban or leave since): may be let in again.
   const lapsedOnly = (r, did) => {
     const outs = r.acts().filter(a => (a.did ?? a.by) === did && ["lapsed", "remove", "ban", "leave"].includes(a.act));
     return outs.length > 0 && outs.at(-1).act === "lapsed";
   };
-  const stuckBags = new Set();
   let lastMandate = null;
   // THE MANDATE: every shared space this person is in, as this page knows it now. Admitting anyone NEW (codes, the
   // open door, a level) only where they may invite; letting a STUCK member in again (no one new) wherever they are a
@@ -174,8 +168,8 @@ export async function start(ctx) {
       // The key packages its members (and their nodes) used, mirrored into this account's `keypacks` (`shared:<tag>`):
       // handed below as spent with this account's own — a package is spent for every space once any member used it.
       await conversation.mirrorShared(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: key packages used there: ${e?.message ?? e}`));
-      // Its STUCK bag made (once a page): the delegate reads it every round, and never asks for one not made.
-      if (!stuckBags.has(sp.id)) await ctx.background("upkeep: index.openRequests", index.openRequests(`stuck ${sp.id}`).then(() => stuckBags.add(sp.id)));
+      // Its MEMBER bag made (once a page): the delegate reads it every round, and never asks for one not made.
+      await ctx.background("upkeep: conversation.openMemberBag", conversation.openMemberBag(sp));
       spaces.push({
         space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel,
         open: mayInvite && r.policy("", "join") === "anyone",
@@ -186,6 +180,8 @@ export async function start(ctx) {
         // sits in a bag upkeep reads.
         // (One out only by a LAPSE may come back: they ask again when they give again.)
         bans: r ? [...new Set([...r.bannedList(), ...r.goneList().filter(d => !lapsedOnly(r, d))])] : [], members, epoch: g.epoch, state: g.state,
+        // Who may let in (`rules::admission` there as here; the welcomes made it reads from the space's writers list).
+        admitters: r ? r.members().filter(m => r.can(m.did, "invite")).map(m => m.did) : [],
       });
     }
     // With it, the key packages this account used already — and those another member used (`shared:<tag>`): upkeep
