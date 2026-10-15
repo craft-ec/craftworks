@@ -163,7 +163,7 @@ export async function start(ctx) {
   }
   // Checked as the clock moves too (no new entry needed): an entry whose queue aged out is queued again; a wedged tail
   // superseded.
-  setInterval(() => ctx.background("tokens: queueAll", queueAll().then(wedgedOwn)), 5 * 60 * 1000);
+  ctx.background("tokens: job", ctx.require("lifecycle").then(l => l.job("tokens-queue", { every: 5 * 60 * 1000, delay: 5 * 60 * 1000, run: () => queueAll().then(wedgedOwn) })));
   // RUN a step to its end: read what it wants, have the delegate sign what it asks (one entry a round), until done.
   async function run(step) {
     const sigs = [];

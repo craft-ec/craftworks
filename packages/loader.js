@@ -192,6 +192,18 @@ export async function run(boot) {
     Promise.resolve()
       .then(() => (typeof f === "function" ? f() : f))
       .catch(e => (handled(what, e), typeof fallback === "function" ? fallback() : fallback));
+  // A CLOCK FOR WHAT IS SHOWN (FOUNDATION §7.4): `ctx.every(el, ms, fn)` — `fn` every `ms` while `el` is on the page
+  // (once it was), stopped when it leaves (or by the stop it returns); `el` null: the page's own. The ONE timer for a
+  // view; background work is a lifecycle JOB (`lifecycle.job`). `tools/job-check.mjs` fails any other setInterval.
+  ctx.every = (el, ms, fn) => {
+    let shown = false;
+    const t = setInterval(() => {
+      if (el && !el.isConnected) return shown ? clearInterval(t) : undefined;
+      shown = true;
+      fn();
+    }, ms);
+    return () => clearInterval(t);
+  };
   // A CACHE that never holds a failure (FOUNDATION §2 R4): `ctx.cache(map, key, make, fallback?)` — the promise kept
   // while it is wanted; one that FAILS leaves the map at once (asked for again, it is made again) and answers with
   // `fallback` if one is given (a view's empty), else its fault. One implementation for every per-page cache.
@@ -726,7 +738,7 @@ export async function run(boot) {
         if (drafted && !(await require("drafts").then(d => d.flush(), () => false))) return;
         if (done) return;
         done = true;
-        clearInterval(poll);
+        poll();
         removeEventListener("hashchange", onRoute);
         document.removeEventListener("visibilitychange", onHidden);
         if (next && inPlace(next)) {
@@ -746,7 +758,7 @@ export async function run(boot) {
       const tryNow = () => !busy() && go();
       const onRoute = () => go();
       const onHidden = () => document.visibilityState === "hidden" && go();
-      const poll = setInterval(tryNow, 2000);
+      const poll = ctx.every(null, 2000, tryNow);
       addEventListener("hashchange", onRoute);
       document.addEventListener("visibilitychange", onHidden);
       tryNow();
@@ -769,7 +781,8 @@ export async function run(boot) {
     // The node connection came back after a loss: what the page followed is followed again by the door (`node`), each
     // contract read once — never a reload (10-15). Only the version looked at.
     addEventListener("craftworks:node-back", () => void check().catch(() => {}));
-    setInterval(again, 60000);
+    // Looked at again every minute — a lifecycle JOB, seen in the trace as any is.
+    ctx.background("newest: job", require("lifecycle").then(l => l.job("newest", { every: 60000, delay: 60000, run: async () => again() })));
     addEventListener("focus", again);
   }
 

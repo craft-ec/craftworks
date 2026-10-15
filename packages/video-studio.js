@@ -441,5 +441,7 @@ export async function start(ctx) {
     }
     return out;
   }
-  return { make, probe, progress, kick, queue, videoId, MANIFEST };
+  // Told when the queue may have changed (a lease moved, a video listed or made): what shows it redraws then.
+  const onQueue = async fn => ((await leases()).onChange(fn), items.onChange(fn));
+  return { make, probe, progress, kick, queue, onQueue, videoId, MANIFEST };
 }

@@ -94,12 +94,7 @@ export async function start(ctx) {
   let lastInput = Date.now();
   for (const e of ["pointermove", "pointerdown", "keydown", "wheel", "scroll", "touchstart"]) addEventListener(e, () => (lastInput = Date.now()), { passive: true, capture: true });
   function reading(el, ref, info) {
-    let shown = false; // attached after it is made: gone only once it was there
-    const t = setInterval(() => {
-      if (!el.isConnected) return shown ? clearInterval(t) : undefined;
-      shown = true;
-      if (document.visibilityState === "visible" && document.hasFocus() && Date.now() - lastInput < 120e3) add(ref, info, { s: 1 });
-    }, 1000);
+    ctx.every(el, 1000, () => document.visibilityState === "visible" && document.hasFocus() && Date.now() - lastInput < 120e3 && add(ref, info, { s: 1 }));
   }
   const parse = v => {
     try {

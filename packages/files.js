@@ -678,5 +678,7 @@ export async function start(ctx) {
         }
       });
   }
-  return { keep, keepAt, pieces, listing, put, uploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows: ctx.total("files.rows", () => [], rows), rowOf: ctx.total("files.rowOf", () => null, rowOf), salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
+  // Told when the uploads change (a page's or another device's): what shows them redraws then, never on a timer.
+  const onUploads = async fn => (await storage.table("uploads")).onChange(fn);
+  return { keep, keepAt, pieces, listing, put, uploads, onUploads, keyOf, get, stream, chunk, range, current, adopt, publicity, rows: ctx.total("files.rows", () => [], rows), rowOf: ctx.total("files.rowOf", () => null, rowOf), salt, rotate, recode, lastMoved, plan: size => JSON.parse(glue.file_plan(size)) };
 }

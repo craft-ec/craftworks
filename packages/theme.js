@@ -190,10 +190,10 @@ export async function start() {
       btn.setAttribute("aria-busy", "true");
       btn.textContent = busy;
       const t0 = performance.now();
-      const tick = setInterval(() => {
+      const tick = globalThis.app.every(btn, 1000, () => {
         const s = Math.round((performance.now() - t0) / 1000);
         if (s >= 3) btn.textContent = `${busy.replace(/…$/, "")}… ${s} s`;
-      }, 1000);
+      });
       inFlight = Promise.resolve()
         .then(() => run(...args))
         .then(
@@ -209,7 +209,7 @@ export async function start() {
           },
         )
         .finally(() => {
-          clearInterval(tick);
+          tick();
           btn.removeAttribute("aria-busy");
           inFlight = null;
         });

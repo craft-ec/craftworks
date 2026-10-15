@@ -164,9 +164,18 @@ export function mount(ctx, el) {
       );
     };
     const tick = () => ctx.background("header: read", read().then(draw));
-    setTimeout(tick, 20000);
-    setInterval(() => out.hidden && tick(), 30000);
-    setInterval(() => !out.hidden && tick(), 3000);
+    // Drawn when what it lists CHANGES (an upload's progress, a lease, a video) — never polled (10-15: it read both
+    // every 3 s while open, every 30 s closed). Its one clock: "stalled" ages while the panel is open.
+    setTimeout(() => {
+      tick();
+      ctx.background("header: follow", (async () => {
+        if (!(await ctx.require("auth")).current()) return; // a guest has no queue (logging in starts the page again)
+        const [files, studio] = await Promise.all([ctx.require("files"), ctx.require("video-studio")]);
+        await files.onUploads(tick);
+        await studio.onQueue(tick);
+      })());
+    }, 20000);
+    ctx.every(out, 30000, () => !out.hidden && tick());
     btn.onclick = () => ((out.hidden = !out.hidden), draw(), tick());
     addEventListener("mousedown", e => !out.hidden && !box.contains(e.target) && (out.hidden = true), true);
   }

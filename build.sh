@@ -11,6 +11,8 @@ node "$(cd "$(dirname "$0")" && pwd)/tools/failure-check.mjs"
 node "$(cd "$(dirname "$0")" && pwd)/tools/group-check.mjs"
 # EVERY CONTRACT THAT CAN CHANGE IS READ ONCE, THEN FOLLOWED: one door, no GET or retry loop elsewhere (tools/read-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/read-check.mjs"
+# A TIMER IS A JOB OR A VIEW'S CLOCK: background work in lifecycle jobs, a view's clock through ctx.every (tools/job-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/job-check.mjs"
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"

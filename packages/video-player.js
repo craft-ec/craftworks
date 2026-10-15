@@ -155,8 +155,7 @@ export async function start(ctx) {
       pump();
     };
     onLevels?.(rs.map(label), pick);
-    const tick = setInterval(() => {
-      if (!video.isConnected) return clearInterval(tick);
+    const tick = ctx.every(video, 500, () => {
       if (ms.readyState !== "open") return;
       if (offset < size && !enough()) feed();
       else if (eof && !ended && !anyUpdating(ms)) {
@@ -164,9 +163,9 @@ export async function start(ctx) {
         try {
           ms.endOfStream();
         } catch {}
-        clearInterval(tick);
+        tick();
       }
-    }, 500);
+    });
     // A SEEK: mp4box names the byte where that time's samples start; reading goes on from there.
     video.addEventListener("seeking", () => {
       if (ended) return;
@@ -403,7 +402,7 @@ export async function start(ctx) {
           return;
         }
     };
-    const tick = setInterval(() => (video.isConnected ? (jump(), pump()) : clearInterval(tick)), 1000);
+    ctx.every(video, 1000, () => (jump(), pump()));
     await pump();
     onNote("");
     return true;

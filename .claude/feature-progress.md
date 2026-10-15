@@ -26,6 +26,10 @@ Phases (each: build, fx probe with a control, commit):
       onto it (items ×3, directory ×2, roles ×2, usage ×2, markdown, video-player, index); read-check bans a cache kept
       by hand (HEAD: 9 sites). Roles' view carries R5 `state`/`decided`; Discover leaves an unread space out NOW without
       remembering it. fx: ctx.cache forgot a failure and read again (made 2); reload probe unchanged (38 / 47).
+- [x] 9 Phase 4 (FOUNDATION §7.4): a timer is a lifecycle JOB (background work) or a view's clock (`ctx.every(el,
+      ms, fn)`, stops when its element leaves). Header's ⏳ box drawn on change (files.onUploads, studio.onQueue) — no
+      3 s / 30 s polls; loader's version check a job ("newest"); tokens' queue a job; apphost, usage, video ×2, theme on
+      ctx.every. tools/job-check.mjs (HEAD: 7 files). fx: an upload row → header badge in 2 ms (old: 29.9 s).
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.

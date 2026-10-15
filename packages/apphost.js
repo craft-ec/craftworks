@@ -194,7 +194,7 @@ export async function start(ctx) {
     };
     // CALLS a second, at most (a flood starves the page): past it, refused.
     let budget = 30;
-    const refill = setInterval(() => (frame.isConnected ? (budget = 30) : clearInterval(refill)), 1000);
+    ctx.every(frame, 1000, () => (budget = 30));
     const onMessage = async e => {
       if (!frame.isConnected) return (removeEventListener("message", onMessage), removeEventListener("craftworks:route", onRoute));
       if (e.source !== frame.contentWindow) return;
