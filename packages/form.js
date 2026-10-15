@@ -56,7 +56,9 @@ export async function mount(ctx, el) {
       .fm .bar i { display: block; height: 10px; border-radius: 5px; background: var(--cw-accent); min-width: 2px; }
     }</style>
     <div class="fm"></div>`;
-  const root = el.querySelector(".fm");
+  const outer = el.querySelector(".fm");
+  // Where a page draws: the view's box being built (`ctx.view` render), or the page itself for one drawn once.
+  let root = outer;
   const me = await space.me();
   const refIn = s => decodeURIComponent(s.slice(2));
   const metaOf = form => ({ fields: [], open: true, once: false, editable: true, ...(form?.meta ?? {}) });
@@ -346,9 +348,7 @@ export async function mount(ctx, el) {
     if (!(await reads(form, place))) return root.replaceChildren(h("p", { className: "none", textContent: F.toSpace(place) ? `Only ${space.shown(place)}'s owner and admins read its forms' responses (its mail).` : "Only the form's maker reads its responses." }));
     const m = metaOf(form);
     const box = await mailboxOf(place);
-    // A new response (mail) drawn in while the results are open: one listener per mailbox.
-    const boxKey = F.toSpace(place) ? place.id : "";
-    if (!watched.has(boxKey)) (watched.add(boxKey), box.onChange(redrawSoon));
+    // (A new response — mail — is a data change: the results' view draws it in.)
     await box.fetch().catch(e => ctx.failed("form", e, `fetching mail: ${e.message}`));
     // Only mail addressed to this form's mailbox, from someone the form's rule lets answer.
     const addressed = await responsesIn(box, "in", form, F.responseTo(form, place));
@@ -451,37 +451,35 @@ export async function mount(ctx, el) {
     );
   }
 
-  let shown = ""; // the view drawn
-  const watched = new Set(); // mailboxes whose new mail redraws the results
-  let soon = null;
-  // Written elsewhere (a new response, the form edited or closed): the results and lists drawn again — never a form
-  // being answered or built.
-  function redrawSoon() {
-    clearTimeout(soon);
-    soon = setTimeout(() => el.isConnected && ctx.route === "/form" && !/^(p|e)\/|^new$/.test(shown) && draw(), 1500);
-  }
   async function draw() {
     let at;
     try {
       at = await (await ctx.require("where")).of({ kind: "form", app: "form", yours: "Your forms" });
     } catch (e) {
-      return root.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
+      return outer.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
     }
-    const s = (shown = at.sub);
+    const s = at.sub;
     const mayMake = at.who === "mine" || at.who === "space";
     at.tabs(at.who === "mine" || at.who === "discover" ? [{ label: "Sent", href: "#/form/sent", on: s === "sent" }] : [], { yoursOn: !s, ...(mayMake || at.who === "discover" ? { create: { label: "New form", href: at.who === "space" ? at.href("new") : "#/form/new", on: s === "new" } } : {}) });
-    try {
-      if (s.startsWith("p/")) return await page(refIn(s), at);
-      if (s.startsWith("r/")) return await results(refIn(s), at);
-      if (s.startsWith("e/")) return await builder(at, refIn(s));
-      if (s === "new" && mayMake) return await builder(at);
-      if (s === "sent") return await sent();
-      return await place(at);
-    } catch (e) {
-      root.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }));
-    }
+    view?.stop();
+    view = null;
+    // A FORM BEING ANSWERED or BUILT: drawn once — never again under its writer.
+    const once = s.startsWith("p/") ? () => page(refIn(s), at) : s.startsWith("e/") ? () => builder(at, refIn(s)) : s === "new" && mayMake ? () => builder(at) : null;
+    if (once) return void ((root = outer), await once().catch(e => outer.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) }))));
+    // THE RESULTS, SENT and the LISTS: a VIEW (`ctx.view`, render form) — built again when a response (mail) or a form
+    // changes, put in place only when it differs.
+    view = ctx.view(outer, {
+      render: async () => {
+        const box = h("div", { style: "display:contents" });
+        root = box;
+        if (s.startsWith("r/")) await results(refIn(s), at);
+        else if (s === "sent") await sent();
+        else await place(at);
+        return box;
+      },
+    });
   }
+  let view = null;
   await draw();
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/form" && draw());
-  items.onChange(redrawSoon);
 }

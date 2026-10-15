@@ -74,9 +74,7 @@ export async function mount(ctx, el) {
           <button type="button" class="end close">Close</button></div>
       </form>
       <p class="said"></p>
-      <div class="pinned-section" hidden><div class="section">PINNED</div><div class="cards pinned"></div></div>
-      <div class="others-section"><div class="section others-label" hidden>OTHERS</div><div class="cards others"></div></div>
-      <p class="empty" hidden></p>
+      <div class="notes"></div>
       <dialog class="editor">
         <input class="title" name="title" placeholder="Title">
         <div class="body"></div>
@@ -119,7 +117,7 @@ export async function mount(ctx, el) {
       ctx.require("label-menu"),
     ]);
   } catch (e) {
-    return said(`Could not open the notes: ${e?.message ?? e}`);
+    return said(`Could not open the notes: ${ctx.say(e)}`);
   }
   // A NOTE's PAGE (`…/note/p/<ref>`): the one item page — the note, its comments — framed here.
   if (at.sub.startsWith("p/")) {
@@ -142,11 +140,6 @@ export async function mount(ctx, el) {
   // Someone else's (a person's, Discover's): read only, as every app shows what is not yours (`where`).
   const others = at.others;
   let held = [];
-  const reload = () =>
-    at
-      .read({ whole: true })
-      .then(x => ((held = x), root.isConnected && render()))
-      .catch(e => said(`Could not read the notes: ${e?.message ?? e}`));
 
   // A note: an item (its key its ref). `pinned` comes from the account's pins; a pin or a label names it `notes:<ref>`.
   // Its LABEL key: an item's, as every kind's (`label-menu`).
@@ -171,10 +164,10 @@ export async function mount(ctx, el) {
       const was = key && held.find(x => x.ref === key);
       if (was) await items.editItem(key, body, { title, meta: { ...(was.meta ?? {}), color, archived }, ...(files ? { files } : {}) });
       else key = await items.submit({ board: sp?.id ?? null, title, body, kind: "note", meta: { color, archived, ...(who.level() ? { level: who.level() } : {}) }, files: files ?? [], audience: n.audience ?? who.value(), write: who.write() });
-      reload();
+      render();
       return key;
     } catch (e) {
-      said(`Could not save: ${e?.message ?? e}`);
+      said(`Could not save: ${ctx.say(e)}`);
       return null;
     }
   };
@@ -182,8 +175,8 @@ export async function mount(ctx, el) {
     items
       .remove(key)
       .then(() => labels.clear(ref(key)))
-      .then(reload)
-      .catch(e => said(`Could not delete: ${e?.message ?? e}`));
+      .then(render)
+      .catch(e => said(`Could not delete: ${ctx.say(e)}`));
 
   // The view: Notes or Archive, grid or list (finding one: the header's search, every app's).
   let archive = false;
@@ -258,7 +251,7 @@ export async function mount(ctx, el) {
     if (!(title || body || files.length)) return;
     // Made while one label is shown: it has that label, as in Keep.
     const key = await save(null, { title, body, color, archived: false, audience, files });
-    if (key && label) await labels.set(ref(key), label, true).catch(e => said(`Could not label: ${e?.message ?? e}`));
+    if (key && label) await labels.set(ref(key), label, true).catch(e => said(`Could not label: ${ctx.say(e)}`));
   };
   cHost.addEventListener("focusin", open);
   composer.querySelector(".close").onclick = shut;
@@ -285,9 +278,9 @@ export async function mount(ctx, el) {
     editor.querySelector(".archive-e").title = n.archived ? "Unarchive" : "Archive";
     // THE ACTION ROW (the note's detail: here, not on its card in the list) — votes, Save, Share, Label, History,
     // Delete, as every item's.
-    const close = () => ((editing = null), editor.close(), reload());
+    const close = () => ((editing = null), editor.close(), render());
     editor.querySelector(".acts-slot").replaceChildren(
-      n.item ? actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { vote: true, comments: false, changed: () => reload(), removed: close }) : "",
+      n.item ? actionsCap.bar({ ...n.item, mayRemove: n.mayEdit || n.item.mayRemove }, { vote: true, comments: false, changed: () => render(), removed: close }) : "",
     );
     // WHO: who made it and who changed it last, and when (a shared note's editors are its space's members).
     const it = n.item ?? {};
@@ -350,7 +343,13 @@ export async function mount(ctx, el) {
   };
 
   const R = await ctx.require("roles");
-  const render = () => {
+  // THE NOTES: a VIEW (`ctx.view` — loading, empty, redrawn when what it read changes: a note here or on another
+  // device, a pin, a label). What it reads includes this page's own choices (grid or list, archive, a label), so a
+  // toggle draws it too (`render()`).
+  const notesEl = root.querySelector(".notes");
+  let notesView = null;
+  const render = () => notesView?.refresh();
+  const drawNotes = () => {
     root.classList.toggle("list", list);
     // The composer: not in the archive, nor for who may not edit here.
     composer.hidden = others || archive || (!!rs && R.mayWrite({ action: "post", item: { kind: "note", by: null, meta: {} }, writer: meId, r: rs }) !== true);
@@ -364,17 +363,21 @@ export async function mount(ctx, el) {
       .sort((a, b) => (b.edited || 0) - (a.edited || 0) || (a.key < b.key ? 1 : -1));
     const pinned = all.filter(n => n.pinned && !archive);
     const rest = all.filter(n => !n.pinned || archive);
-    root.querySelector(".pinned-section").hidden = !pinned.length;
-    root.querySelector(".others-label").hidden = !pinned.length || !rest.length;
-    root.querySelector(".pinned").replaceChildren(...pinned.map(card));
-    root.querySelector(".others").replaceChildren(...rest.map(card));
-    const empty = root.querySelector(".empty");
-    empty.hidden = all.length > 0;
-    empty.textContent = archive
-        ? "Your archived notes appear here."
-        : label
-          ? "No notes with this label yet."
-          : "Notes you add appear here.";
+    const box = document.createElement("div");
+    if (pinned.length) {
+      const sec = Object.assign(document.createElement("div"), { className: "pinned-section" });
+      sec.append(Object.assign(document.createElement("div"), { className: "section", textContent: "PINNED" }), Object.assign(document.createElement("div"), { className: "cards pinned" }));
+      sec.lastChild.append(...pinned.map(card));
+      box.append(sec);
+    }
+    const others_ = Object.assign(document.createElement("div"), { className: "others-section" });
+    if (pinned.length && rest.length) others_.append(Object.assign(document.createElement("div"), { className: "section others-label", textContent: "OTHERS" }));
+    const cs = Object.assign(document.createElement("div"), { className: "cards others" });
+    cs.append(...rest.map(card));
+    others_.append(cs);
+    box.append(others_);
+    if (!all.length) box.append(Object.assign(document.createElement("p"), { className: "empty", textContent: archive ? "Your archived notes appear here." : label ? "No notes with this label yet." : "Notes you add appear here." }));
+    return box;
   };
 
   // THE LABEL BAR: all notes, or one label's; and Edit labels.
@@ -407,10 +410,10 @@ export async function mount(ctx, el) {
         const line = Object.assign(document.createElement("div"), { className: "line" });
         const del = Object.assign(document.createElement("button"), { type: "button", textContent: "🗑️", title: "Delete label" });
         del.onclick = () => {
-          if (confirm(`Delete the label “${l.name}”? It is removed from every note; the notes stay.`)) labels.remove(l.id).catch(e => said(`Could not delete the label: ${e?.message ?? e}`));
+          if (confirm(`Delete the label “${l.name}”? It is removed from every note; the notes stay.`)) labels.remove(l.id).catch(e => said(`Could not delete the label: ${ctx.say(e)}`));
         };
         const name = Object.assign(document.createElement("input"), { value: l.name, maxLength: 50 });
-        name.onchange = () => labels.rename(l.id, name.value).catch(e => ((name.value = l.name), said(`Could not rename: ${e?.message ?? e}`)));
+        name.onchange = () => labels.rename(l.id, name.value).catch(e => ((name.value = l.name), said(`Could not rename: ${ctx.say(e)}`)));
         line.append(del, name);
         return line;
       }),
@@ -425,7 +428,7 @@ export async function mount(ctx, el) {
     const f = e.currentTarget;
     const v = f.name.value;
     f.reset();
-    if (v.trim()) labels.create(v).catch(err => said(`Could not create the label: ${err?.message ?? err}`));
+    if (v.trim()) labels.create(v).catch(err => said(`Could not create the label: ${ctx.say(err)}`));
   };
   lEditor.querySelector(".done-l").onclick = () => lEditor.close();
   labels.onChange(() => lEditor.open && lines());
@@ -446,11 +449,14 @@ export async function mount(ctx, el) {
     ], { yoursOn: !archive });
   };
   actions();
-  items.onChange(() => root.isConnected && reload());
-  reload();
-  pins.onChange(() => root.isConnected && render());
-  labels.onChange(() => root.isConnected && render());
-  render();
+  notesView = ctx.view(notesEl, {
+    read: async () => {
+      held = await at.read({ whole: true });
+      return { held, list, archive, label, pins: pins.refs?.("") ?? [], labels: labels.list().map(l => [l.id, l.name, labels.refs(l.id, "item:")]) };
+    },
+    draw: () => drawNotes(),
+    empty: () => false,
+  });
   // Another space's notes (or yours): opened afresh.
   const wherever = (await ctx.require("where")).key();
   const moved = async () => {

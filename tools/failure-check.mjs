@@ -17,7 +17,7 @@ const RULES = [
   [/\.catch\(\s*(?:\(\s*\)|_\w*)\s*=>/, "a fallback catch: make the read total, or ctx.background / ctx.optional"],
   // A FAULT SHOWN TO A PERSON is said in its kind's words (`ctx.say`, one wording per kind — FOUNDATION §4), never its
   // raw message (a stack's text, a node's words).
-  [/(textContent\s*[:=]|\.append\(|\bsay\()[^;]*\b(e|err|error)\??\.message\b/, "a fault's raw message shown: ctx.say(e) (its kind's words)"],
+  [/(textContent\s*[:=]|\.append\(|\bsaid?\(|\bfail\()[^;]*\b(e|err|error)\??\.message\b/, "a fault's raw message shown: ctx.say(e) (its kind's words)"],
 ];
 // `.then(f, () => v)`: a second argument at the call's own depth that is a fallback (brackets matched; strings skipped).
 function thenFallbacks(src) {
