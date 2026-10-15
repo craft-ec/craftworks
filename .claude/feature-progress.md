@@ -30,6 +30,12 @@ Phases (each: build, fx probe with a control, commit):
       ms, fn)`, stops when its element leaves). Header's ⏳ box drawn on change (files.onUploads, studio.onQueue) — no
       3 s / 30 s polls; loader's version check a job ("newest"); tokens' queue a job; apphost, usage, video ×2, theme on
       ctx.every. tools/job-check.mjs (HEAD: 7 files). fx: an upload row → header badge in 2 ms (old: 29.9 s).
+- [x] 10 Phase 5: `save` machine (per change: OWED → HELD | REFUSED, forgotten once HELD) moved by storage on every
+      write — the lifecycle pill is the ONE place "Saving…"/"Not saved" is said (the loader's own line and the
+      `craftworks:save` event are gone); a refusal is reported. `page` machine (BOOTING → RUNNING ⇄ HIDDEN, UPDATING); an
+      update waits for no save owed. Found: a merged table's put dropped `user` (a space's saves never said "Saving…"
+      unless the click was still live) — carried through now. caption + app-settings on theme.action (the one button
+      feedback). fx v747: a refused save → "Not saved: …" in the pill, owed 0, refused 1, page RUNNING.
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
 Done before (4f6804d, kept): key-history walk stops at the first held epoch; key events name their space.

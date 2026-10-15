@@ -210,6 +210,7 @@ export async function start(ctx) {
     })().finally(() => (rekeying = null));
   });
 
+  let saves = 0; // this page's saves, numbered (each its own `save` process)
   const tails = new Map(); // id hex -> Promise<tail> (opened once per page)
   // R3 (FOUNDATION.md §2): what did NOT read here — UNREADABLE (sealed with a key not held), or opened with NO KEY —
   // is not terminal: when keys arrive (`craftworks:keys`, or the account's group turns member) every such tail leaves
@@ -517,13 +518,15 @@ export async function start(ctx) {
     t.keyless = () => !open && !t.sealed;
 
     const allowed = () => (catalogKey || spaceId ? Promise.resolve(true) : access.allowed(app));
-    // SAVE STATE, said in ONE place (the loader's line): every write announced as saving, then saved or not saved
-    // (with the fault's words) — FOUNDATION.md §3, the save machine.
+    // EVERY WRITE IS A SAVE (FOUNDATION §3 `save`): OWED, then HELD or REFUSED with its fault's words — the lifecycle
+    // says it in ONE place (the pill) and reports a refusal; an update waits for nothing to be owed.
     const saving = (p, user) => {
-      dispatchEvent(new CustomEvent("craftworks:save", { detail: { app, user, s: "saving" } }));
+      const key = `${app}#${++saves}`;
+      const lc = ctx.require("lifecycle");
+      ctx.background("storage: save owed", lc.then(l => l.transition("save", key, "owe", { user, what: app })));
       return p.then(
-        v => (dispatchEvent(new CustomEvent("craftworks:save", { detail: { app, user, s: "saved" } })), v),
-        e => (dispatchEvent(new CustomEvent("craftworks:save", { detail: { app, user, s: "failed", kind: e?.kind ?? "bug", why: String(e?.message ?? e).slice(0, 120) } })), Promise.reject(e)),
+        v => (ctx.background("storage: save held", lc.then(l => l.transition("save", key, "held"))), v),
+        e => (ctx.background("storage: save refused", lc.then(l => l.transition("save", key, "refuse", { user, what: app, kind: e?.kind ?? "bug", why: ctx.say(e) }))), Promise.reject(e)),
       );
     };
 
@@ -911,8 +914,9 @@ export async function start(ctx) {
     return plain(cat) ? cat.put(n, v) : versioned(cat, n, v, own(cat).find(r => r.key === n)?.id);
   };
   // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
-  const versioned = (t, key, value, after) =>
-    t.put(key, () => feed.version(bytes(t.owner), t.tailNext(), after ?? "", value === null ? undefined : enc.encode(value)));
+  // (`user`: the person's own save — said by the `save` machine; carried from the merged table's put.)
+  const versioned = (t, key, value, after, user) =>
+    t.put(key, () => feed.version(bytes(t.owner), t.tailNext(), after ?? "", value === null ? undefined : enc.encode(value)), user);
 
   // THE DIRECTORY: the account's shared catalog (its data key). Its rows: its channels and public tables found by name,
   // and `node:<key>` for every node that has feeds; its `CATALOG` row keeps upkeep's marks. Made with the account.
@@ -1261,11 +1265,11 @@ export async function start(ctx) {
         if (held || !t.lazy) return held?.id;
         return (await page({ lo: key, hi: `${key}\u0000`, limit: 1 })).rows.find(r => r.key === key)?.id;
       };
-      const write = async (key, value) => {
+      const write = async (key, value, user = !!navigator.userActivation?.isActive) => {
         await current();
         // A newer epoch just learned: the open tails move onto it before this is sealed.
         if (sp.kind !== "account") await ctx.background("storage: sealNewest", sealNewest());
-        return versioned(me, key, value, await currentId(key));
+        return versioned(me, key, value, await currentId(key), user);
       };
       const t = {
         app: name,
@@ -1344,10 +1348,10 @@ export async function start(ctx) {
         get built() {
           return all.map(f => hexOf(f.id ?? new Uint8Array()));
         },
-        put: (key, value) => write(key, value),
+        put: (key, value, user) => write(key, value, user),
         // This writer's own feed written out now (`flushNow`): before an edit.
         flushOwn: () => me.flushNow?.(),
-        remove: key => write(key, null),
+        remove: (key, user) => write(key, null, user),
         get sealed() {
           return me.sealed;
         },

@@ -158,6 +158,35 @@ export async function start(ctx) {
         refuse: { from: ["REQUESTED"], to: "REFUSED" },
       },
     },
+    // A SAVE (FOUNDATION §3 `save`, one per change): OWED while it is on its way, HELD once the network took it, REFUSED
+    // with its fault. THE ONE PLACE "Saving…" and "Not saved" are said (the pill) — for the person's own saves (`user`);
+    // background writes (drafts, records, upkeep) move it quietly. A refusal is reported; a save held is forgotten.
+    // `owed()`: what an update waits for (page `UPDATING`).
+    save: {
+      initial: "NONE",
+      quiet: ["owe", "held"],
+      after: 600,
+      progress: { OWED: (_, d) => (d?.user ? "Saving…" : null) },
+      ended: { REFUSED: { text: (_, d) => (d?.user ? `Not saved: ${String(d.why ?? "").slice(0, 100)}` : null), ms: 8000 } },
+      forget: ["HELD"],
+      events: {
+        owe: { from: "*", to: "OWED" },
+        held: { from: ["OWED"], to: "HELD" },
+        refuse: { from: ["OWED"], to: "REFUSED" },
+      },
+    },
+    // THE PAGE (FOUNDATION §3 `page`): no shutdown state — closed at any time. RESUMING puts back what the last page
+    // left (drafts); HIDDEN sends what is owed; UPDATING (a newer version) waits for `save` to owe nothing.
+    page: {
+      initial: "BOOTING",
+      quiet: ["resume", "run", "hide", "update"],
+      events: {
+        resume: { from: ["BOOTING"], to: "RESUMING" },
+        run: { from: ["BOOTING", "RESUMING", "HIDDEN", "RUNNING"], to: "RUNNING" },
+        hide: { from: ["RUNNING", "RESUMING"], to: "HIDDEN" },
+        update: { from: "*", to: "UPDATING" },
+      },
+    },
     // A BACKGROUND JOB (upkeep, sync, the usage flush, keeping): runs every `every` ms only while what it NEEDS holds;
     // PAUSED (with why) while it does not. Its moves are QUIET (10-13: every guest page reported upkeep paused, "nobody
     // is logged in" — ×25 of noise): where each job stands rides in the visit's snapshot; only a stop is reported.
@@ -242,14 +271,19 @@ export async function start(ctx) {
     const now = m.progress?.[to];
     const end = m.ended?.[to];
     if (now) {
-      const show = () => (lines.set(id, textOf(now, key, detail)), say());
+      // (A text function may say nothing for this one: a background save.)
+      const show = () => {
+        const t = textOf(now, key, detail);
+        if (t) lines.set(id, t), say();
+      };
       if (m.after) timers.set(id, setTimeout(show, m.after));
       else show();
       if (was) say();
       return;
     }
-    if (end && (!end.from || end.from.includes(from))) {
-      lines.set(id, textOf(end.text, key, detail));
+    const endText = end && (!end.from || end.from.includes(from)) ? textOf(end.text, key, detail) : null;
+    if (endText) {
+      lines.set(id, endText);
       timers.set(id, setTimeout(() => (lines.delete(id), say()), end.ms ?? 10000));
     }
     say();
@@ -277,6 +311,8 @@ export async function start(ctx) {
     }
     dispatchEvent(new CustomEvent("craftworks:lifecycle", { detail: { machine, key, from, to, event } }));
     progressOf(machine, key, from, to, detail);
+    // A finished one-per-change machine (a save HELD) is not kept: the page may make thousands.
+    if (m.forget?.includes(to)) states.delete(`${machine}|${key}`);
     for (const f of listeners.get(machine) ?? []) Promise.resolve(f(key, to, from, event, detail)).catch(e => met("lifecycle", e));
     return to;
   }
@@ -371,5 +407,7 @@ export async function start(ctx) {
     return out;
   };
 
-  return { MACHINES, state, transition, become, on, snapshot, job, jobs, deleting, journal };
+  // How many of a machine's processes stand in `s` now (a save OWED: what an update waits for).
+  const count = (machine, s) => [...states].filter(([k, v]) => k.startsWith(`${machine}|`) && v.s === s).length;
+  return { MACHINES, state, count, transition, become, on, snapshot, job, jobs, deleting, journal };
 }

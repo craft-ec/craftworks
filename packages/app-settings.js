@@ -12,6 +12,7 @@
 export async function start(ctx) {
   const roles = await ctx.require("roles");
   const S = await ctx.require("signals");
+  const theme = await ctx.require("theme");
   const style = document.createElement("style");
   style.textContent = `@layer apps {
 
@@ -156,12 +157,8 @@ export async function start(ctx) {
     const f0 = S.fields.some(f => f.action) ? "Who" : "Setting";
     const more = S.extra ? h("div", {}) : null;
     const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "") || "everything"}` }, h("h3", { textContent: S.title }), h("div", { className: "set-grid", style: "display:grid;grid-template-columns:max-content minmax(0,24rem);gap:var(--cw-space-2) var(--cw-space-3);align-items:center" }, h("b", { textContent: "Action" }), h("b", { textContent: f0 }), ...inputs.flatMap(({ f, input }) => [h("label", { textContent: f.label, style: "margin:0", htmlFor: (input.id ||= `set-${key || "space"}-${f.action ?? f.key}-${f.path ?? ""}`) }), input])), more, h("div", { className: "row" }, said, btn));
-    form.onsubmit = async e => {
-      e.preventDefault();
-      btn.disabled = true;
-      said.className = "said";
-      said.textContent = "";
-      try {
+    // The button says saving and saved (`theme.action`, the one button feedback); a failure, said beside it.
+    const submit = theme.action(btn, async () => {
         const changed = {};
         for (const { f, input, now } of inputs) {
           if (f.action) {
@@ -173,13 +170,12 @@ export async function start(ctx) {
         }
         for (const sel of more?.querySelectorAll("select[data-path]") ?? []) if (await save(r, sel)) changed[`${sel.dataset.path}|${sel.dataset.action}`] = sel.value || "inherit";
         await S.saved?.(changed, r, sp);
-        said.className = "ok";
-        said.textContent = "Saved.";
-      } catch (err) {
-        said.textContent = err?.message ?? String(err);
-      } finally {
-        btn.disabled = false;
-      }
+    }, { busy: "Saving…", done: "Saved ✓" });
+    form.onsubmit = e => {
+      e.preventDefault();
+      said.className = "said";
+      said.textContent = "";
+      submit().catch(err => (said.textContent = ctx.say(err)));
     };
     if (S.extra) await S.extra(more, r, sp).catch(err => more.append(h("p", { className: "said", textContent: err?.message ?? String(err) })));
     return form;

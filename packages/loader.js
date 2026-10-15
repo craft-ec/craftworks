@@ -67,6 +67,18 @@ export async function run(boot) {
     const ix = await (healthIndex ??= require("index").catch(() => ((healthIndex = null), null)));
     await ix?.health?.({ k: "visit", s: "page", to: `${visit.pid}#${visit.n}`, why: "", d: { member: me === undefined ? "unknown" : !!me, spaces, boot: visit.boot, up: Math.round(performance.now() - t00), routes: visit.routes.slice(-12), faults: visit.faults, reconnects: visit.reconnects, waits, life } }).catch(() => {});
   }
+  // THE PAGE MACHINE (FOUNDATION §3 `page`): RUNNING once a page is shown, HIDDEN while out of view (drafts send what
+  // is owed then), UPDATING when a newer version is taken. Moved only along its own edges.
+  let lifeNow = null; // the lifecycle, once loaded (read synchronously by an update's wait)
+  const PAGE_FROM = { run: ["BOOTING", "RESUMING", "HIDDEN", "RUNNING"], hide: ["RUNNING", "RESUMING"], update: null };
+  const pageMove = ev =>
+    ctx.background("page: move", require("lifecycle").then(l => {
+      lifeNow = l;
+      const s = l.state("page", "page").s;
+      if (s === "UPDATING" || (PAGE_FROM[ev] && !PAGE_FROM[ev].includes(s))) return;
+      l.transition("page", "page", ev);
+    }));
+  document.addEventListener("visibilitychange", () => pageMove(document.visibilityState === "hidden" ? "hide" : "run"));
   document.addEventListener("visibilitychange", () => {
     // (Hidden before its first page settled — a page that never finished: sent now, it is the visit that matters most.)
     if (document.visibilityState === "hidden" && (!visit.n || performance.now() - visit.sentAt >= VISIT_EVERY_MS)) sendVisit();
@@ -531,36 +543,11 @@ export async function run(boot) {
     shellAddress();
     ctx.appsOpened.add(route);
     ctx.log("page ready", { what: route, ms: Math.round(performance.now() - t0) });
+    pageMove("run");
     watchPage(rec, t0);
     retries = 0; // (a page shown: the next failure gets its tries again)
     // …and a failure said before it (a try that failed) gone: the page is here now.
     if (status.className === "bad") (status.className = ""), (status.hidden = true);
-  }
-
-  // SAVING, said in ONE place (FOUNDATION.md §3): "Saving…" while any write is on its way, "Not saved" with why when
-  // one fails (the fault's words), nothing once all are held. No app says it on its own.
-  {
-    let n = 0;
-    let line = null;
-    let hide = null;
-    const say = (text, bad) => {
-      line ??= Object.assign(document.createElement("div"), { role: "status" });
-      line.style.cssText = `position:fixed;left:16px;bottom:8px;z-index:2147483001;font-size:12px;padding:3px 10px;border-radius:999px;background:Canvas;color:${bad ? "#b3261e" : "CanvasText"};border:1px solid #8886;opacity:.85`;
-      line.textContent = text;
-      if (!line.isConnected) document.body.append(line);
-      clearTimeout(hide);
-      hide = text ? (bad ? setTimeout(() => line.remove(), 8000) : null) : (line.remove(), null);
-    };
-    addEventListener("craftworks:save", e => {
-      const d = e.detail ?? {};
-      if (!d.user) return; // background writes (drafts, upkeep, records): not the person's saves
-      if (d.s === "saving") (n += 1), say("Saving…");
-      else {
-        n = Math.max(0, n - 1);
-        if (d.s === "failed") say(`Not saved: ${(() => { try { return faultNow.say(new faultNow.Fault(d.kind, d.why)); } catch { return d.why; } })()}`, true);
-        else if (!n) say("");
-      }
-    });
   }
 
   // THE TRACE: always recorded (the wrapper's log), shown only on demand. A small toggle; the `trace` component is
@@ -721,9 +708,11 @@ export async function run(boot) {
       const editable = el => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
       // With DRAFTS, what is typed is saved (flushed before the reload) and put back after it: AN UPDATE IS A RESUME —
       // only an open dialog (a login: never drafted) holds it. Without them: as before, nothing typed is lost.
+      // And a SAVE still owed (page UPDATING waits for `save` to owe nothing — FOUNDATION §3).
       const drafted = loaded.has("drafts");
       const busy = () =>
         !!document.querySelector("dialog[open]") ||
+        (lifeNow?.count("save", "OWED") ?? 0) > 0 ||
         (!drafted &&
           (editable(document.activeElement) ||
             [...document.querySelectorAll("textarea, input[type=text], input:not([type])")].some(x => x.value && !x.closest("header, [role=search]") && x.type !== "search")));
@@ -736,7 +725,7 @@ export async function run(boot) {
         if (done) return;
         // Everything typed written first; a draft not saved holds the update until it is.
         if (drafted && !(await require("drafts").then(d => d.flush(), () => false))) return;
-        if (done) return;
+        if (done || busy()) return;
         done = true;
         poll();
         removeEventListener("hashchange", onRoute);
@@ -752,6 +741,7 @@ export async function run(boot) {
           "position:fixed;left:50%;bottom:44px;transform:translateX(-50%);z-index:2147483002;background:Canvas;color:CanvasText;" +
           "border:1px solid #8886;border-radius:999px;box-shadow:0 4px 18px #0004;padding:6px 14px;font-size:.9rem";
         n.textContent = "Updating to the newest version…";
+        pageMove("update");
         document.body.append(n);
         setTimeout(() => location.reload(), 400);
       };
