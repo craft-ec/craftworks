@@ -285,6 +285,10 @@ export async function run(boot) {
     refresh();
     return { refresh, stop };
   };
+  // AN APP's FRONT DOOR (owner 10-15: "make all app default first page load is the discovery/public page instead of
+  // own page"): its Discover page where it has a public side, else its own. Every launcher opens an app here (Home, the
+  // dock, the header's apps); "You" in the side panel is the person's own page.
+  ctx.entryOf = a => ((a?.views ?? []).includes("public") ? `#/discover${a.route}` : `#${a.route}`);
   // A CACHE that never holds a failure (FOUNDATION §2 R4): `ctx.cache(map, key, make, fallback?)` — the promise kept
   // while it is wanted; one that FAILS leaves the map at once (asked for again, it is made again) and answers with
   // `fallback` if one is given (a view's empty), else its fault. One implementation for every per-page cache.

@@ -219,7 +219,7 @@ export function mount(ctx, el) {
       } else {
         const t = q.replace(/^@/, "").toLowerCase();
         const apps = ctx.apps.filter(a => (a.views ?? []).includes("personal") && a.name.toLowerCase().includes(t));
-        if (apps.length) groups.push(["Apps", apps.slice(0, 5).map(a => h("a", { href: `#${a.route}`, textContent: `${a.icon ?? ""} ${a.name}`, onclick: e => (e.preventDefault(), go(`#${a.route}`)) }))]);
+        if (apps.length) groups.push(["Apps", apps.slice(0, 5).map(a => h("a", { href: ctx.entryOf(a), textContent: `${a.icon ?? ""} ${a.name}`, onclick: e => (e.preventDefault(), go(`#${a.route}`)) }))]);
         const mine = (await space.mine()).filter(s => s.kind === "server" && !s.group);
         const pub = await items.publicSpaces();
         const seen = new Set();

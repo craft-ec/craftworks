@@ -59,7 +59,7 @@ function mountDock(ctx, el) {
     const a = appOf(ctx.route);
     if (!a) return;
     open.delete(a.route);
-    open.set(a.route, { hash: location.hash || `#${a.route}`, at: Date.now() });
+    open.set(a.route, { hash: location.hash || ctx.entryOf(a), at: Date.now() });
   };
   const placeOf = hash => {
     const s = decodeURIComponent(String(hash).replace(/^#\/?/, ""));
@@ -79,7 +79,7 @@ function mountDock(ctx, el) {
     dock.replaceChildren(
       icon({ icon: "🏠", name: "Home" }, { href: "#/", here: here === "/", label: "Home" }),
       ...(pins.length ? [h("span", { className: "sep" })] : []),
-      ...pins.map(a => icon(a, { href: open.get(a.route)?.hash ?? `#${a.route}`, here: here === a.route, isOpen: open.has(a.route) })),
+      ...pins.map(a => icon(a, { href: open.get(a.route)?.hash ?? ctx.entryOf(a), here: here === a.route, isOpen: open.has(a.route) })),
       ...(recent.length ? [h("span", { className: "sep" })] : []),
       ...recent.map(a => icon(a, { href: open.get(a.route).hash, here: here === a.route, isOpen: true })),
       h("span", { className: "sep" }),
@@ -103,7 +103,7 @@ function mountDock(ctx, el) {
     v.onclick = e => (e.target === v || e.target.closest("a")) && close();
     const openList = [...open.entries()].reverse().map(([route, o]) => [appOf(route), o]).filter(([a]) => a);
     const grid = h("div", { className: "all" });
-    const fill = all => grid.replaceChildren(...[...all].sort((x, y) => x.name.localeCompare(y.name)).map(a => h("a", { href: open.get(a.route)?.hash ?? `#${a.route}` }, h("span", { textContent: a.icon ?? "▫️" }), h("span", { textContent: a.name }))));
+    const fill = all => grid.replaceChildren(...[...all].sort((x, y) => x.name.localeCompare(y.name)).map(a => h("a", { href: open.get(a.route)?.hash ?? ctx.entryOf(a) }, h("span", { textContent: a.icon ?? "▫️" }), h("span", { textContent: a.name }))));
     fill(ctx.apps ?? []);
     v.append(
       h("h3", { textContent: "OPEN" }),

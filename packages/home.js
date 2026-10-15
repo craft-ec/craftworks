@@ -90,7 +90,7 @@ export async function mount(ctx, el) {
     ctx.background("home: installed.list", installed.list().then(l => ((have = new Set(l.map(a => a.route))), desk.redraw())));
     const personal = () => ctx.apps.filter(a => (a.views ?? ["personal"]).includes("personal") && have.has(a.route));
     const desk = icons.desk(el.querySelector(".desk"), {
-      items: () => personal().map(a => ({ app: a, href: `#${a.route}`, count: a.counts && activity ? activity.total(a.counts) : 0 })),
+      items: () => personal().map(a => ({ app: a, href: ctx.entryOf(a), count: a.counts && activity ? activity.total(a.counts) : 0 })),
       pinKey: a => `app:${a.route}`,
     });
     addEventListener("craftworks:installed", async () => ((have = new Set((await installed.list()).map(a => a.route))), desk.redraw()), { signal: ctx.signal });
