@@ -1,7 +1,8 @@
 // BLOG, an app (`#/blog`): a LENS over Board's posts — the same posts, read as ARTICLES; no store of its own (§1, §7).
 // Its states (a draft, a schedule, a review) are `blog-press`'s, kept on the posts themselves.
 //   YOURS        `#/blog`                your articles (your public profile posts), newest first; `…/t/<tag>` by tag
-//   A PERSON's   `#/blog/u/<did>`        theirs — SUBSCRIBE is the one follow (`person`): new posts reach your feed
+//   A PERSON's   `#/blog/u/<did>`        theirs — Follow is the one follow (`person`'s menu): new posts reach your feed
+//   FOLLOWING    `#/blog/feed`           articles from your spaces, the people you follow and your friends
 //   A SPACE's    `#/s/<space>/blog`      a PUBLICATION: its members' articles; where its editors approve (its setting,
 //                                        `app-settings`), a member's goes to them first (`…/review`, the editors')
 //   DISCOVER     `#/discover/blog`       public articles
@@ -86,7 +87,9 @@ export async function mount(ctx, el) {
   };
 
   let at = null;
-  let months = 1; // how far back a list reads (30 days each; "Older" reaches further)
+  // WHAT A LIST READS AND HOW IT IS ORDERED: the one feed bar (Board's, Videos' — New paged by Older, the ranked feeds
+  // with their period, a sort), never a window of its own.
+  const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() });
   const base = () => at.base;
 
   // AN ARTICLE in a list.
@@ -106,23 +109,24 @@ export async function mount(ctx, el) {
     );
   }
 
-  // A PLACE's ARTICLES: newest first, by tag where one is chosen; what is read is its last `months` × 30 days.
+  // A PLACE's ARTICLES: as the feed bar picks and orders them, by tag where one is chosen.
   async function home(tag = null) {
     const list = h("div", { className: "list" }, theme.loading("Reading the articles…"));
     const sp = at.space;
     const r = sp ? await (await ctx.require("roles")).of(sp) : null;
-    const title = at.who === "discover" ? "🧭 Public articles" : sp ? `📰 ${space.shown(sp)}` : at.who === "person" ? null : "✍️ Your blog";
+    const feed = at.sub === "feed";
+    const title = feed ? "Following" : at.who === "discover" ? "🧭 Public articles" : sp ? `📰 ${space.shown(sp)}` : at.who === "person" ? null : "✍️ Your blog";
     const head = h("div", { className: "head" }, title ? h("h2", { textContent: title }) : h("h2", {}, directory.nameEl(at.person, "span")));
-    // SUBSCRIBE: the one follow — a person's card (Follow), a space's (Follow, Join).
-    if (at.who === "person") head.append(h("button", { type: "button", className: "cw-btn primary", textContent: "Subscribe…", onclick: e => person.open(e.currentTarget, at.person) }));
+    // FOLLOW: the one follow — a person's menu (Follow, message …), as Board's; a space's is the side panel's (Join, Follow).
+    if (at.who === "person") head.append(h("button", { type: "button", className: "cw-btn primary", textContent: "Follow, message…", onclick: e => person.open(e.currentTarget, at.person) }));
     if (sp) {
       const editors = r.members().filter(m => r.can(m.did, "moderate"));
       head.append(h("span", { className: "s", textContent: `${editors.length} editor${editors.length === 1 ? "" : "s"} · ${r.config("blog", "approval", "") === "editors" ? "editors approve members' articles" : "members publish directly"}` }));
     }
     const chips = h("div", { className: "chips" });
-    root.replaceChildren(head, chips, list);
-    const where = at.who === "discover" ? { discover: true } : sp ? { board: sp.id } : { by: at.person ?? me };
-    const all = (await items.list(where, "new", "post", { window: 30 * months })).filter(it => press.isArticle(it) && !it.private);
+    root.replaceChildren(head, h("div", { className: "sorts" }, bar.el()), chips, list);
+    const where = feed ? { feed: true } : at.who === "discover" ? { discover: true } : sp ? { board: sp.id } : { by: at.person ?? me };
+    const all = bar.reorder((await items.list(where, bar.sort(), "post", bar.options())).filter(it => press.isArticle(it) && !it.private));
     // Its TAGS (what the read articles carry): a filter, newest first within it.
     const counts = new Map();
     for (const it of all) for (const t of items.tagsOf(it)) if (t !== "nsfw") counts.set(t, (counts.get(t) ?? 0) + 1);
@@ -130,9 +134,10 @@ export async function mount(ctx, el) {
     chips.replaceChildren(
       ...(counts.size ? [h("a", { href: base(), className: tag ? "" : "on", textContent: "All" }), ...[...counts].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([t, n]) => h("a", { href: at.href(`t/${encodeURIComponent(t)}`), className: t === tag ? "on" : "", textContent: `#${t} ${n}` }))] : []),
     );
-    const older = h("button", { type: "button", className: "cw-btn", textContent: `Older (before ${30 * months} days ago)`, onclick: () => ((months += 1), draw()) });
-    const none = at.who === "discover" ? "No public articles yet." : sp ? "No articles yet." : at.who === "person" ? "No articles." : "Nothing published yet: ＋ Write above.";
-    list.replaceChildren(...(shown.length ? shown.map(it => row(it, { href: at.who === "discover" ? at.href(`p/${it.ref}`) : `${placeBase(it)}/p/${it.ref}` })) : [h("p", { className: "none", textContent: tag ? `Nothing tagged #${tag} in the last ${30 * months} days.` : none })]), older);
+    const older = bar.older("Older articles", shown.length);
+    const span = bar.span();
+    const none = feed ? `Nothing ${span}: your spaces, the people you follow and your friends write here.` : at.who === "discover" ? `No public articles ${span}.` : sp ? `No articles ${span}.` : at.who === "person" ? `No articles ${span}.` : `Nothing published ${span}: ＋ Write.`;
+    list.replaceChildren(...(shown.length ? shown.map(it => row(it, { href: at.who === "discover" ? at.href(`p/${it.ref}`) : `${placeBase(it)}/p/${it.ref}` })) : [h("p", { className: "none", textContent: tag ? `Nothing tagged #${tag} ${span}.` : none })]), older);
   }
   // Where an article opens: its space's blog, else its author's (yours: yours).
   const placeBase = it => (it.board?.id ? `#/s/${it.board.id}/blog` : it.by === me ? "#/blog" : `#/blog/u/${it.by}`);
@@ -392,10 +397,11 @@ export async function mount(ctx, el) {
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Articles", href: base(), on: !s }] : []),
+        ...(mine || at.who === "discover" ? [{ label: "Following", href: "#/blog/feed", on: mine && s === "feed", role: "feed" }] : []),
         ...(at.who === "space" && editor ? [{ label: "Review", href: at.href("review"), on: s === "review" }] : []),
         ...(mine || at.who === "discover" || at.who === "space" ? [{ label: "Drafts", href: "#/blog/drafts", on: mine && s === "drafts" }] : []),
       ],
-      { yoursOn: mine && (!s || s.startsWith("t/")), create: { label: "Write", href: at.space ? at.href("write") : "#/blog/write", on: s === "write" || s.startsWith("write/") } },
+      { yoursOn: mine && (!s || s.startsWith("t/")) && s !== "feed", create: { label: "Write", href: at.space ? at.href("write") : "#/blog/write", on: s === "write" || s.startsWith("write/") } },
     );
     view?.stop();
     view = null;
@@ -431,7 +437,6 @@ export async function mount(ctx, el) {
   await draw();
   addEventListener("craftworks:route", () => {
     if (!el.isConnected || ctx.route !== "/blog" || whereCap.key() === drawn) return;
-    months = 1;
     draw();
   });
 }

@@ -5,6 +5,9 @@
 export async function mount(ctx, el) {
   const [bundles, items, kinds, cards, theme] = await Promise.all(["bundles", "items", "kinds", "cards", "theme"].map(n => ctx.require(n)));
   const where = await ctx.require("where");
+  // A FEED as every content app's (owner 10-16: "Bundles should be feed still"): the one feed bar picks and orders
+  // what is listed — New paged by Older, the ranked feeds with their period — yours, Following, Discover, a space's.
+  const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() });
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
@@ -27,11 +30,10 @@ export async function mount(ctx, el) {
   async function list() {
     const sp = at.space && !at.outside ? at.space : null;
     // DISCOVER (and someone else's, or a space from outside): the bundles they show in public — as every app's.
-    const others = at.who === "discover" || at.who === "person" || at.outside;
-    const read = async () =>
-      others
-        ? (await at.read({ kinds: ["bundle"] })).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }))
-        : await bundles.of(sp);
+    const feed = at.sub === "feed";
+    const others = feed || at.who === "discover" || at.who === "person" || at.outside;
+    const place = feed ? { feed: true } : at.who === "discover" ? { discover: true } : at.who === "person" ? { by: at.person } : at.outside ? { outside: at.space } : sp ? { board: sp.id } : { by: await (await ctx.require("space")).me() };
+    const read = async () => bar.reorder(await items.list(place, bar.sort(), "bundle", bar.options())).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }));
     // WHO SEES a new one: in your space just you, or anyone (public — listed in Discover); in a shared space its members,
     // or anyone.
     const who = h("select", { ariaLabel: "Who sees it" }, ...(sp ? [["members", "Its members"], ["public", "Anyone (public)"]] : [["private", "Only you"], ["public", "Anyone (public)"]]).map(([v, t]) => h("option", { value: v, textContent: t })));
@@ -45,12 +47,12 @@ export async function mount(ctx, el) {
       },
     });
     const listEl = h("div");
-    root.replaceChildren(h("div", { className: "row" }, h("h2", { textContent: at.who === "discover" ? "Public bundles" : at.who === "person" ? "Their bundles" : sp ? `${(await ctx.require("space")).shown(sp)} · bundles` : "Your bundles" }), others ? null : who, others ? null : make), listEl, said);
+    root.replaceChildren(h("div", { className: "row" }, h("h2", { textContent: feed ? "Following" : at.who === "discover" ? "Public bundles" : at.who === "person" ? "Their bundles" : sp ? `${(await ctx.require("space")).shown(sp)} · bundles` : "Your bundles" }), others ? null : who, others ? null : make, at.who === "person" ? h("button", { type: "button", className: "cw-btn primary", textContent: "Follow, message…", onclick: async e => (await ctx.require("person")).open(e.currentTarget, at.person) }) : null), bar.el(), listEl, said);
     views.push(
       ctx.view(listEl, {
         read,
-        draw: bs => h("ul", {}, ...bs.map(b => h("li", {}, h("a", { href: at.href(`b/${encodeURIComponent(b.ref)}`), textContent: `${b.title} · ${b.members.length} item${b.members.length === 1 ? "" : "s"}${b.item?.audience === "public" || b.item?.pub ? " · public" : ""}` })))),
-        looks: { empty: others ? "No public bundles yet." : "No bundles yet.", loading: () => theme.loading("Reading the bundles…") },
+        draw: bs => h("div", {}, h("ul", {}, ...bs.map(b => h("li", {}, h("a", { href: at.href(`b/${encodeURIComponent(b.ref)}`), textContent: `${b.title} · ${b.members.length} item${b.members.length === 1 ? "" : "s"}${b.item?.audience === "public" || b.item?.pub ? " · public" : ""}` })))), bar.older("Older bundles", bs.length)),
+        looks: { empty: () => h("div", {}, h("p", { className: "none", textContent: feed ? `Nothing ${bar.span()}: your spaces, the people you follow and your friends make bundles here.` : others ? `No public bundles ${bar.span()}.` : `No bundles ${bar.span()}.` }), bar.older("Older bundles", 0)), loading: () => theme.loading("Reading the bundles…") },
       }),
     );
   }
@@ -101,7 +103,8 @@ export async function mount(ctx, el) {
     views = [];
     said.hidden = true;
     at = await where.of({ kind: "bundle", app: "bundle", yours: "Your bundles" });
-    at.tabs([]);
+    const mine = at.who === "mine";
+    at.tabs(mine || at.who === "discover" ? [{ label: "Following", href: "#/bundle/feed", on: mine && at.sub === "feed", role: "feed" }] : [], { yoursOn: mine && !at.sub });
     root.replaceChildren(theme.loading("Reading the bundles…"));
     const s = at.sub;
     // A BUNDLE's OWN PAGE (`…/p/<ref>`): the one item page — its comments, votes, who sees it, its EDITIONS and copies
