@@ -1,29 +1,10 @@
-// SPACES, an app (ARCHITECTURE §1, "The desktop"): where spaces are made, joined and kept. `#/spaces`: the shared spaces
-// this person is in, Make one, Join with a code. `#/spaces/<id>`: one space — what it ENABLES (its capabilities: the one
-// list its owner and admins keep; every app composes from it — an app shows the space when the space enables what the
-// app needs, and draws only what is on), the apps that show it now, and its people, roles, invites and bans (its
-// Settings). UI only: spaces are `space`'s, joining `conversation`'s, the list `roles`'.
-const WORDS = {
-  text: "Posts and articles",
-  video: "Videos",
-  audio: "Music and podcasts",
-  image: "Pictures",
-  book: "Books and comics",
-  caption: "Captions",
-  note: "Notes",
-  file: "Files",
-  chat: "Chat channels",
-  form: "Forms",
-  wiki: "Wiki pages",
-  vote: "Polls and proposals",
-  bundle: "Bundles (sets of any items)",
-  comments: "Comments",
-  reactions: "Votes and reactions",
-  mail: "Mail to the space",
-  contact: "Its people (Contact)",
-};
+// SPACE, an app (ARCHITECTURE §1, "The desktop"): where spaces are made, joined and KEPT — their settings and config,
+// never their content (owner 10-13: a space's content is each app's). `#/spaces`: the shared spaces this person is in,
+// those asked to join, Make one, Join with a code. `#/spaces/<id>[/<tab>]`: one space's settings (`server-settings`:
+// overview, capabilities and their rules, members and roles, invites, the moderation log) — or, for a space this person
+// is not in, what joining needs. UI only: spaces are `space`'s, joining `conversation`'s, the rules `roles`'.
 export async function mount(ctx, el) {
-  const [space, roles, conversation, theme, settings] = await Promise.all(["space", "roles", "conversation", "theme", "app-settings"].map(n => ctx.require(n)));
+  const [space, roles, conversation, theme] = await Promise.all(["space", "roles", "conversation", "theme"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
@@ -90,55 +71,39 @@ export async function mount(ctx, el) {
     );
   }
 
-  async function one(id) {
-    const sp = (await space.mine()).find(s => s.id === id && s.kind === "server");
-    if (!sp) return root.replaceChildren(h("p", { textContent: "Not one of your spaces." }), h("a", { href: "#/spaces", textContent: "All spaces" }));
-    const r = await roles.of(sp);
-    await r.settled;
-    const me = await space.me();
-    const may = r.can(me, "apps");
-    const on = new Set(r.enabled());
-    const base = new Set(r.base?.() ?? []);
-    const caps = r.capabilities().map(cap => {
-      const box = h("input", { type: "checkbox", checked: on.has(cap), disabled: !may || base.has(cap), title: base.has(cap) ? "Always on in a space" : "" });
-      box.onchange = () =>
-        r.enable(cap, box.checked).then(
-          () => draw(),
-          e => ((box.checked = !box.checked), fail(e)),
-        );
-      const row = h("label", {}, box, h("span", { textContent: `${WORDS[cap] ?? cap}${base.has(cap) ? " — always on" : ""}` }));
-      // ITS RULES (a domain's: who may read, post, edit, comment, vote …) — the capability's, kept here with it.
-      if (!may || !on.has(cap) || !(r.domains?.() ?? []).includes(cap)) return row;
-      const rules = h("details", {}, h("summary", { textContent: "Who may…" }));
-      let drawn = false;
-      rules.ontoggle = async () => {
-        if (!rules.open || drawn) return;
-        drawn = true;
-        rules.append(await settings.capabilityPage(sp, cap, WORDS[cap] ?? cap).catch(e => h("p", { className: "said", textContent: ctx.say(e) })));
-      };
-      return h("div", {}, row, rules);
-    });
-    const apps = (ctx.apps ?? []).filter(a => r.apps().includes(a.route.slice(1)));
+  // ONE SPACE: its SETTINGS AND CONFIG only (owner 10-13: its content is each app's) — for a member the one settings
+  // page (`server-settings`: overview, capabilities and their rules, members and roles, invites, the moderation log);
+  // for a space this person is not in, what joining needs: what it says it is, how many are in it, Join or Request.
+  async function one(id, tab, focus) {
+    const sp = await space.find(id);
+    if (!sp || sp.kind !== "server") return outside(id);
+    const host = h("div", { className: "cw-fill" });
+    root.replaceChildren(h("p", {}, h("a", { href: "#/spaces", textContent: "← Your spaces" })), host);
+    await (await ctx.require("server-settings")).render(host, sp, { tab: tab || "overview", focus: focus || null, left: () => (location.hash = "#/spaces") });
+  }
+  async function outside(id) {
+    const desc = await (await ctx.require("items")).publicSpace(id);
+    if (!desc) return root.replaceChildren(h("p", { textContent: "Not listed: join it with an invite code." }), h("a", { href: "#/spaces", textContent: "← Your spaces" }));
+    const pr = await roles.ofPublic(desc);
+    await pr.settled;
+    const about = pr.config?.("space", "about", "") ?? "";
+    const n = pr.members().length;
+    const join = await (await ctx.require("join-button")).control(desc, { open: `#/spaces/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
     root.replaceChildren(
       h("p", {}, h("a", { href: "#/spaces", textContent: "← Your spaces" })),
-      h("h2", { textContent: space.shown(sp) }),
-      h("h3", { textContent: "What it enables" }),
-      h("p", { textContent: may ? "Every app composes from this list: an app shows the space when what it needs is on." : "Its owner and admins keep this list." }),
-      h("div", { className: "caps" }, ...caps),
-      h("h3", { textContent: "Apps that show it" }),
-      apps.length ? h("ul", {}, ...apps.map(a => h("li", {}, h("a", { href: `#/s/${sp.id}${a.route}`, textContent: `${a.icon ?? ""} ${a.name}` })))) : h("p", { textContent: "None yet: enable what an app needs." }),
-      h("p", { textContent: "An app's own settings (Board's rules, Chat's channels …) are in the app." }),
-      h("h3", { textContent: "People, roles, invites, bans" }),
-      h("p", {}, h("a", { href: `#/s/${sp.id}/settings`, textContent: "Its settings" })),
-      said,
+      h("h2", { textContent: space.shown(desc) }),
+      about ? h("p", { textContent: String(about) }) : null,
+      h("p", { textContent: `${n} member${n === 1 ? "" : "s"} · you are not in it` }),
+      join,
+      h("p", { textContent: "Its content opens in each app (Chat, Board, Wiki …) once you are in, or from outside where the space lets anyone read." }),
     );
   }
 
   const draw = () => {
     said.hidden = true;
-    const id = (ctx.sub ?? "").split("/")[0];
+    const [id, tab, focus] = (ctx.sub ?? "").split("/");
     root.replaceChildren(theme.loading?.("Opening…") ?? "");
-    return (id ? one(id) : list()).catch(fail);
+    return (id ? one(id, tab, focus) : list()).catch(fail);
   };
   addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/spaces" && draw(), { signal: ctx.signal });
   await draw();

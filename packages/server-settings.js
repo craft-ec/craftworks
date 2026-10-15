@@ -66,8 +66,17 @@ export async function start(ctx) {
     ["roles", "Roles"],
     ["invites", "Invites"],
     ["log", "Moderation log"],
-    ["apps", "Space rules"],
   ];
+  // THE ONE PLACE for a space's settings and config (owner 10-13: "space app only show setting and config"; its content
+  // belongs to each app): these tabs, as the Space app's page for the space (`#/spaces/<id>`). CAPABILITIES — what the
+  // space enables (every app composes from it) and each one's rules (who may read, post, edit …) — is here too; "Space
+  // rules" was the same thing a second time.
+  TABS.splice(1, 0, ["capabilities", "Capabilities"]);
+  const WORDS = {
+    text: "Posts and articles", video: "Videos", audio: "Music and podcasts", image: "Pictures", book: "Books and comics", caption: "Captions",
+    note: "Notes", file: "Files", chat: "Chat channels", form: "Forms", wiki: "Wiki pages", vote: "Polls and proposals",
+    bundle: "Bundles (sets of any items)", comments: "Comments", reactions: "Votes and reactions", mail: "Mail to the space", contact: "Its people (Contact)",
+  };
 
   const render = (host, server, opts = {}) => open(server, { ...opts, host });
   async function open(server, { tab = "overview", focus = null, channels, left = () => {}, host = null } = {}) {
@@ -80,7 +89,7 @@ export async function start(ctx) {
     const main = el("main");
     d.append(nav, main);
     (host ?? document.body).append(d);
-    let current = tab;
+    let current = tab === "apps" ? "capabilities" : TABS.some(([k]) => k === tab) ? tab : "overview";
     const said = el("p", { className: "said" });
     const say = m => (said.textContent = m ? String(m) : "");
     // An action button. `confirm`: a lasting act asks again on the button itself ("Confirm: …") before it runs.
@@ -339,11 +348,30 @@ export async function start(ctx) {
       },
       // SPACE RULES: the space's own section (`app-settings`) — its capabilities' rules are in the Space app, each app's
       // settings in the app (ARCHITECTURE §1).
-      apps() {
-        main.append(el("h3", { textContent: "Space rules" }), el("p", { className: "note" }, "What each capability allows — who reads, posts, edits — is in the ", el("a", { href: `#/spaces/${server.id}`, textContent: "Space app" }), "; an app's own settings are in the app."));
-        const slot = el("div");
-        main.append(slot);
-        ctx.require("app-settings").then(a => a.page(server)).then(p => (slot.replaceWith(p), focus && p.querySelector(`#settings-${focus}`)?.scrollIntoView({ block: "start" })), err => say(err?.message ?? err));
+      capabilities() {
+        const can = may("apps");
+        const on = new Set(r.enabled());
+        const base = new Set(r.base?.() ?? []);
+        main.append(el("h3", { textContent: "Capabilities" }), el("p", { className: "note", textContent: can ? "What this space enables: an app shows the space when what it needs is on. Each one's rules — who may read, post, edit — beside it." : "What this space enables (its owner and admins keep this list)." }));
+        for (const cap of r.capabilities()) {
+          const box = el("input", { type: "checkbox", checked: on.has(cap), disabled: !can || base.has(cap), title: base.has(cap) ? "Always on in a space" : "" });
+          box.onchange = () => r.enable(cap, box.checked).then(() => r.refresh().then(draw), e => ((box.checked = !box.checked), say(e?.message ?? e)));
+          const row = el("label", { className: "cap" }, box, el("span", { textContent: `${WORDS[cap] ?? cap}${base.has(cap) ? " — always on" : ""}` }));
+          if (!can || !on.has(cap) || !(r.domains?.() ?? []).includes(cap)) {
+            main.append(row);
+            continue;
+          }
+          const rules = el("details", { open: focus === cap }, el("summary", { textContent: "Who may…" }));
+          let drawn = false;
+          const fill = async () => {
+            if (!rules.open || drawn) return;
+            drawn = true;
+            rules.append(await ctx.require("app-settings").then(a => a.capabilityPage(server, cap, WORDS[cap] ?? cap)).catch(e => el("p", { className: "said", textContent: ctx.say(e) })));
+          };
+          rules.ontoggle = fill;
+          fill();
+          main.append(el("div", {}, row, rules));
+        }
       },
       log() {
         main.append(el("h3", { textContent: "Moderation log" }), el("p", { className: "note", textContent: "Counted acts, newest first." }));

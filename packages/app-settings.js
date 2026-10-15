@@ -211,8 +211,9 @@ export async function start(ctx) {
     };
     return section(sp, `cap:${cap}`, r, me);
   }
-  // A space's: its Settings, "Apps & rules", at that app's section; yours: Settings, "Permissions", at it.
-  const href = (sp, key) => (sp ? `#/s/${sp.id}/settings/apps/${key}` : `#/settings/permissions/${key}`);
+  // WHERE A SECTION IS SET: a space's capability rules in the Space app (its Capabilities, at that capability), an app's
+  // own settings in the app; yours in Settings, "Permissions".
+  const href = (sp, key) => (sp ? (String(key).startsWith("cap:") ? `#/spaces/${sp.id}/capabilities/${String(key).slice(4)}` : `#/s/${sp.id}/${key}/settings`) : `#/settings/permissions/${key}`);
   // YOUR SPACE's SETTINGS (your Home): who may comment and vote on what you post — everything, then each app, an
   // item's own setting over both; inherited and kept in time as a space's are. The same sections, read and written
   // through `roles.personal`.
