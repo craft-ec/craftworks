@@ -147,40 +147,74 @@ Callers: `const st = await t.decided(); if (st.s === "absent") create…; else i
 | **job** (per background task) | `IDLE → RUNNING → IDLE`, `PAUSED`, `STOPPED` | upkeep, renew, sync, usage flush, heartbeat: each declares the states it needs (e.g. upkeep needs session `OPEN` + account group `MEMBER`) and is `PAUSED` otherwise; `HIDDEN` pauses jobs that only serve the screen |
 
 
-### Groups: one machine family for every MLS group (owner 10-13)
+### Members and keys: one member list, keys that follow it (owner 10-16: "fix it")
 
-Every access-controlled thing is an MLS group, and all of them need the same operations — let someone in (a key and a
-welcome), take someone out, catch up on commits, repair a branch, hand over history. So there is ONE implementation and
-each group KIND supplies only its POLICY: who may let in, and who is entitled to ask.
+Every encrypted thing — a space, a PRO/VIP group, a direct or group chat, an audience (a role, chosen people), a circle
+(friends, followers), the account's own devices — is the SAME two parts: a MEMBER LIST, and the KEYS (an MLS group)
+that let exactly those members read. Nothing else.
 
-| Kind | Members | Who lets in | Entitled to ask |
-|---|---|---|---|
-| the account | its devices | its owner | the recovery words (the walk of its channel) |
-| a space | people | its members who may invite | a JOIN: an invite code, the open door, a level; AGAIN: a member by its acts |
-| an audience (a role, chosen people) | people | the space's admins | being in the role or the list |
-| a circle (friends, followers) | people | its owner | being a friend |
-| a conversation (direct, group) | people | its members | the other of a direct one; a group's member, or one its maker told |
-| a level group (PRO, VIP) | people | any member | the card's level |
+**What went wrong (measured, 10-16).** About 50 commits (10-03 → 10-16, releases v374, v377, v387, v398 …) patched
+joining and catching up; none converged.
 
-LETTING SOMEONE IN, one path (built 10-13):
+- **Two member lists, never forced to agree.** The space's RECORD (its acts: admitted / added / removed / banned —
+  `gov` replays them into a roster) and the KEYS (who holds a leaf in the MLS group) were each changed on their own
+  paths. Ivvor's New Space (`f5697a`), live 10-15/16: the keys at epoch 485; of its 7 members besides Ivvor, four hold
+  keys 147–256 epochs old and three never announced any — none reads the space — and the record says the owner was
+  never admitted while the keys hold them. Every patch tried to make the two agree after the fact.
+- **Many mechanisms for one job.** Ask on every load; ask hourly; catch-up asks (turned off 10-06, back on the same
+  day); repair welcomes; re-welcomes; a resend outbox; the stuck bag; the node's re-adds; the page's re-adds. They
+  interact; their interaction ran Ivvor's space to epoch 485.
+- **The same operation in several places.** Putting someone into the keys: 3 (`conversation.welcome`, the delegate's
+  `upkeep.rs:666`, `keys.js:934`). Taking someone out: 2 (`moderation`, `membership`). Who belongs, per kind: an inline
+  condition (`conversation.js:987`), PRO/VIP checked again on the node (`upkeep.rs:290`, `:651`).
+- **Keys only by asking.** A member who cannot read must send the right KIND of request (join vs. again) — chosen by
+  its own reading of the record; when the record and the keys disagree it sends the wrong one and waits for ever
+  (`rules::admission` skipped it: "in the group already").
 
-- **A request carries its asker's own key** (`conversation.askIn`, the one request site): a key package this device
-  makes for it. A JOIN goes in a code's, the open door's or a level's bag; AGAIN (a member by the acts — told it is
-  in, behind, off the owner's branch, its welcome never opened) in the space's member bag (`stuck <id>`), with where
-  its keys are. Being added by someone (an invite, a conversation started) is being TOLD (`tell`): the person's own
-  device then asks in. The card carries no key packages.
-- **One rule decides** (`rules::admission`, Rust; the page runs it through the core, the identity delegate natively):
-  only the request's own key; never a key spent or welcomed already; ONCE per request (a welcome at or after it
-  answers it — only a newer request, a new key, is let in again); a join from someone the group holds, or an again
-  from a member not behind, is not; ONE admitter — every member ranks those who may let in the same way (`turn`, the
-  one ranking: `ordering.turn` and the delegate's re-key turns are it), the k-th only after k × takeover.
-- **One admitter path** (`conversation.admit`, every space kind; the delegate's `upkeep` with no page open) and one
-  welcome (`conversation.welcome`: the asker's old entries out and the new one in, ONE commit), recorded in the group's
-  shared list (`{ welcomed, kp, at }` in its writers list) that every member and node decides over.
+**The design.**
 
-ENFORCED: `tools/group-check.mjs` (the build) fails on a second request site, a second rule call, a second re-add, a key
-package made but for a request, a card's key packages, a retired `welcome-again`, or a turn ranking of its own (Rust
-included). Its positive control: the tree before 10-13 fails it on ten sites.
+1. **ONE MEMBER LIST per kind — the only thing anyone decides.** Each kind says only how its list is written:
+   | Kind | Its member list | Written by |
+   |---|---|---|
+   | a space | its acts' roster (admitted, added, removed, banned) | an admitter's `admitted` act (`rules::admission` decides who may); moderation's acts |
+   | a PRO/VIP group | members whose card shows the level | the card (the honor system: checked, never asked) |
+   | a direct / group chat | its started / added acts | its maker, a member adding |
+   | an audience | the role's or the list's assignments | the space's admins |
+   | a circle | the owner's friends / followers | the owner's edges |
+   | the account | its devices contract | `membership` (the words) |
+   Letting someone in IS writing them into the list. Nothing else is a decision.
+2. **ONE KEY-FOLLOWER — the keys always brought in line with the list.** One implementation, in the shared Rust core
+   (`craftworks_account`-style: the page runs it through the core, the identity delegate natively), run by whichever
+   member's device has the TURN (`rules::admission::turn`, the one ranking). Inputs: the list; the keys' leaves (who, at
+   which key); each member's announced state (its epoch and branch, in the space's writers list). Output: ONE commit —
+   every leaf of someone not listed taken out; every listed member who cannot read (no leaf, a leaf of a dropped
+   device, behind the current epoch or on another branch) re-added with the fresh key package their device posted —
+   their old leaf replaced in the same commit; the welcome recorded. Re-added members are handed the history
+   (`a38358f`'s path). Nothing is added without a list entry; nobody listed is left unable to read.
+3. **ONE MESSAGE from a member's device: "my key".** A device that is on the list and cannot read posts a fresh key
+   package (as a request carries one now) — once per state it is in, never on a timer. That replaces the join-again,
+   stuck, catch-up, repair and resend asks. A person not on the list asks to join with the same message plus where they
+   ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
+4. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
+   admitter by turn) — now deciding list entries; the follower acts on the list, never on requests.
+
+**Deleted** (each with its tests): the three add paths and two remove paths (one follower), the inline per-kind
+member conditions, `askAgainIn` / the stuck bag / catch-up asks / repair welcomes / the resend outbox / welcome-again
+paths, the asker's join-vs-again choice. ENFORCED: `tools/group-check.mjs` — a key add, re-add or remove anywhere but
+the follower fails the build (Rust included); a request built anywhere but the one "my key" site fails it.
+
+**Ivvor's New Space, repaired by the same design.** Its owner's device writes the record to match its real members
+(the 7 the keys hold, each one `member` act — the record becomes the truth once), then the follower re-adds all 7 in
+one commit at the current epoch. Done when the health records show all 7 at the space's epoch — measured, not assumed.
+
+**Order of work** (each: built, the negative control red on the old code, proven on fx with a space broken as Ivvor's
+is, released — the identity build moves: a PIN once):
+- G1 the follower in the core (Rust) with tests over broken states: members behind, never announced, forked, dropped
+  devices, strays; one commit each.
+- G2 the page and the delegate on it; "my key" as the one member message; the deletions; group-check.
+- G3 each kind's list on it (space, PRO/VIP, chats, audience, circle, account).
+- G4 Ivvor's space repaired; health shows all 7 current.
+Then the rest of the duplicate sweep (`.claude/feature-progress.md`, batches 3–5).
 
 ### Apps are installed, not built in
 
