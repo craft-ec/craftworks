@@ -2619,12 +2619,12 @@ Build order (FOUNDATION §7):
 ## ONE OWNER PER FACT — the duplicate sweep (owner 10-16: "continue the fix until completed")
 Audit 10-16 (two sweeps, file:line in the session): most facts HAVE one owner; copies grew beside it. Fix = delete
 each copy onto its existing owner + a build check per owner. Only gap with no owner: writer → person, up to when.
-- [ ] 1 WRITERS: `departed` (space table) = the one record of a writer that stopped being a member's (member removed,
+- [x] 1 WRITERS (26b4fd4, fx v809 proven; NOT RELEASED): `departed` (space table) = the one record of a writer that stopped being a member's (member removed,
       OR device dropped from the account — new), with its heads; `storage` scope `writersOf` = the one map (current
       devices ∪ departed), used by roles (act authors) and storage (feeds); outside readers via `pub-departed`; the
       account's page records its own former devices it finds (repair: owner's Craftworks space, 57 acts by b262cd…).
       + build check: no writer map built outside it. Rust delegate reader (table.rs) on the same record.
-- [ ] 2 LIVE BUGS: delegate write.rs bag_item → table::seal_writers_item (OPEN); tag.js merge order; loader.js:547
+- [x] 2 LIVE BUGS (734a463; NOT RELEASED): delegate write.rs bag_item → table::seal_writers_item (OPEN); tag.js merge order; loader.js:547
       raw follow → the door.
 - [ ] 3 ACCESS COPIES onto Governance/roles: act-permission table copies (roles.js:380, vote-tally.js:268),
       hand role checks, vote ownerAt/adminAt, creator-as-owner checks, who-reads (file by app vs post by domain),
@@ -2633,3 +2633,13 @@ each copy onto its existing owner + a build check per owner. Only gap with no ow
       timeouts → WAIT; Map caches → ctx.cache; months → index.monthOf.
 - [ ] 5 REFS/COUNTS/KEYS/NAMES: refs → items pure + one builder; table names → space.tableOf/table_name;
       counts → items.tally; ranking → RANK; sealing key choice (write.rs vs JS); names → directory.shown.
+
+## MEMBERS AND KEYS (FOUNDATION "Members and keys", d85f8dc) — supersedes task #37 and every join/catch-up patch
+- [ ] G1 the key-follower in the core (Rust), tests over broken states (behind, never announced, forked, dropped
+      devices, strays): one commit each.
+- [ ] G2 page and delegate on it; "my key" the one member message; the old ask/re-welcome/catch-up paths deleted;
+      group-check: key add/readd/remove only in the follower.
+- [ ] G3 every kind's member list on it (space, PRO/VIP, chats, audience, circle, account).
+- [ ] G4 Ivvor's New Space repaired; done when health shows all 7 members at its epoch.
+UNRELEASED on main (live = v398 b9f4951): batch 2 734a463, batch 1 26b4fd4 (fixes the owner's Craftworks space
+missing from Discover once released and opened — its dropped device recorded by the `departed devices` job).
