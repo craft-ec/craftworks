@@ -118,12 +118,12 @@ fn wakeups<H: Host>(h: &H) -> u64 {
 
 /// The contracts, as upkeep holds them.
 pub struct Held {
-    tail: Vec<u8>,
-    bag: [u8; 32],
+    pub(crate) tail: Vec<u8>,
+    pub(crate) bag: [u8; 32],
     sealed: [u8; 32],
-    block: [u8; 32],
+    pub(crate) block: [u8; 32],
     piece: [u8; 32],
-    idlog: [u8; 32],
+    pub(crate) idlog: [u8; 32],
     devices: [u8; 32],
 }
 impl Held {
@@ -138,13 +138,13 @@ impl Held {
             devices: h.get_secret(identity::UPKEEP_DEVICES)?.try_into().ok()?,
         })
     }
-    fn codes(&self) -> Codes<'_> {
+    pub(crate) fn codes(&self) -> Codes<'_> {
         Codes { tail: &self.tail, bag_hash: self.bag, sealed_hash: self.sealed, block_hash: self.block, idlog_hash: self.idlog, devices_hash: self.devices }
     }
 }
 
 /// A space's ROSTER (writer key → DID) from the mandate's group, and the epoch secrets the member holds.
-fn space_of<H: Host>(h: &H, member: &[u8; 32], m: &identity::Mandate) -> Option<(Vec<([u8; 32], String)>, std::collections::BTreeMap<u64, [u8; 32]>)> {
+pub(crate) fn space_of<H: Host>(h: &H, member: &[u8; 32], m: &identity::Mandate) -> Option<(Vec<([u8; 32], String)>, std::collections::BTreeMap<u64, [u8; 32]>)> {
     let g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state).ok()?;
     let roster = g
         .members()

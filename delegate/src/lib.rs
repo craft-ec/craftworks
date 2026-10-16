@@ -14,7 +14,7 @@ pub mod keeper_round;
 #[cfg(test)]
 mod table_tests;
 #[cfg(test)]
-mod tests;
+mod follow_tests;
 #[cfg(test)]
 mod testhost;
 #[cfg(test)]

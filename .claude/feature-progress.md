@@ -2635,11 +2635,19 @@ each copy onto its existing owner + a build check per owner. Only gap with no ow
       counts → items.tally; ranking → RANK; sealing key choice (write.rs vs JS); names → directory.shown.
 
 ## MEMBERS AND KEYS (FOUNDATION "Members and keys", d85f8dc) — supersedes task #37 and every join/catch-up patch
-- [ ] G1 the key-follower in the core (Rust), tests over broken states (behind, never announced, forked, dropped
-      devices, strays): one commit each.
-- [ ] G2 page and delegate on it; "my key" the one member message; the old ask/re-welcome/catch-up paths deleted;
-      group-check: key add/readd/remove only in the follower.
-- [ ] G3 every kind's member list on it (space, PRO/VIP, chats, audience, circle, account).
-- [ ] G4 Ivvor's New Space repaired; done when health shows all 7 members at its epoch.
+- [x] G1 `rules::members::follow` + `Mls::follow` (several in/out, one commit) + core binding — 5b4d3ec.
+- [x] Design: lifecycle mapping 07257c3; the 11 flows walked, 3 gaps closed 4dc0160; ONE executor = the node (5dacf9b
+      + in place: the node reads the list from the acts, the page asks it to run now).
+- [ ] G2a ONE act stamp: `Gov::stamp`/`Gov::missing` (gov, tested) bound on core `Governance`; roles uses it; the JS
+      `ordering` dag deleted. Verify on fx (acts written/read), commit.
+- [ ] G2b NODE follower round (upkeep.rs, per space): Reading of acts (as rekey_round) → gov roster/codes/bans/admitters
+      → bags + writers → `admission::decide` → `admitted` acts written (write::rows + Gov::stamp) → `members::follow`
+      → key checks (KeyLog/Card) → ONE commit (Log/Commit/Next) → welcomes → answered. Runs page open or not.
+      `Request::Follow` (run now). Mandate keeps only space/name/kind/owner/nonce/channel/state. Tests: the 11 flows.
+- [ ] G2c PAGE: no admit/welcome/resend/stuck/catch-up/repair paths (conversation, keys add/readd/remove, upkeep.js,
+      membership remove, moderation); "my key" on the group conditions; asks the node to run now; group-check.
+      fx: the 11 flows, one with every page closed.
+- [ ] G3 the other kinds (chat, PRO/VIP card level, audience, circle).
+- [ ] G4 release (one PIN); Ivvor's 7 written to the record; DONE only when live health shows all 7 current.
 UNRELEASED on main (live = v398 b9f4951): batch 2 734a463, batch 1 26b4fd4 (fixes the owner's Craftworks space
 missing from Discover once released and opened — its dropped device recorded by the `departed devices` job).
