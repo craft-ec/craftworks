@@ -97,6 +97,7 @@ export async function start(ctx) {
         "enter-not-listed": { from: "*" },
         // A NEW WRITER of one of its tables found (`storage`): read now, or waiting to be listed in its writers bag.
         "writers-found": { from: "*" },
+        "writers-waiting": { from: "*" },
         // Its epoch and group info NOT announced (what a device with no key enters from): why.
         "announce-failed": { from: "*" },
         // An entry SKIPPED by the list check (`mls::entry_ok`: every reader skips it), and a catch-up DEFERRED until
@@ -125,6 +126,8 @@ export async function start(ctx) {
         "follow-commit-refused": { from: "*" },
         "follow-next-refused": { from: "*" },
         "follow-no-commit": { from: "*" },
+        // Steps of the node lost to its limit before a page read them: how many.
+        "follow-dropped": { from: "*" },
       },
     },
     // A REQUEST TO JOIN (owner 10-17: "requests are not hanging"), keyed by the space: asked; then CANCELLED by the asker,

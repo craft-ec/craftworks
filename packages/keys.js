@@ -824,10 +824,17 @@ export async function start(ctx) {
     // The shared check (`ready`), and the epoch log it follows; any change of the group's state ends the shared one.
     let shared = null;
     let followed = null;
+    const credsOf = x => (x?.members ?? []).map(m => m.cred ?? "").join();
     const status = s => {
       const changed = !st || st.epoch !== s.epoch || st.removed !== s.removed || st.members?.length !== s.members?.length;
       if (changed) shared = null;
-      return (st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed });
+      const moved = !!st && credsOf(st) !== credsOf(s);
+      st = { epoch: s.epoch, me: s.me, members: s.members, removed: s.removed };
+      // ITS MEMBERS CHANGED (someone entered, someone taken out): said AFTER the status above is the group's — every
+      // table of the space finds its new writers by it (fx 10-17: the identity's signal came inside the save, before
+      // this; the tables read the old members and a new member's writing stayed unread for minutes).
+      if (moved) setTimeout(() => dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } })));
+      return st;
     };
     // SAVE: this epoch's secret on this device, the state for the account's devices, the epoch's log.
     async function save(made, prev = null, why = null) {

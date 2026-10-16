@@ -1275,7 +1275,9 @@ export async function start(ctx) {
         for (const o of now) seen.add(o), ctx.background("storage: gather", gather(o));
         // A NEW WRITER of a space's table: read now, or not listed in its writers bag yet (read when it is) — said, so a
         // member's write that does not show is seen where it stopped (fx 10-17: one stopped here for minutes, unrecorded).
-        if (sp?.id && sp.kind !== "account") (await ctx.require("lifecycle")).transition("group", sp.id, "writers-found", { table: name.slice(-12), fresh: fresh.length, read: now.length, waiting: fresh.length - now.length });
+        // (Read: routine, journaled. One WAITING — not in the writers bag yet — REPORTED: what a user would otherwise only
+        // see as a member's writing that never shows.)
+        if (sp?.id && sp.kind !== "account") (await ctx.require("lifecycle")).transition("group", sp.id, fresh.length > now.length ? "writers-waiting" : "writers-found", { table: name.slice(-12), fresh: fresh.length, read: now.length, waiting: fresh.length - now.length, why: fresh.length > now.length ? `${fresh.length - now.length} new writer(s) not in the writers bag yet` : undefined });
       });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key

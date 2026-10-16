@@ -2722,9 +2722,11 @@ windows, post_key/once/fresh/answered, follower adds, admission request decision
 - [ ] D6 release (owner's say: identity build moves — a PIN once; old builds retired); Ivvor's space: its 7 written to
       the acts (owner's page), each device enters by itself; done when health shows 7/7.
 Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
-- OPEN (fx v829, 10-17): A's open page did not read B's NEW acts feed for >4 min (a fresh load did at once); not
-  reproduced on v830 (14 s). Cause UNKNOWN — settled by the new `writers-found` journal steps (storage: a new writer
-  found, read or waiting for the writers bag) if it recurs; absent steps mean the `craftworks:keys` trigger never came.
+- FIXED (fx v829/v832 → v833, 10-17): an open page did not read a newcomer's acts feed for minutes. Measured by the
+  new journal steps: after `applied 0>1`, no `writers-found` until an unrelated group change 5 min later — the
+  identity's `craftworks:keys` fired inside the save, before the group's status was reset, so the tables re-read the
+  OLD members. Now the group signals its own member change after its status (`keys` `status`). v833 ×2: writers-found
+  within 1 s of applied; listed 12 s / 31 s; 6/6 both. Telemetry: `writers-waiting` and `follow-dropped` REPORTED.
 - Ivvor 10-16 19:32 (live v398): "can't get 2 other IDs accepted; can't tell how to make a new space public; manual
   invite codes don't look like working". IDs/codes: the ask/answer layer this redesign deletes (self-entry). Public:
   the Space app's space-level settings had NO Read — public reading was per app only. FIXED (uncommitted): space

@@ -119,7 +119,12 @@ export async function start(ctx) {
     // of the node's this journal holds, by the node's SEQUENCE (I5: never its clock).
     const life = await ctx.require("lifecycle");
     const since = Math.max(0, ...(await life.journal()).filter(e => e.by === "node").map(e => Number(e.seq) || 0));
-    for (const d of (st.decided ?? []).filter(d => (Number(d.seq) || 0) > since))
+    const fresh = (st.decided ?? []).filter(d => (Number(d.seq) || 0) > since);
+    // LOST to the node's limit (its newest 128 kept while no page reads them): how many, REPORTED — a gap in what the
+    // node did is said, never silently missing.
+    const first = Math.min(...fresh.map(d => Number(d.seq) || 0));
+    if (since > 0 && fresh.length && first > since + 1) life.transition("group", "account", "follow-dropped", { by: "node", why: `${first - since - 1} of the node's steps dropped before a page read them`, n: first - since - 1 });
+    for (const d of fresh)
       life.transition("group", d.space, `follow-${d.step}`, { by: "node", why: d.why, at: d.at, seq: d.seq, ...(d.did ? { to: d.did.replace(/^did:craftec:/, "").slice(0, 6) } : {}) });
   }
   let lastMandate = null;
