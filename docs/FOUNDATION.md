@@ -199,9 +199,12 @@ joining and catching up; none converged.
    behind (the churn that ran Ivvor's space to epoch 485). Posted once per such condition, never on a timer. It replaces
    the join-again, stuck, catch-up and repair asks. A person not on the list asks to join with the same message plus where
    they ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
-4. **NO MEMBER MUST STAY ONLINE** (the two rules): the node writes list entries and runs the follower with every page
-   closed — the ONE act writer (the dated, DAG-stamped record entry the page writes) and the ONE follower, both in Rust,
-   shared by the page's core and the identity delegate. DELIVERY is the send door's (the one `index.send`: what it could
+4. **NO MEMBER MUST STAY ONLINE, and ONE IMPLEMENTATION OF THE WHOLE STEP** (owner 10-16: "the design is still
+   duplicate"): the whole step — read the list, the key entries and the answers; decide (`members::follow`); build the
+   commit; build each welcome; write a list entry (the dated, DAG-stamped record entry) — is ONE Rust implementation,
+   run by the page's core (wasm) and the identity delegate (natively) alike. The page's JavaScript and the node only
+   carry bytes to and from the network; neither gathers inputs, decides or builds on its own. So the node admits and
+   follows with every page closed, and the two can never disagree. DELIVERY is the send door's (the one `index.send`: what it could
    not deliver it keeps and sends again) — never a membership mechanism.
 5. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
    admitter by turn) — now deciding list entries; the follower acts on the list, never on requests.
