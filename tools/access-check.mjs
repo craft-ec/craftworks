@@ -6,7 +6,8 @@
 //   - whether a domain reads in public: `r.readsAnyone(domain)` — no `… "read") === "anyone"` beside it;
 //   - the default where nothing is set: `r.fallback(path, action)`;
 //   - a policy's vocabulary: `roles.actions` / `roles.validWho` (`gov::ACTIONS`, `gov::valid_who`);
-//   - who made a space: `space.madeBy(sp, did)` — no `governance?.owner === …` beside it.
+//   - who made a space: `space.madeBy(sp, did)` — no `governance?.owner === …` beside it;
+//   - who may take whom out: `r.mayTakeOut(by, did)`; an item's reference: `items.refOf(by, id)` (batch 5).
 // Fails the build, naming each site.
 //
 //   node tools/access-check.mjs [repo dir]
@@ -24,6 +25,10 @@ const RULES = [
   [/governance\??\.owner\s*===/g, "space.js", "who made a space, by hand: `space.madeBy(sp, did)`"],
   [/\{\s*role:\s*"roles",\s*assign:\s*"roles"/g, null, "an act → permission table of its own: `gov::act_need` (`r.needOf`)"],
   [/\["read",\s*"post",\s*"comment",\s*"vote"/g, null, "a policy vocabulary of its own: `roles.actions` (`gov::ACTIONS`)"],
+  // (Batch 5.) Who may take whom out: the replay's own rule (`r.mayTakeOut`) — no rank table beside it.
+  [/\{\s*owner:\s*3,\s*admin:\s*2,\s*member:\s*1\s*\}/g, null, "a role rank table of its own: `r.mayTakeOut(by, did)` (`Gov::may_take_out`)"],
+  // An item's reference: `items.refOf` — never built by hand.
+  [/`\$\{[\w.]*by\}\/\$\{[\w.]*id\}`/g, "items.js", "an item's reference built by hand: `items.refOf(by, id)`"],
 ];
 const bad = [];
 for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js") && !f.startsWith("craftworks_core"))) {

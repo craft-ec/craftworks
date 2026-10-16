@@ -303,6 +303,13 @@ impl Gov {
         }
     }
     /// Standing, for removing: the base role's — a member holding a composed `remove` above plain members.
+    /// MAY `by` TAKE `did` OUT (a `remove` or `ban`): the replay's own rule — may remove, and standing above them (a
+    /// page's Remove button asks this, never a rank table of its own).
+    pub fn may_take_out(&self, by: &str, did: &str) -> bool {
+        let r = self.role(by, true);
+        let t = self.role(did, true);
+        by != did && self.may(by, r.as_deref(), "remove") && self.standing(by, r.as_deref()) > self.standing(did, t.as_deref().or(Some("member")))
+    }
     fn standing(&self, did: &str, role: Option<&str>) -> u8 {
         rank(role) * 2 + u8::from(rank(role) == 1 && self.may(did, role, "remove"))
     }

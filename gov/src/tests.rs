@@ -517,3 +517,13 @@ fn one_permission_table_and_roles_over_time() {
     let t = gov(&[act("t", "no", 5, json!({"act":"transfer","did":M})), act("m", "no", 1, json!({"act":"added","did":M}))]);
     assert_eq!((t.role_at(M, 2.0), t.role_at(M, 5.0), t.role_at(O, 5.0)), (Some("member"), Some("owner"), Some("admin")));
 }
+
+#[test]
+fn who_may_take_whom_out_is_the_replays_own_rule() {
+    let g = gov(&[act("g", "no", 1, json!({"act":"grant","did":A,"role":"admin"})), act("m", "no", 2, json!({"act":"added","did":M}))]);
+    assert!(g.may_take_out(O, A) && g.may_take_out(A, M), "the owner an admin, an admin a member");
+    assert!(!g.may_take_out(A, O) && !g.may_take_out(M, A) && !g.may_take_out(A, A), "never upward, never oneself");
+    // The replay judges the act by the same rule: an admin's removal of the owner counts for nothing.
+    let r = gov(&[act("g", "no", 1, json!({"act":"grant","did":A,"role":"admin"})), act("x", "na", 2, json!({"act":"remove","did":O}))]);
+    assert_eq!(r.role(O, true).as_deref(), Some("owner"));
+}

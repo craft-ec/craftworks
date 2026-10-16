@@ -29,7 +29,6 @@ export async function start(ctx) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  const RANK = { owner: 3, admin: 2, member: 1 };
 
   async function show(sp, { manage = false, who = null } = {}) {
     const [r, mod, me] = await Promise.all([roles.of.strict(sp), moderation.of(sp), space.account.strict()]);
@@ -93,7 +92,7 @@ export async function start(ctx) {
               if (mayGive) chips.push(tick(ro.name, held.has(ro.id), on => r.act({ act: "assign", did: m.did, role: ro.id, on })));
               else if (held.has(ro.id)) chips.push(h("span", { className: "chip", textContent: ro.name }));
             }
-          const remove = m.did !== me.id && may("remove") && RANK[mine()] > RANK[role] ? act("Remove", () => mod.remove(m.did), `remove ${directory.shown(m.did)}`) : null;
+          const remove = r.mayTakeOut(me.id, m.did) ? act("Remove", () => mod.remove(m.did), `remove ${directory.shown(m.did)}`) : null;
           return h(
             "div",
             { className: "m", title: m.did },

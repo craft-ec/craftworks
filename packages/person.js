@@ -60,7 +60,6 @@ export async function start(ctx) {
     const shared = sp && (sp.parent ?? sp).kind === "server" ? sp.parent ?? sp : null;
     const [people, r, handle] = await Promise.all([edge.people(), shared ? roles.of.strict(shared) : null, directory.handle.strict(did)]);
     const mod = shared ? await moderation.of(shared) : null;
-    const RANK = { owner: 3, admin: 2, member: 1 };
     // A button that does something, then redraws; `confirm`: a lasting act asks again on the button itself.
     const act = (label, run, cls = "", confirm = null) => {
       let armed = false;
@@ -145,7 +144,7 @@ export async function start(ctx) {
           sel.onchange = () => r.grant(did, sel.value).then(() => r.refresh()).then(draw, e => (said.textContent = ctx.say(e)));
           rows.push(sel);
         } else if (theirs) rows.push(el("span", { textContent: `role: ${theirs}` }));
-        if (r.can(me.id, "remove") && RANK[mine] > RANK[theirs ?? "member"]) {
+        if (r.mayTakeOut(me.id, did)) {
           if (theirs) rows.push(act("Remove", () => mod.remove(did), "danger", "remove"));
           rows.push(r.banned(did) ? act("Banned · unban", () => mod.unban(did), "on") : act("Ban", () => mod.ban(did), "danger", "ban"));
         }

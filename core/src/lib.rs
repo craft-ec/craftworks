@@ -3963,6 +3963,10 @@ mod js {
         pub fn act_need(&self, act: &str) -> Option<String> {
             craftworks_gov::act_need(&serde_json::from_str(act).unwrap_or_default()).map(str::to_string)
         }
+        /// MAY `by` TAKE `did` OUT (`Gov::may_take_out`: the replay's remove rule).
+        pub fn may_take_out(&self, by: &str, did: &str) -> bool {
+            self.0.may_take_out(by, did)
+        }
         /// The BASE ROLE `did` held at `at` (`Gov::role_at`): "owner", "admin", "member", or `undefined`.
         pub fn role_at(&self, did: &str, at: f64) -> Option<String> {
             self.0.role_at(did, at).map(str::to_string)

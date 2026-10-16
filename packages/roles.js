@@ -320,6 +320,8 @@ export async function start(ctx) {
       // The permission an act needs (`gov::act_need`); an ADMIN — the owner or an admin, now or WHEN (`Gov::role_at`).
       needOf: a => gv.act_need(JSON.stringify(a)) ?? null,
       // (`at`: as it was then — `Gov::role_at`.)
+      // MAY `by` TAKE `did` OUT (`Gov::may_take_out`: the replay's own remove rule — no rank table beside it).
+      mayTakeOut: (by, did) => gv.may_take_out(by, did),
       isAdmin: (did, at = Infinity) => ["owner", "admin"].includes(at === Infinity ? role(did) : gv.role_at(did, at)),
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),

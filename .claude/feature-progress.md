@@ -2631,7 +2631,7 @@ each copy onto its existing owner + a build check per owner. Only gap with no ow
       bans/lapsed replays, credential byte parsing → identity::read_credential.
 - [x] 4 MECHANICS onto their owners (node.get one door for immutable GETs, read-check budget moved with it; node.within; index.monthOf/monthBefore; keys.current on fault.attempt; files/conversation/book-studio memos on ctx.cache — a failed leaf read was kept for the page's life; storage.signed's fork protocol kept as its own, not a plain retry): node reads (blocks/files/loader) → node door; retries → fault.attempt;
       timeouts → WAIT; Map caches → ctx.cache; months → index.monthOf.
-- [ ] 5 REFS/COUNTS/KEYS/NAMES: refs → items pure + one builder; table names → space.tableOf/table_name;
+- [x] 5 REFS/COUNTS/KEYS/NAMES (r.mayTakeOut = Gov::may_take_out for two rank tables; items.refOf for 10 hand-built refs; directory.shown for chat names; counts already items.tally; the sealing key already one derivation in identity — page via the delegate, node direct: nothing to move; access-check extended): refs → items pure + one builder; table names → space.tableOf/table_name;
       counts → items.tally; ranking → RANK; sealing key choice (write.rs vs JS); names → directory.shown.
 
 ## MEMBERS AND KEYS (FOUNDATION "Members and keys", d85f8dc) — supersedes task #37 and every join/catch-up patch

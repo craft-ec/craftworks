@@ -106,9 +106,9 @@ export async function start(ctx) {
     const me = await space.account.strict();
     const card = await directory.card.strict(did);
     if (!card) throw new Error("that person has no card yet");
-    const sp = await space.create("direct", card.handle ?? short(did), { with: did });
+    const sp = await space.create("direct", directory.shown(did, card.handle), { with: did });
     await listIn(sp, did);
-    await tell(sp, did, (await directory.card.strict(me.id))?.handle ?? short(me.id));
+    await tell(sp, did, directory.shown(me.id, (await directory.card.strict(me.id))?.handle));
     return sp;
   }
   // INVITE a person into a space this account is in: on its list, then told.

@@ -95,6 +95,8 @@ export async function start(ctx) {
   let listsOpen = null;
   function lists() {
     return (listsOpen ??= (async () => {
+      // An item's reference: the one builder (`items.refOf`).
+      const { refOf } = await ctx.require("items");
       const [space, edge] = await Promise.all(["space", "edge"].map(n => ctx.require(n)));
       const people = await edge.people();
       const me = await space.me.strict();
@@ -125,21 +127,21 @@ export async function start(ctx) {
         // POST is its author + its key (`<did>/<key>`: only its author writes it, the same wherever it is read); a
         // person, a space by its id. YOURS (private, `edge`: hide · block) and the LISTS applied (yours, chosen).
         flagged: ({ by = null, id = null, ref = null, space: sid = null } = {}) => {
-          const post = by && id ? `${by}/${id}` : null;
+          const post = by && id ? refOf(by, id) : null;
           if (by && (people.is("hide", by) || people.is("block", by))) return true;
           if ((post && people.is("hide", post)) || (ref && people.is("hide", ref)) || (sid && people.is("hide", sid))) return true;
           const on = entries();
           return (by && on.has(`person:${by}`)) || (post && on.has(`post:${post}`)) || (ref && on.has(`post:${ref}`)) || (sid && on.has(`space:${sid}`));
         },
         // HIDE, for this person only (an `edge` from them: a post — its author + key —, a person, a space).
-        hide: ({ by = null, id = null, person = null, space: sid = null }, on = true) => people.set("hide", person ?? sid ?? `${by}/${id}`, on),
+        hide: ({ by = null, id = null, person = null, space: sid = null }, on = true) => people.set("hide", person ?? sid ?? refOf(by, id), on),
         flag: (kind, ref, reason = "") => mineT.put(`${kind}:${ref}`, JSON.stringify({ reason: String(reason).slice(0, 200), at: Date.now() })),
         unflag: (kind, ref) => mineT.remove(`${kind}:${ref}`),
         // THE SIX, one way everywhere (the item bar, a person's card, a space's card): HIDE (private, everywhere) and
         // FLAG (public: your list, Discover) — each of a POST (`{ by, id }`), an AUTHOR (`{ person }`) or a SPACE
         // (`{ space }`). `isHidden` / `isFlagged` say which are on; `setHidden` / `setFlagged` turn one on or off.
-        isHidden: ({ by = null, id = null, person = null, space: sid = null }) => people.is("hide", person ?? sid ?? `${by}/${id}`),
-        setHidden: ({ by = null, id = null, person = null, space: sid = null }, on) => people.set("hide", person ?? sid ?? `${by}/${id}`, on),
+        isHidden: ({ by = null, id = null, person = null, space: sid = null }) => people.is("hide", person ?? sid ?? refOf(by, id)),
+        setHidden: ({ by = null, id = null, person = null, space: sid = null }, on) => people.set("hide", person ?? sid ?? refOf(by, id), on),
         // What this person HID (private): [{ kind: "post"|"person"|"space", ref }] — to show again.
         hiddenList: () =>
           people.list("hide").map(k => ({ kind: k.startsWith("did:") && !k.includes("/") ? "person" : /^[0-9a-f]{64}$/.test(k) ? "space" : "post", ref: k })),
