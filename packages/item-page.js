@@ -148,9 +148,11 @@ export async function start(ctx) {
     }
     // ITS EDITIONS (TOKEN §1c): bought and sold here; the author makes them (`editions`, null when none to show).
     // In an APP's FRAME: a SYSTEM SHEET the host draws (money moves there — never in an app's frame; FOUNDATION §3).
+    // (Shown where it has editions, and to its author — who makes them there — as the page's own section is.)
+    const nEds = Array.isArray(it.meta?.editions) ? it.meta.editions.length : 0;
     const eds = ctx.system
-      ? Array.isArray(it.meta?.editions) && it.meta.editions.length
-        ? h("p", {}, h("button", { type: "button", className: "cw-btn", textContent: `🪙 Editions (${it.meta.editions.length})`, onclick: () => ctx.system("editions", { ref: it.ref, outside }).then(redraw, e => ctx.failed("editions", e)) }))
+      ? nEds || it.by === (await (await ctx.require("space")).me())
+        ? h("p", {}, h("button", { type: "button", className: "cw-btn", textContent: nEds ? `🪙 Editions (${nEds})` : "🪙 Editions", onclick: () => ctx.system("editions", { ref: it.ref, outside }).then(redraw, e => ctx.failed("editions", e)) }))
         : null
       : await (await ctx.require("editions")).section(it, { changed: redraw }).catch(e => (ctx.log("editions", { what: e.message ?? String(e) }), null));
     if (eds) page.append(eds);

@@ -174,7 +174,9 @@ export async function start(ctx) {
     say("scrub strip");
     const sp = await ctx.optional("video-studio: strip", strip(M, track, duration), () => null);
     // THE ORIGINAL, kept: what the background makes the rest from (and a newer codec later).
-    const source = await files.put(file, { space, public: pub, app: "video", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
+    // (Never inline, however small: renditions are made from it and its key is the video's id — fx 10-16, a short clip
+    // kept inline had no key, and was never encoded.)
+    const source = await files.put(file, { space, public: pub, app: "video", inline: false, onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) });
     originals.set(source.id ?? source.root, file);
     // THE VIDEO's ID, fixed now (a re-key later does not change it): from the original's key — public: its content
     // alone (the same video anywhere has one id); otherwise salted by its space (only its readers can name it).
@@ -221,7 +223,7 @@ export async function start(ctx) {
     const tags = await ctx.optional("video-studio: input.getMetadataTags", input.getMetadataTags(), () => ({}));
     const img = tags.images?.find(i => i.kind === "coverFront") ?? tags.images?.[0];
     const cover = img ? await ctx.optional("video-studio: shrink", shrink(new Blob([img.data], { type: img.mimeType }), 320), () => null) : null;
-    const source = keepOriginal ? await files.put(file, { space, public: pub, app: "audio", onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) }) : null;
+    const source = keepOriginal ? await files.put(file, { space, public: pub, app: "audio", inline: false, onProgress: e => say("keeping the original", e.done / Math.max(1, e.size)) }) : null;
     // Its ID by the files' rule (public: the content alone; private: salted by its space) — kept or not.
     const vid = await videoId(source?.key ?? (await files.keyOf(file, { space, public: pub })));
     const made = await makeRendition(M, file, { codec: "aac", height: 0, bitrate: 160_000, audio: { codec: "aac", bitrate: 160_000 } }, { space, pub, name: file.name, say, width: 0 });

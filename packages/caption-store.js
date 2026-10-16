@@ -82,7 +82,9 @@ export async function start(ctx) {
     const isMain = !!file && !!main && idOf(file) === idOf(main);
     const m = await ctx.optional("caption-store: manifestOf", manifestOf(file), () => null);
     const vid = m?.vid ?? (isMain ? item?.meta?.vid ?? null : null);
-    const withIt = (await items.attached(itemRef, KIND, { outside })).map(shape).filter(t => !!vid && t.for === vid);
+    // (Attached to the item: made for its video id — or, a video kept as it was uploaded (no manifest, no id: fx 10-16, a
+    // plain mp4), made for no id.)
+    const withIt = (await items.attached(itemRef, KIND, { outside })).map(shape).filter(t => (vid ? t.for === vid : !t.for));
     let elsewhere = [];
     if (!outside && vid) {
       const roles = await ctx.require("roles");

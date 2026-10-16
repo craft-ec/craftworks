@@ -322,7 +322,7 @@ export async function start(ctx) {
       "allows", "asked", "askedCodes", "boardOf", "boards", "following", "history", "keepers", "mayOpen", "nsfwShown", "outsideOf", "personalPolicy",
       "pins", "labels", "people", "prefs", "progress", "publicIn", "publicSpace", "publicSpaces", "range", "reaches", "visible", "waiting", "page", "pages",
       "has", "is", "at", "about", "refs", "lists", "roles", "domains", "acts", "mayEdit", "needsReview", "drafts", "thread", "probe", "editorAt",
-      "opened", "reading", "showing", "settings", "policyIn", "config"]);
+      "opened", "reading", "played", "showing", "settings", "policyIn", "config"]);
     const WRITES = { test: name => !READS.has(name) };
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";

@@ -22,6 +22,31 @@
 //   await usage.statement("2026-10")                         // the month so far, each day's share of the
 //                                                            // contributions split by that day's use: { month, amount,
 //                                                            // days, creators, carriers, unclaimed, network } ({did: n})
+// WATCH TIME: while it plays, the time it moved (a seek or a stall is not watching: at most 2 s a tick, at its speed)
+// — told to `count(ref, info, seconds)`. ONE watcher: the page's (`watch`), and an app frame's (`frame`), where the player
+// is.
+function watcher(count) {
+  const watched = new WeakSet();
+  return function watch(media, ref, info) {
+    if (!media || watched.has(media)) return;
+    watched.add(media);
+    let last = null;
+    media.addEventListener("timeupdate", () => {
+      const t = media.currentTime;
+      if (last != null && !media.paused && !media.seeking) {
+        const d = t - last;
+        if (d > 0 && d < 2 * Math.max(1, media.playbackRate)) count(ref, info, d / Math.max(1, media.playbackRate));
+      }
+      last = t;
+    });
+    media.addEventListener("seeking", () => (last = null));
+  };
+}
+// IN AN APP's FRAME: the watcher there, its seconds told to the host (`played`).
+export function frame(cap, ctx) {
+  return { watch: watcher((ref, info, s) => void ctx.background("usage: played", cap.played(ref, { kind: info?.kind ?? null, title: info?.title ?? null }, s))) };
+}
+
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
@@ -72,21 +97,17 @@ export async function start(ctx) {
   }
   const track = (ref, info, roots) =>
     roots.filter(Boolean).forEach(r => (typeof r === "string" ? owners.set(r, { ref, ...info }) : r.root && owners.set(r.root, { ref, ...info, file: r })));
-  // WATCH TIME: while it plays, the time it moved (a seek or a stall is not watching: at most 2 s a tick, at its speed).
-  const watched = new WeakSet();
-  function watch(media, ref, info) {
-    if (!media || watched.has(media)) return;
-    watched.add(media);
-    let last = null;
-    media.addEventListener("timeupdate", () => {
-      const t = media.currentTime;
-      if (last != null && !media.paused && !media.seeking) {
-        const d = t - last;
-        if (d > 0 && d < 2 * Math.max(1, media.playbackRate)) add(ref, info, { s: d / Math.max(1, media.playbackRate) });
-      }
-      last = t;
-    });
-    media.addEventListener("seeking", () => (last = null));
+  const watch = watcher((ref, info, s) => add(ref, info, { s }));
+  // WATCH TIME from an app's FRAME (its player is there: `frame`'s watcher): counted as it is here, never more than the
+  // time that passed since that item's last report — an app cannot add time that was not.
+  const lastPlayed = new Map();
+  function played(ref, info, s) {
+    const now = Date.now();
+    const was = lastPlayed.get(ref) ?? now - 2000;
+    lastPlayed.set(ref, now);
+    const real = Math.max(0, (now - was) / 1000);
+    const n = Math.min(Number(s) || 0, real, 2);
+    if (n > 0) add(String(ref), { kind: info?.kind ?? null, title: info?.title ?? null }, { s: n });
   }
   const opened = (ref, info) => add(ref, info, { n: 1 });
   // TIME ON THE PAGE: each second its page is shown, the window focused and the person active (an input in the last
@@ -484,5 +505,5 @@ export async function start(ctx) {
     if (by && by === (await (await ctx.require("space")).account())?.id) return true;
     return reaches((await level()).id, lv);
   }
-  return { track, trackItem, watch, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions: ctx.total("usage.contributions", () => [], contributions), level, levelFrom, levelPlan: ctx.total("usage.levelPlan", () => [], levelPlan), mayOpen, reaches, LEVELS, publishStatements, ledger, earnings };
+  return { track, trackItem, watch, played, opened, reading, month, flush, monthOf, dayOf, statement, contribute, contributions: ctx.total("usage.contributions", () => [], contributions), level, levelFrom, levelPlan: ctx.total("usage.levelPlan", () => [], levelPlan), mayOpen, reaches, LEVELS, publishStatements, ledger, earnings };
 }
