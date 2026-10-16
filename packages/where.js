@@ -95,7 +95,10 @@ export async function start(ctx) {
     // THE APP's OWN SETTINGS in a space (ARCHITECTURE §1: an app defines its settings and shows them itself) — for who
     // may manage the space's apps, where the app has any (`app-settings`: Board's rules, Blog's approval, Chat's channels).
     const settingsRead = sp && !sp.outside && me
-      ? ctx.optional("where: Promise.all", Promise.all([ctx.require("app-settings"), roles.of.strict(sp)]).then(async ([st, r]) => (await st.has(app)) === true && (await r.can(me, "apps")) === true), () => false)
+      ? ctx.optional("where: app settings", (async () => {
+          const st = await ctx.require("app-settings");
+          return (await st.has(app)) === true && (await (await roles.of.strict(sp)).can(me, "apps")) === true;
+        })(), () => false)
       : Promise.resolve(false);
     let mayConfigure = false;
     // Each entry's ROLE, where the side panel puts it (owner 10-15, YouTube's: Home · Subscriptions, then You): `discover`,

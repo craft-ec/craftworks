@@ -51,19 +51,99 @@ const srcOf = name => {
   }
 };
 const reqs = src => [...src.matchAll(/require\(\s*"([a-z0-9-]+)"\s*\)/g)].map(m => m[1]).concat([...src.matchAll(/\[([^\[\]]*)\]\.map\(\w+ => (?:ctx|app)\.require\(\w+\)\)/g)].flatMap(m => [...m[1].matchAll(/"([a-z0-9-]+)"/g)].map(x => x[1])));
+// WHICH VARIABLE holds which host capability in a package: `const [a, b] = await Promise.all(["x", "y"].map(n =>
+// ctx.require(n)))` or `([ctx.require("x"), ctx.require("y")])` (over several lines too), `x = await ctx.require("x")`,
+// `ctx.require("x").then(x => …)`.
+// A require by a KIND's field (`ctx.require(spec.maker)`, `…view`): every name `kinds.js` — the one catalog of makers
+// and views — gives that field.
+const CATALOG = {};
+for (const m of srcOf("kinds").matchAll(/\b(maker|view): "([a-z0-9-]+)"/g)) (CATALOG[m[1]] ??= new Set()).add(m[2]);
+const bindingsOf = src => {
+  const b = new Map(); // var → cap
+  for (const m of src.matchAll(/\[([^\]]+)\]\s*=\s*await Promise\.all\(/g)) {
+    let i = m.index + m[0].length;
+    for (let d = 1; i < src.length && d > 0; i++) d += src[i] === "(" ? 1 : src[i] === ")" ? -1 : 0;
+    const expr = src.slice(m.index + m[0].length, i);
+    const lit = /^\s*\[([^\]]*)\]\s*\.map\(/.exec(expr);
+    // (A listed array: its elements by position — `ctx.require("x")` or anything else, split at its top level.)
+    const elements = () => {
+      const body = expr.slice(expr.indexOf("[") + 1, expr.lastIndexOf("]"));
+      const out = [];
+      let d = 0, at = 0;
+      for (let k = 0; k <= body.length; k++) {
+        const c = body[k];
+        if (c === "(" || c === "[" || c === "{") d++;
+        else if (c === ")" || c === "]" || c === "}") d--;
+        else if ((c === "," && d === 0) || k === body.length) out.push(body.slice(at, k)), (at = k + 1);
+      }
+      return out.map(e => /^\s*(?:await\s+)?\(?\s*(?:ctx|app)\.require\(\s*"([a-z0-9-]+)"\s*\)\s*\)?\s*$/.exec(e)?.[1] ?? null);
+    };
+    const names = lit ? [...lit[1].matchAll(/"([a-z0-9-]+)"/g)].map(x => x[1]) : elements();
+    m[1].split(",").map(v => v.trim()).forEach((v, k) => /^\w+$/.test(v) && names[k] && b.set(v, names[k]));
+  }
+  for (const m of src.matchAll(/(\w+)\s*=\s*await\s+(?:ctx|app)\.require\("([a-z0-9-]+)"\)/g)) b.set(m[1], m[2]);
+  for (const m of src.matchAll(/(?:ctx|app)\.require\("([a-z0-9-]+)"\)\.then\(\s*(?:async\s*)?\(?(\w+)/g)) b.set(m[2], m[1]);
+  // (By a kind's field: the variable is each name the catalog gives — `var#name`, one binding per name.)
+  for (const m of src.matchAll(/(\w+)\s*=\s*await\s+(?:ctx|app)\.require\(\s*[\w.]+\.(maker|view)\s*\)/g)) for (const n of CATALOG[m[2]] ?? []) b.set(`${m[1]}#${n}`, n);
+  return b;
+};
+// AN APP's GRANTS, call by call (10-16): every `capability.method` its code — the app's and each package it loads into
+// its frame — calls on the trust core (`HOST`, where the walk stops). A capability required where no call on it can be
+// SEEN fails the check (it must be visible to be granted). A handle a granted call returns is the host's to hand out.
 const grantsOf = app => {
   const seen = new Set();
-  const host = new Set();
+  const grants = new Set();
   const walk = [app];
   while (walk.length) {
     const n = walk.pop();
     if (seen.has(n)) continue;
     seen.add(n);
-    for (const r of reqs(srcOf(n))) HOST.has(r) ? host.add(r) : walk.push(r);
+    const src = srcOf(n);
+    const b = bindingsOf(src);
+    for (const m of src.matchAll(/(?:ctx|app)\.require\(\s*(?!")([^)]*)\)/g)) {
+      const arg = m[1].trim();
+      const field = /^[\w.]+\.(maker|view)$/.exec(arg)?.[1];
+      if (field) {
+        for (const nm of CATALOG[field] ?? []) {
+          if (!HOST.has(nm)) {
+            walk.push(nm);
+            continue;
+          }
+          // `(await ctx.require(x.maker)).call(` — the call on it.
+          const direct = new RegExp(`\\(await (?:ctx|app)\\.require\\(\\s*${arg.replace(/\./g, "\\.")}\\s*\\)\\)\\.(\\w+)`, "g");
+          for (const c of src.matchAll(direct)) grants.add(`${nm}.${c[1]}`);
+        }
+      } else if (!/^(n|name)$/.test(arg)) bad.push(`packages/${n}.js:${src.slice(0, m.index).split("\n").length}: requires by a name the check cannot see (${arg}) — a literal name, or a kind's maker / view`);
+    }
+    for (const r of new Set(reqs(src))) {
+      if (!HOST.has(r)) {
+        walk.push(r);
+        continue;
+      }
+      let found = 0;
+      for (const m of src.matchAll(new RegExp(`\\(await (?:ctx|app)\\.require\\("${r}"\\)\\)\\.(\\w+)`, "g"))) grants.add(`${r}.${m[1]}`), found++;
+      for (const [vn, cap] of b) {
+        if (cap !== r) continue;
+        const v = vn.split("#")[0];
+        for (const m of src.matchAll(new RegExp(`(?<![\\w.$])${v}\\??\\.(\\w+)`, "g"))) grants.add(`${r}.${m[1]}`), found++;
+      }
+      if (!found) bad.push(`packages/${n}.js: requires "${r}" but no call on it can be seen (bind it as const x = await ctx.require("${r}"), or in a Promise.all list)`);
+    }
   }
-  return [...host].sort();
+  // A host module's own FRAME code (its `frame(cap, …)` export, run in the app's frame): its calls on `cap` are the
+  // app's too (directory's name element reads `cap.name`, `cap.levelOf`).
+  for (const r of new Set([...grants].map(g => g.split(".")[0]))) {
+    const src = srcOf(r);
+    const m = /export (?:async )?function frame\(\s*(\w+)/.exec(src);
+    if (!m) continue;
+    let i = src.indexOf("{", m.index);
+    const from = i;
+    for (let d = 0; i < src.length; i++) if ((d += src[i] === "{" ? 1 : src[i] === "}" ? -1 : 0) === 0) break;
+    for (const c of src.slice(from, i).matchAll(new RegExp(`(?<![\\w.$])${m[1]}\\.(\\w+)`, "g"))) grants.add(`${r}.${c[1]}`);
+  }
+  return [...grants].sort();
 };
-const framedMap = Object.fromEntries([...framedSrc.matchAll(/\\"([a-z0-9-]+)\\": \[([^\]]*)\]/g)].map(m => [m[1], [...m[2].matchAll(/\\"([a-z0-9-]+)\\"/g)].map(x => x[1]).sort()]));
+const framedMap = Object.fromEntries([...framedSrc.matchAll(/\\"([a-z0-9-]+)\\": \[([^\]]*)\]/g)].map(m => [m[1], [...m[2].matchAll(/\\"([a-z0-9.A-Z_-]+)\\"/g)].map(x => x[1]).sort()]));
 const want = Object.fromEntries(Object.keys(framedMap).map(a => [a, grantsOf(a)]));
 if (process.argv.includes("--fix")) {
   const inner = Object.entries(want).map(([a, g]) => `\\"${a}\\": [${g.map(x => `\\"${x}\\"`).join(", ")}]`).join(", ");

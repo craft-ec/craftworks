@@ -260,7 +260,12 @@ export async function start(ctx) {
   // (`bytes`: a module given as it is — a probe's — in place of a package by name.)
   function mountCtx(el, { app, module = null, bytes = null, uses = [] }) {
     if (!KEY.test(app)) throw new Error(`an app's name is a-z, 0-9 and "-": ${app}`);
-    const granted = new Set(uses);
+    // ITS GRANTS, CALL BY CALL (`capability.method`, what its code calls — `tools/app-check.mjs`): a capability is
+    // reachable when any of its calls is granted, and each call only when it is itself. A call refused is said in the
+    // trace (a call the check could not see shows here, by name).
+    const calls = new Set(uses);
+    const granted = new Set([...calls].map(c => c.slice(0, c.indexOf(".") >>> 0)).filter(Boolean));
+    const refuse = (what, why) => (ctx.log("bridge: refused", { what: `${app}: ${what} (${why})` }), Object.assign(new Error(`${app} is not granted ${what}`), { kind: "refused" }));
     const { clicked, gesture } = gestures();
     // WHAT CROSSES THE BRIDGE (as a phone's IPC parcel): DATA BY VALUE — structured clone, so a Map, a Set, bytes stay
     // what they are; a read's state (a total read's \`.state\`) kept with it — and a FUNCTION BY REFERENCE: a handle
@@ -343,7 +348,7 @@ export async function start(ctx) {
           const p = await ctx.packageOf(name);
           return { local: true, kind: p.kind, b64: b64(p.bytes) };
         }
-        if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
+        if (!granted.has(name)) throw refuse(`"${name}"`, "not granted");
         // A capability with SYNC HELPERS (its module's `frame` export): its bytes, so the frame runs the same helpers.
         const p = await ctx.packageOf(name);
         // Its CONSTANTS (what it gives that is not a call — a type's name, a limit): with the proxy, as values.
@@ -352,7 +357,7 @@ export async function start(ctx) {
         return { local: false, consts, ...(/\bexport (async )?function frame\(/.test(new TextDecoder().decode(p.bytes)) ? { b64: b64(p.bytes) } : {}) };
       },
       cap: async (name, method, args, strict) => {
-        if (!granted.has(name)) throw Object.assign(new Error(`${app} is not granted "${name}"`), { kind: "refused" });
+        if (!calls.has(`${name}.${method}`)) throw refuse(`${name}.${method}`, "not one of its calls");
         if (WRITES.test(method)) gesture(`${name}.${method}`);
         const c = await ctx.require(name);
         const f = c && Object.hasOwn(c, method) ? c[method] : undefined; // (its own calls only: never its prototype's)

@@ -66,7 +66,7 @@ export async function start(ctx) {
     // From outside (not in its space): as its public policy says (`items.mayWriteOn`: anyone may, or nobody outside).
     const [mayComment, mayVote] = await Promise.all(["comment", "vote"].map(a => items.mayWriteOn(item, a, { outside })));
     // The rule that closed it, to say (a personal item: its own, else its author's policy for what it is).
-    const closedBy = item.meta?.write?.comment ?? (!sp && !outside && !String(ref).startsWith("space:") ? roles.personal(item.by).policyIn((await ctx.require("kinds")).policyDomain(item.kind), "comment") : null);
+    const closedBy = item.meta?.write?.comment ?? (!sp && !outside && !String(ref).startsWith("space:") ? (await roles.personalPolicy(item.by, (await ctx.require("kinds")).policyDomain(item.kind), "comment")).who : null);
 
     const who = did => {
       const n = directory.nameEl(did, "span", { className: "by", onclick: e => (e.stopPropagation(), person.open(e.currentTarget, did, sp ? { space: sp } : {})) });
