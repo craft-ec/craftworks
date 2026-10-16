@@ -7,6 +7,7 @@
 //   await bundles.of(sp /* null: yours */)        // [{ ref, title, members, item }]
 //   await bundles.make("Course", sp)               // its ref
 //   await bundles.add(bref, ref); await bundles.drop(bref, ref); await bundles.move(bref, ref, -1)
+//   await bundles.mineFor(ref)                    // the bundles this person may add `ref` to: theirs, and their own in its space
 export async function start(ctx) {
   const [items, space] = await Promise.all([ctx.require("items"), ctx.require("space")]);
   const KIND = "bundle";
@@ -41,5 +42,14 @@ export async function start(ctx) {
       out.splice(j, 0, out.splice(i, 1)[0]);
       return out;
     });
-  return { KIND, of: ctx.total("bundles.of", () => [], of), make, add, drop, move };
+  // THE BUNDLES `ref` MAY BE ADDED TO by this person: their own (only its author changes a bundle) — theirs, and theirs
+  // in the item's space. The one list: an item page's "Add to a bundle", and the host's picker for an app in its frame.
+  async function mineFor(ref) {
+    const meId = await space.me.strict();
+    if (!meId) return [];
+    const sid = items.spaceIdOf(ref);
+    const sp = sid ? await space.find(sid, { wait: 3000 }) : null;
+    return [...(await of(null)), ...(sp ? await of(sp) : [])].filter(b => b.item?.by === meId).map(b => ({ ref: b.ref, title: b.title, n: b.members.length, has: b.members.includes(ref) }));
+  }
+  return { KIND, of: ctx.total("bundles.of", () => [], of), mineFor: ctx.total("bundles.mineFor", () => [], mineFor), make, add, drop, move };
 }

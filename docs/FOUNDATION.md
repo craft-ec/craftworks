@@ -225,8 +225,12 @@ The app machine makes each app what a separately published site already is, and 
   person menu; `theme.ask` is the one way to ask (no browser dialogs — a frame has none). GRANTS are what the code
   reaches (`tools/app-check.mjs`, `--fix`). Done 10-16: all ten apps framed. The audience and publish pickers stay in
   the app (10-16): they show only what its grants already give it (a space's roles and members) — a host-drawn copy
-  would protect nothing. A FILES picker that hands an app only the files chosen needs grants finer than a whole
-  capability first: the next step of grants, not of drawing.
+  would protect nothing. GRANTS ARE CALL BY CALL (10-16): `capability.method`, every call its code makes (app-check;
+  the bridge refuses any other, said in the trace). WHAT IT MAY LIST is its own kinds: `items.list` / `items.inPlaces`
+  of its apps' `needs` domains (by policy domain) and what the manifest declares it `reads` (Drive "*", Captions video and
+  audio, Video and Audio captions) — an item by its REFERENCE is any kind's (holding it is the permission). Choosing among
+  the person's own (the editor's "Find among yours", "Add to a bundle") is a SYSTEM PICKER (`apphost.pickSheet`): the
+  app is given the one chosen, never the list. Phase 8 complete.
 - **System controls are SYSTEM PICKERS.** A frame cannot draw the host's elements, and a copy of a control inside the
   frame would be a second implementation. So an app ASKS (`api.pick("audience", { space, kind })`, `api.pick("files",
   …)`, `api.pick("sort")`): the system shows its own control above the frame, the person chooses, the value comes

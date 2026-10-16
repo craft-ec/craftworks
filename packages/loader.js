@@ -418,7 +418,10 @@ export async function run(boot) {
       // RUNTIME"): never loaded into this page; the app host runs it in a frame with the page's runtime, every
       // capability it reaches checked against its grants.
       const grants = manifest.framed?.[name];
-      let mod = grants ? { mount: async (c, host) => (await require("apphost")).mountCtx(host, { app: name, module: name, uses: grants }) } : await require(name);
+      // ITS KINDS: the domains of every app it is the page of — their `needs` — and what they declare they `reads` (a
+      // permission the manifest shows: Drive every kind's files, Captions the videos it captions).
+      const domainsOf = mod => [...new Set((manifest.apps ?? []).filter(a => { const p = manifest.pages?.[a.route]; return (Array.isArray(p) ? p : p?.body ?? []).includes(mod); }).flatMap(a => [...(a.needs ?? []), ...(a.reads ?? [])]))];
+      let mod = grants ? { mount: async (c, host) => (await require("apphost")).mountCtx(host, { app: name, module: name, uses: grants, domains: domainsOf(name) }) } : await require(name);
       // AN APP NOT RUN HERE (a page published as BYTES, not a module): run in its OWN FRAME by the app host, with the
       // system API only (FOUNDATION.md §3, "Apps are installed").
       if (mod instanceof Uint8Array) {

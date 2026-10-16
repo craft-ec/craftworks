@@ -258,13 +258,47 @@ export async function start(ctx) {
   const FRAME_LOCAL = { has: name => !HOST.has(name) };
   const { SOURCE: RUNTIME_CTX } = await ctx.require("frame-runtime");
   // (`bytes`: a module given as it is — a probe's — in place of a package by name.)
-  function mountCtx(el, { app, module = null, bytes = null, uses = [] }) {
+  // A SYSTEM PICKER: a sheet of the host's — its choices (`choose(text)`: `[{ label, value }]`, searched as typed where
+  // `search` is a string) — giving back the one chosen (null: cancelled). The app never sees the list.
+  async function pickSheet(title, choose, search = null) {
+    const sheet = Object.assign(document.createElement("dialog"), { className: "cw-sheet" });
+    const box = search == null ? null : Object.assign(document.createElement("input"), { type: "search", className: "field", placeholder: "Find by title", value: search });
+    const list = document.createElement("div");
+    const close = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", textContent: "Cancel", onclick: () => sheet.close() });
+    sheet.append(Object.assign(document.createElement("h3"), { textContent: title }), ...(box ? [box] : []), list, close);
+    document.body.append(sheet);
+    let chosen = null;
+    const fill = async () => {
+      const got = await choose(box?.value ?? "");
+      list.replaceChildren(...(got.length ? got.map(c => Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", style: "display:block;width:100%;text-align:left;margin:2px 0", textContent: c.label, onclick: () => ((chosen = c.value), sheet.close()) })) : [Object.assign(document.createElement("p"), { className: "none", textContent: "Nothing to choose here." })]));
+    };
+    if (box) box.oninput = () => ctx.background("apphost: picker", fill());
+    await fill();
+    sheet.showModal();
+    await new Promise(done => sheet.addEventListener("close", done, { once: true }));
+    sheet.remove();
+    return chosen;
+  }
+  function mountCtx(el, { app, module = null, bytes = null, uses = [], domains = [] }) {
     if (!KEY.test(app)) throw new Error(`an app's name is a-z, 0-9 and "-": ${app}`);
     // ITS GRANTS, CALL BY CALL (`capability.method`, what its code calls — `tools/app-check.mjs`): a capability is
     // reachable when any of its calls is granted, and each call only when it is itself. A call refused is said in the
     // trace (a call the check could not see shows here, by name).
     const calls = new Set(uses);
     const granted = new Set([...calls].map(c => c.slice(0, c.indexOf(".") >>> 0)).filter(Boolean));
+    // WHAT IT MAY LIST: items of its own domains (`domains`; "*": every kind — Drive). An item by its REFERENCE is any
+    // kind's (holding the reference is the permission: a linked post, a bundle's members, what was saved).
+    const reads = new Set(domains);
+    const LISTS = { "items.list": 2, "items.inPlaces": 1 };
+    const checkKinds = async (call, args) => {
+      if (!Object.hasOwn(LISTS, call) || reads.has("*")) return;
+      const asked = args[LISTS[call]];
+      if (asked == null) throw refuse(`${call} of every kind`, "not its kinds");
+      const K = await ctx.require("kinds");
+      // (By its POLICY domain — what a manifest's `needs` and a space's capabilities name: a caption's is "caption".)
+      const off = [].concat(asked).filter(k => !reads.has(K.policyDomain(k)));
+      if (off.length) throw refuse(`${call} of ${off.join(", ")}`, "not its kinds");
+    };
     const refuse = (what, why) => (ctx.log("bridge: refused", { what: `${app}: ${what} (${why})` }), Object.assign(new Error(`${app} is not granted ${what}`), { kind: "refused" }));
     const { clicked, gesture } = gestures();
     // WHAT CROSSES THE BRIDGE (as a phone's IPC parcel): DATA BY VALUE — structured clone, so a Map, a Set, bytes stay
@@ -358,6 +392,7 @@ export async function start(ctx) {
       },
       cap: async (name, method, args, strict) => {
         if (!calls.has(`${name}.${method}`)) throw refuse(`${name}.${method}`, "not one of its calls");
+        await checkKinds(`${name}.${method}`, Array.isArray(args) ? args : []);
         if (WRITES.test(method)) gesture(`${name}.${method}`);
         const c = await ctx.require(name);
         const f = c && Object.hasOwn(c, method) ? c[method] : undefined; // (its own calls only: never its prototype's)
@@ -375,7 +410,19 @@ export async function start(ctx) {
       say: async (message, kind) => ctx.say(Object.assign(new Error(message), { kind })),
       // A SYSTEM PAGE the host draws in the app's place: its SETTINGS in a space (`where.settings`, the same page an
       // app in the page shows) — the frame hidden while the address stays there.
-      system: async (page, { kind, yours, ref, outside = null } = {}) => {
+      system: async (page, { kind, yours, ref, outside = null, q = "" } = {}) => {
+        // ONE OF YOURS, PICKED (the editor's Insert): a sheet of the host's — the search the page's editor uses
+        // (`md-editor.findYours`); the app is given the one chosen, never the list.
+        if (page === "pick-item") {
+          const K = await ctx.require("kinds");
+          const finder = await ctx.require("md-editor");
+          return pickSheet(`Insert one of yours into ${app}`, async text => (await finder.findYours(text, 12)).map(it => ({ label: `${K.of(it.kind)?.label ?? it.kind}: ${it.title || String(it.body ?? "").slice(0, 40) || "untitled"}`, value: { ref: it.ref, title: it.title ?? "" } })), String(q ?? ""));
+        }
+        // A BUNDLE of yours to add an item to (an item page's "Add to a bundle"): the one chosen.
+        if (page === "pick-bundle") {
+          const list = await (await ctx.require("bundles")).mineFor(String(ref));
+          return pickSheet("Add to a bundle", async () => list.map(b => ({ label: `${b.title} · ${b.n} item${b.n === 1 ? "" : "s"}${b.has ? " ✓" : ""}`, value: b.ref })), null);
+        }
         // AN ITEM's EDITIONS (bought and sold): a sheet over the app, the host's (`editions.section`).
         if (page === "editions") {
           const it = await (await ctx.require("items")).get.strict(String(ref), { outside: unmarshal(outside) });

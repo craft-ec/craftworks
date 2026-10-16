@@ -399,7 +399,6 @@ export async function start(ctx) {
     );
     // INSERT, the one menu: Upload · New · Find (yours, saved, or by reference).
     const insertMenu = h("span", { className: "cw-att-menu", hidden: true }, ...uploads, newRow, find, found);
-    let mine = null;
     const putItem = (ref, title) => {
       insertMenu.hidden = true;
       find.value = "";
@@ -411,14 +410,6 @@ export async function start(ctx) {
     const listFound = async () => {
       const n = ++asked;
       const items = await ctx.require("items");
-      mine ??= (async () => {
-        const [own, saved] = await Promise.all([
-          items.list({ by: (await (await ctx.require("space")).account()).id }, "new", kinds.all(), { window: "all" }),
-          ctx.optional("md-editor: ctx.require", ctx.require("actions").then(async a => Promise.all((await a.saved()).slice(0, 50).map(r => items.get(r)))), () => []),
-        ]);
-        const seen = new Set();
-        return [...saved.filter(Boolean), ...own].filter(it => !seen.has(it.ref) && seen.add(it.ref));
-      })();
       const q = find.value.trim();
       // A REFERENCE or a shared LINK (`items.refOf`): the item read first (as this person may), so it is named — or said
       // not to be readable.
@@ -428,9 +419,16 @@ export async function start(ctx) {
         if (n !== asked) return;
         return found.replaceChildren(it ? btn(`🔗 ${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title)) : h("span", { className: "s", textContent: "That item is not there, or not yours to read." }));
       }
-      const all = await mine;
+      // In an APP's FRAME: yours are found in the HOST's picker — the app gets the one chosen, never the list.
+      if (ctx.system) {
+        if (n !== asked) return;
+        return found.replaceChildren(btn("🔎 Find among yours…", "Pick one of your items or what you saved", async () => {
+          const picked = await ctx.system("pick-item", { q }).catch(e => (found.replaceChildren(h("p", { className: "said", textContent: ctx.say(e) })), null));
+          if (picked?.ref) putItem(picked.ref, picked.title);
+        }));
+      }
+      const list = await findYours(q);
       if (n !== asked) return;
-      const list = all.filter(it => !q || (it.title ?? "").toLowerCase().includes(q.toLowerCase())).slice(0, 8);
       found.replaceChildren(...(list.length ? list.map(it => btn(`${kinds.of(it.kind)?.label ?? it.kind}: ${it.title || (it.body ?? "").slice(0, 40) || "untitled"}`, "Insert it", () => putItem(it.ref, it.title))) : [h("span", { className: "s", textContent: q ? "None found." : "Nothing of yours yet." })]));
     };
     find.oninput = () => listFound();
@@ -556,5 +554,21 @@ export async function start(ctx) {
       },
     };
   }
-  return { create, toMd };
+  // YOURS, FOUND (the Insert menu's search): what you saved, then your own items of every kind, by title — the one
+  // search, the page's editor's and the host's picker's for an app in its frame (`apphost` "pick-item").
+  let mine = null;
+  async function findYours(q = "", n = 8) {
+    const items = await ctx.require("items");
+    mine ??= (async () => {
+      const [own, saved] = await Promise.all([
+        items.list({ by: (await (await ctx.require("space")).account()).id }, "new", kinds.all(), { window: "all" }),
+        ctx.optional("md-editor: ctx.require", ctx.require("actions").then(async a => Promise.all((await a.saved()).slice(0, 50).map(r => items.get(r)))), () => []),
+      ]);
+      const seen = new Set();
+      return [...saved.filter(Boolean), ...own].filter(it => !seen.has(it.ref) && seen.add(it.ref));
+    })().catch(e => ((mine = null), Promise.reject(e)));
+    q = String(q ?? "").trim().toLowerCase();
+    return (await mine).filter(it => !q || (it.title ?? "").toLowerCase().includes(q)).slice(0, n);
+  }
+  return { create, toMd, findYours };
 }

@@ -192,15 +192,22 @@ export async function start(ctx) {
       const it = o.item ?? (await items.get(ref));
       if (!it || kinds.isBundle?.(it.kind)) return;
       const bundles = await ctx.require("bundles");
-      const sid = items.spaceIdOf?.(ref);
-      const sp = sid ? await space.find(sid, { wait: 3000 }) : null;
-      // (Your own bundles only: only its author changes a bundle.)
-      const meId = await space.me.strict();
-      const all = [...(await bundles.of(null)), ...(sp ? await bundles.of(sp) : [])].filter(b => b.item?.by === meId);
+      // In an APP's FRAME: the host's picker lists your bundles — the app is given the one chosen, never the list.
+      if (ctx.system) {
+        const add = document.createElement("button");
+        Object.assign(add, { type: "button", className: "cw-btn", textContent: "Add to a bundle…" });
+        add.onclick = async () => {
+          const bref = await ctx.system("pick-bundle", { ref }).catch(async e => ((await ctx.require("theme")).ask(add, { text: ctx.say(e) }), null));
+          if (bref) await bundles.add(bref, ref).then(() => (add.textContent = "Added to a bundle ✓"), async e => (await ctx.require("theme")).ask(add, { text: ctx.say(e) }));
+        };
+        if (page.isConnected) page.prepend(add);
+        return;
+      }
+      const all = await bundles.mineFor(ref);
       if (!all.length) return;
       const sel = document.createElement("select");
       sel.ariaLabel = "Add to a bundle";
-      sel.append(Object.assign(document.createElement("option"), { value: "", textContent: "Add to a bundle…" }), ...all.map(b => Object.assign(document.createElement("option"), { value: b.ref, textContent: `${b.title}${b.members.includes(ref) ? " ✓" : ""}` })));
+      sel.append(Object.assign(document.createElement("option"), { value: "", textContent: "Add to a bundle…" }), ...all.map(b => Object.assign(document.createElement("option"), { value: b.ref, textContent: `${b.title}${b.has ? " ✓" : ""}` })));
       sel.onchange = () => sel.value && bundles.add(sel.value, ref).then(() => (sel.selectedOptions[0].textContent += " ✓", (sel.value = "")), async e => (await ctx.require("theme")).ask(sel, { text: ctx.say(e) }));
       if (page.isConnected) page.prepend(sel);
     } catch (e) {

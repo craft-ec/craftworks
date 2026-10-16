@@ -61,6 +61,9 @@ Phases (each: build, fx probe with a control, commit):
       efde90d grants narrower (index, storage gone; app-settings host-side); pickers stay in the app (decided).
       fx v794 framed: Drive upload, image post, form made + answered — pass. Untested framed: video upload/encode,
       caption editing, the editions sheet. NEXT: per-call grants (a files picker); release (identity unchanged, no PIN).
+      c777e2b framed media (watch time, small videos encoded, captions on id-less videos) · 78a8ab7 grants call by
+      call · (this) lists scoped to an app's kinds + two system pickers. PHASE 8 COMPLETE (fx v804: every probe, 0
+      calls refused). NEXT: release v398 on the owner's say (identity unchanged, no PIN).
 - Live: v397 (ed44f42) — every screen a view, one menu door, side panel, Discover first.
 - [x] Found on the way: 72115b3 — a stalled round that goes on let the next person's start a wake-up late (2de2571,
       live v392): 13 people, 52 wake-ups a turn → 39. Not settled on fx (crowded): fx serves ~a dozen accounts.
