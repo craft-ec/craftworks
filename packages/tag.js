@@ -30,7 +30,8 @@ export async function mount(ctx, el) {
         items.list({ discover: true, tag }, bar.sort(), shown, bar.options()),
       ]);
       const seen = new Set();
-      return bar.reorder([...mine, ...open].filter(p => !seen.has(p.ref) && seen.add(p.ref)));
+      // ONE ranking of the two (`items.rank`, what each list was ordered by): never two blocks one after the other.
+      return bar.reorder(items.rank([...mine, ...open].filter(p => !seen.has(p.ref) && seen.add(p.ref)), bar.sort(), bar.options().by));
     },
     draw: list =>
       h(

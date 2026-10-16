@@ -540,14 +540,17 @@ export async function run(boot) {
     askedBy: name => askedBy.get(name),
     // GET THE NEWEST: this node follows (subscribes to) the app's site and the loader's — a node holding a copy answers
     // a plain GET from it — then the page loads again. Returns what each said.
+    // Through the ONE READ DOOR (`node.read`: read, then followed — re-followed after a reconnect), marked stale first
+    // (`changed`) so it is read again now.
     async fresh() {
-      const { core, glue, ask } = await require("node");
+      const node = await require("node");
       const out = [];
       for (const site of [stack.appSite(), stack.loaderSite()].filter(Boolean)) {
-        const [id, frames] = core.frames_follow(glue.CraftworksCore.id_bytes(site));
-        const said = await ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, "getting the newest", 60000).catch(e => ({ kind: "failed", said: e.message }));
-        ctx.log("newest", { what: `${site.slice(0, 8)}…: ${said.kind}` });
-        out.push({ site, kind: said.kind });
+        const id = node.glue.CraftworksCore.id_bytes(site);
+        node.changed([...id].map(x => x.toString(16).padStart(2, "0")).join(""));
+        const kind = await node.read(id, "getting the newest", { ms: 60000 }).then(got => (got ? "got" : "get-failed"), e => `failed: ${ctx.say(e)}`);
+        ctx.log("newest", { what: `${site.slice(0, 8)}…: ${kind}` });
+        out.push({ site, kind });
       }
       return out;
     },

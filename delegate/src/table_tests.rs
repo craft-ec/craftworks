@@ -273,7 +273,13 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     let (mut r, _) = read_files(&net, writers.clone(), &epochs);
     let rows = vec![(b"k/x".to_vec(), Some(b"mine over theirs".to_vec())), (b"k/y".to_vec(), Some(b"new".to_vec()))];
     let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12], false, true).unwrap() else { panic!("listed first") };
-    assert!(listing.io.iter().any(|io| matches!(io, Io::Put { code: upkeep::Code::Bag, .. })), "in the writers bag before its catalog");
+    let (bp, bag) = listing.io.iter().find_map(|io| match io { Io::Put { code: upkeep::Code::Bag, params, state } => Some((params.clone(), state.clone())), _ => None }).expect("in the writers bag before its catalog");
+    // READ BY ANY MEMBER, whatever epochs it holds — none here (10-16: sealed with epoch 0's key, a member without it
+    // read nothing of what the node listed).
+    let items = craftworks_bag_contract::read(&bp, &bag).expect("a bag state");
+    let item = craftworks_bag_contract::payload(&items[0]);
+    let w = table::open_bag_item(&SPACE, &Default::default(), "writers", item).expect("the writers item opens with no epoch held");
+    assert_eq!(w["w"], table::hex(&me));
     apply(&mut net, &r, &listing, &me, "files");
     let Next::Done(sent) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [2; 12], false, true).unwrap() else { panic!("then the rows") };
     assert!(matches!(sent.io[0], Io::Put { code: upkeep::Code::Tail, .. }), "the feed made with a PUT");

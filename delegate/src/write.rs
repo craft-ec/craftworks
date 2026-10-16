@@ -162,17 +162,12 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
     Ok(Next::Done(Sent { io: vec![io], confirm: vec![o.id_bytes()], blocks: false }))
 }
 
-/// This writer's item in the space's writers bag: `{ w }`, sealed with epoch 0's key (`index.spacePoint`).
+/// This writer's item in the space's writers bag: `{ w }`, sealed OPEN — the one sealing of the writers list
+/// (`table::seal_writers_item`, as `index.spacePoint` seals it): every member reads it whatever epochs they hold
+/// (10-16: sealed here with epoch 0's key, a member without epoch 0 could not read what the node listed).
 fn bag_item(r: &Reading, me: &[u8; 32], nonce: [u8; 12]) -> Result<Io, String> {
-    use aes_gcm::aead::{Aead, KeyInit};
     let space = r.space();
-    let s0 = r.epochs().get(&0).ok_or("this member does not hold the space's first epoch")?;
-    let key = identity::epoch_table_key(s0, "bag-writers");
-    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&key).map_err(|_| "a bag key")?;
-    let ct = cipher
-        .encrypt(aes_gcm::Nonce::from_slice(&nonce), serde_json::json!({ "w": table::hex(me) }).to_string().as_bytes())
-        .map_err(|_| "sealing the bag item")?;
-    let item = [0u32.to_be_bytes().as_slice(), &nonce, &ct].concat();
+    let item = table::seal_writers_item(&space, &serde_json::json!({ "w": table::hex(me) }), nonce);
     let address = table::sealed_bag_address(&space, "writers");
     let state = craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]);
     Ok(Io::Put { code: Code::Bag, params: address.to_vec(), state })
