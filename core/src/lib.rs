@@ -2381,6 +2381,45 @@ mod js {
         .to_string())
     }
 
+    /// THE KEYS FOLLOW THE MEMBER LIST (`craftworks_rules::members::follow`, the delegate's too): `{ me, listed: [did],
+    /// leaves: [[index, did]], keys: [[did, kp hex, at]], welcomed: [[did, tag hex, at]], spent: [tag hex], followers:
+    /// [did], epoch, now, takeover }` → `{ remove: [index], add: [[did, kp hex, tag hex]], skipped: [[did, why]] }`.
+    #[wasm_bindgen]
+    pub fn members_follow(view: &str) -> Result<String, JsValue> {
+        use craftworks_rules::admission::Welcomed;
+        use craftworks_rules::members::{follow, Key, Leaf, View};
+        let v: serde_json::Value = serde_json::from_str(view).map_err(|e| err(e.to_string()))?;
+        let tag16 = |s: &str| -> Option<[u8; 16]> { (0..16).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok() };
+        let strs = |k: &str| -> Vec<String> { v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
+        let listed = strs("listed");
+        let followers = strs("followers");
+        let spent: Vec<[u8; 16]> = strs("spent").iter().filter_map(|t| tag16(t)).collect();
+        let arr = |k: &str| v[k].as_array().cloned().unwrap_or_default();
+        let leaves: Vec<Leaf> = arr("leaves").iter().filter_map(|l| Some(Leaf { index: l[0].as_u64()? as u32, did: l[1].as_str()?.into() })).collect();
+        let keys: Vec<Key> = arr("keys").iter().filter_map(|k| Some(Key { did: k[0].as_str()?.into(), kp: k[1].as_str()?.into(), at: k[2].as_f64()? as u64 })).collect();
+        let welcomed: Vec<Welcomed> = arr("welcomed").iter().filter_map(|w| Some(Welcomed { did: w[0].as_str()?.into(), kp: tag16(w[1].as_str()?)?, at: w[2].as_f64()? as u64 })).collect();
+        let me = v["me"].as_str().unwrap_or_default();
+        let view = View {
+            me,
+            listed: &listed,
+            leaves: &leaves,
+            keys: &keys,
+            welcomed: &welcomed,
+            spent: &spent,
+            followers: &followers,
+            epoch: v["epoch"].as_f64().unwrap_or(0.0) as u64,
+            now: v["now"].as_f64().unwrap_or(0.0) as u64,
+            takeover_ms: v["takeover"].as_f64().unwrap_or(120_000.0) as u64,
+        };
+        let p = follow(&view);
+        Ok(serde_json::json!({
+            "remove": p.remove,
+            "add": p.add.iter().map(|(d, kp, t)| serde_json::json!([d, kp, hex(t)])).collect::<Vec<_>>(),
+            "skipped": p.skipped,
+        })
+        .to_string())
+    }
+
     /// `did:craftec:<base58>` of the owner's public key (the DID the identity delegate answers, as bytes).
     #[wasm_bindgen]
     pub fn did_of(owner: &[u8]) -> Result<String, JsValue> {

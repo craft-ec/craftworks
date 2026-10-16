@@ -418,6 +418,26 @@ impl Account {
         Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
     }
 
+    /// THE KEYS FOLLOW THE MEMBER LIST (`rules::members::follow`'s plan): `remove` entries out and every key package in
+    /// `adds` in — ONE commit; `(commit, welcome)` — the welcome every new entry opens (none when nothing is added).
+    pub fn follow(&mut self, remove: &[u32], adds: &[Vec<u8>]) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
+        let mut b = self.group.commit_builder();
+        for i in remove {
+            b = b.remove_member(*i).map_err(e)?;
+        }
+        for kp in adds {
+            b = b.add_member(MlsMessage::from_bytes(kp).map_err(e)?).map_err(e)?;
+        }
+        let out = b.build().map_err(e)?;
+        self.group.apply_pending_commit().map_err(e)?;
+        self.group.write_to_storage().map_err(e)?;
+        let welcome = match out.welcome_messages.first() {
+            Some(w) => Some(w.to_bytes().map_err(e)?),
+            None => None,
+        };
+        Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
+    }
+
     pub fn epoch(&self) -> u64 {
         self.group.current_epoch()
     }
@@ -585,6 +605,30 @@ mod tests {
         assert_eq!(writers, vec![writer([0xAA; 32]), writer([0xBB; 32])], "one member per DID, named by its writer");
         // Control: a device without the account's key packages cannot answer the welcome.
         assert!(member([0xB; 32], [0xBB; 32], &[]).join_space(space, &welcome).is_err());
+    }
+
+    /// THE KEYS FOLLOW THE LIST (`follow`): Bob and Carol, listed, in with ONE commit — each opens the one welcome and
+    /// holds the group's key; then Bob, no longer listed, out — Carol follows the commit, Bob's copy is left behind.
+    #[test]
+    fn the_keys_follow_the_list_several_in_and_out_in_one_commit() {
+        let (alice, bob, carol) = (member([0xA; 32], [0xAA; 32], &[]), member([0xB; 32], [0xBB; 32], &[]), member([0xC; 32], [0xCC; 32], &[]));
+        let space = [0x5A; 32];
+        let mut g = alice.create_space(space).unwrap();
+        let e0 = g.epoch();
+        let (_, welcome) = g.follow(&[], &[bob.key_package().unwrap(), carol.key_package().unwrap()]).unwrap();
+        assert_eq!(g.epoch(), e0 + 1, "one commit for both");
+        let welcome = welcome.expect("a welcome for the new entries");
+        let b = bob.join_space(space, &welcome).unwrap();
+        let mut c = carol.join_space(space, &welcome).unwrap();
+        assert_eq!(b.epoch_secret().unwrap(), g.epoch_secret().unwrap());
+        assert_eq!(c.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "both from the one welcome, one key");
+        let bob_index = g.members().into_iter().find(|(_, w, _)| *w == writer([0xBB; 32])).unwrap().0;
+        let (commit, none) = g.follow(&[bob_index], &[]).unwrap();
+        assert!(none.is_none(), "nobody added: no welcome");
+        c.process(&commit).unwrap();
+        assert_eq!(c.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "Carol follows");
+        assert!(!g.members().iter().any(|(_, w, _)| *w == writer([0xBB; 32])), "Bob is out");
+        assert_ne!(b.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "Bob's copy is left behind");
     }
 
     /// A SPACE's group, made by a DID's member: its own epoch secret, kept and loaded again by its space id; a member
@@ -775,6 +819,15 @@ mod js {
 
         /// WELCOME AGAIN in ONE commit: the member's `stale` entries out and its fresh key package in — `[commit, welcome]`
         /// (a remove then an add cost two epochs, and every epoch leaves whoever is behind further behind).
+        /// The keys follow the member list: `[commit, welcome | undefined]` (`follow`).
+        pub fn follow(&mut self, remove: &[u32], adds: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+            let adds: Vec<Vec<u8>> = adds.iter().map(|x| js_sys::Uint8Array::new(&x).to_vec()).collect();
+            let (c, w) = self.member()?.follow(remove, &adds).map_err(err)?;
+            let out = js_sys::Array::new();
+            out.push(&js_sys::Uint8Array::from(&c[..]).into());
+            out.push(&w.map(|w| js_sys::Uint8Array::from(&w[..]).into()).unwrap_or(JsValue::UNDEFINED));
+            Ok(out)
+        }
         pub fn readd(&mut self, stale: &[u32], key_package: &[u8]) -> Result<js_sys::Array, JsValue> {
             let (c, w) = self.member()?.readd(stale, key_package).map_err(err)?;
             Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())

@@ -7,6 +7,7 @@ pub mod admission;
 pub mod allowance;
 pub mod editions;
 pub mod keeper;
+pub mod members;
 pub mod misdeed;
 pub mod ordering;
 pub mod statement;
