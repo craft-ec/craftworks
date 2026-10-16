@@ -17,6 +17,8 @@ node "$(cd "$(dirname "$0")" && pwd)/tools/job-check.mjs"
 node "$(cd "$(dirname "$0")" && pwd)/tools/app-check.mjs"
 # EVERY SCREEN HAS ONE BEHAVIOUR: drawn through ctx.view; the not-yet list only shrinks (tools/view-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/view-check.mjs"
+# WHOSE DEVICE WROTE THIS HAS ONE ANSWER: storage.writersOf over craftworks_account::writers (tools/writer-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/writer-check.mjs"
 root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 target="${CARGO_TARGET_DIR:-$root/target}"

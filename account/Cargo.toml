@@ -32,3 +32,5 @@ x25519-dalek = { version = "2", default-features = false, features = ["static_se
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 # The recovery words sealed under a passphrase (a new device opens the account without the words).
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+# A space's `departed` rows read once, here (`writers`): the page's core and the node's delegate alike.
+serde_json = { version = "1", default-features = false, features = ["alloc"] }

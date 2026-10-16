@@ -993,6 +993,39 @@ export async function start(ctx) {
     const d = await directory();
     return whenListedIn(d, () => d.rows().some(r => r.key === name), t);
   }
+  // THE SPACE's MEMBERS and their CURRENT devices: the group's members whose credential is really their DID's (signed
+  // by the data key its key log names — a credential names any DID it likes), each DID's devices (`directory.devices`:
+  // the one resolution). → { members: [{ did, key, index }], devices: [[did, nodes]], nodes }.
+  async function currentWriters(sp) {
+    const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
+    const st = await keys.group(sp).ready.strict();
+    const byte = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+    const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: glue.did_of(byte(m.cred).slice(4, 36)), signer: m.cred.slice(72, 136) }));
+    const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
+    for (const [i, m] of all.entries()) if (!real[i]) ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
+    const members = all.filter((_, i) => real[i]);
+    const dids = [...new Set(members.map(m => m.did))];
+    const sets = await Promise.all(dids.map(d => directory.devices.strict(d)));
+    const devices = dids.map((d, i) => [d, sets[i]]);
+    return { st, members, devices, nodes: [...new Set(sets.flat())] };
+  }
+  // WHO WROTE A SPACE's ROWS — THE ONE MAP (owner 10-16: "any question about access should be centralized"): its
+  // members' current devices and its DEPARTED writers (a member put out, or a device dropped from its account — the
+  // space's `departed` table), combined by the core (`space_writers` = `craftworks_account::writers`, the node's too):
+  // `{ members, byNode: Map(node → { did, caps }) }` (`caps`: a departed writer's — counted up to there).
+  // From OUTSIDE (`roster`: the DIDs its public acts name; `departedRows`: its `pub-departed`): the same rule.
+  async function writersOf(sp, { roster = null, departedRows = null } = {}) {
+    const directory = await ctx.require("directory");
+    const cur = roster ? { members: [], devices: await Promise.all(roster.map(async d => [d, await directory.devices(d)])) } : await currentWriters(sp);
+    const rows = departedRows ?? (await (async () => {
+      const t = await merged(space.tableOf(sp, "departed"), sp);
+      await t.settled;
+      return t.rows();
+    })());
+    const list = JSON.parse(glue.CraftworksCore.space_writers(JSON.stringify(cur.devices), JSON.stringify(rows.filter(r => r.value).map(r => [r.key, r.value]))));
+    return { members: cur.members, byNode: new Map(list.map(w => [w.node, { did: w.did, caps: w.caps }])) };
+  }
+
   // A SCOPE: a space seen from this node — who writes in it, where each writer lists its tables, how its tails open.
   // The account: the directory names its nodes, their catalogs are account tables. Another space: its GROUP's members write, each listing the space's tables in its own catalog
   // feed of the space; every tail of it is the space's (sealed with its epoch keys, signed in it).
@@ -1016,15 +1049,8 @@ export async function start(ctx) {
       // Its WRITERS BAG: who has a catalog here (`index`'s sealed bag of the space). Its writers are read from it.
       bag: fresh => writersBag(sp, fresh),
       list: ws => listWriters(sp, ws),
-      // Its WRITERS: every device of every member (the group's members are DIDs; each DID's devices, from its card,
-      // checked against its key log) — this device's own siblings too.
-      writers: async () => {
-        const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
-        const members = (await keys.group(sp).ready.strict())?.members ?? [];
-        const dids = [...new Set(members.filter(m => m.cred).map(m => glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))))))];
-        const all = (await Promise.all(dids.map(d => directory.devices.strict(d)))).flat();
-        return [...new Set(all)].filter(k => k !== sp.self);
-      },
+      // Its WRITERS NOW: every current device of every member (`writersOf`'s current part) — this device's siblings too.
+      writers: async () => (await currentWriters(sp)).nodes.filter(k => k !== sp.self),
       // New writers: a member's devices changed (their card), or the members did (the group moved).
       watch: fn => {
         const mine = e => !e.detail?.space || e.detail.space === sp.id;
@@ -1205,22 +1231,17 @@ export async function start(ctx) {
       const found = new Set();
       // DEPARTED writers' feeds, capped where they stood when they left (a space's).
       const departedDone = new Set();
+      // (Who they are and up to where: the one map, `writersOf`.)
       const gatherDeparted = async () => {
         if (!scope.departed?.(name)) return;
-        const d = await scope.departedTable();
-        await d.settled;
-        const current = new Set(await ctx.optional("storage: scope.writers", scope.writers(), () => others));
-        for (const r of d.rows()) {
-          if (!r.value || current.has(r.key) || r.key === scope.self || departedDone.has(r.key)) continue;
-          let cap;
-          try {
-            cap = JSON.parse(r.value)?.heads?.[name];
-          } catch {}
-          if (typeof cap !== "number") continue;
-          departedDone.add(r.key);
-          const cat = await ctx.optional("storage: scope.catalogOf", scope.catalogOf(r.key), () => null);
+        const { byNode } = await writersOf(sp);
+        for (const [node, w] of byNode) {
+          const cap = w.caps?.[name];
+          if (typeof cap !== "number" || node === scope.self || departedDone.has(node)) continue;
+          departedDone.add(node);
+          const cat = await ctx.optional("storage: scope.catalogOf", scope.catalogOf(node), () => null);
           await cat?.answer();
-          const f = await theirs(r.key, true, cat);
+          const f = await theirs(node, true, cat);
           if (f) take(capped(f, cap));
         }
       };
@@ -1597,15 +1618,17 @@ export async function start(ctx) {
       for (const f of changed) f();
       dataChanged(); // (a view reads it again only once it is here)
     };
-    // More writers taken in: ready as `settled` is (5 s at most; later ones merged as they come).
-    const add = list =>
+    // More writers taken in: ready as `settled` is (5 s at most; later ones merged as they come). `caps`: a DEPARTED
+    // writer's (node → seq: `writersOf`), its rows counted up to there — as a member's merged table counts them.
+    const add = (list, caps = null) =>
       soon(
         Promise.all(
           list
             .filter(o => !seen.has(o) && seen.add(o))
             .map(o =>
               ctx.background("storage: tail", tail(o, name, { public: true }).then(t => {
-                  all.push(t);
+                  const cap = caps?.get?.(o);
+                  all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, raw: () => (t.raw() ?? []).filter(([, v]) => seqOf(v) <= cap) } : t);
                   t.onChange(remerge);
                   remerge();
                 })),
@@ -1690,5 +1713,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { writersOf, currentWriters, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

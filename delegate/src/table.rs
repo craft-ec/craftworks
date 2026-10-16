@@ -242,15 +242,8 @@ impl Reading {
                 }
                 on_card
             }
-            Some(creds) => {
-                // Their DEVICES contract: the devices on the key log's current key — else the card's, as read.
-                let now: Vec<[u8; 32]> = state
-                    .as_deref()
-                    .and_then(craftworks_devices_contract::decode)
-                    .map(|all| craftworks_devices_contract::current(&did, &log, &all).into_iter().map(|(node, _)| node).collect())
-                    .unwrap_or_default();
-                if now.is_empty() { craftworks_account::members(&did, &log, &creds, &[]) } else { now }
-            }
+            // Their DEVICES contract, else the card's — the one resolution (`craftworks_account::devices`, the page's too).
+            Some(creds) => craftworks_account::devices(&did, &log, state.as_deref().and_then(craftworks_devices_contract::decode).as_deref(), &creds),
         };
         for node in found {
             if !self.writers.contains(&node) {
@@ -390,19 +383,22 @@ impl Reading {
         let feeds: Vec<([u8; 32], BTreeMap<Vec<u8>, Vec<u8>>)> =
             self.jobs.iter().filter(|j| j.table == name).filter_map(|j| Some((j.owner, j.rows.clone()??))).collect();
         let merged = merge(&feeds, &BTreeMap::new());
+        // WHO WROTE — the one map (`craftworks_account::writers`, the page's too): the current devices as resolved, and
+        // each DEPARTED writer → its DID, capped where it stood. Its feeds read up to there, its rows its author's.
+        let mut by_did: BTreeMap<String, Vec<[u8; 32]>> = BTreeMap::new();
+        for (n, d) in &self.writer_dids {
+            by_did.entry(d.clone()).or_default().push(*n);
+        }
+        let members: Vec<(String, Vec<[u8; 32]>)> = by_did.into_iter().collect();
+        let rows: Vec<(String, String)> = merged.into_iter().filter_map(|(k, row)| Some((String::from_utf8(k).ok()?, String::from_utf8(row.value).ok()?))).collect();
         let mut io = Vec::new();
-        for (k, row) in merged {
-            let Some(node) = std::str::from_utf8(&k).ok().and_then(unhex32) else { continue };
-            if self.writers.contains(&node) {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_slice(&row.value).unwrap_or(serde_json::Value::Null);
-            let caps: BTreeMap<String, u64> = v["heads"].as_object().map(|o| o.iter().filter_map(|(t, s)| Some((t.clone(), s.as_u64()?))).collect()).unwrap_or_default();
-            if caps.is_empty() {
-                continue;
+        for w in craftworks_account::writers(&members, &rows) {
+            let Some(caps) = w.caps else { continue };
+            if !self.writers.contains(&w.node) {
+                self.writer_dids.push((w.node, w.did.clone()));
             }
             let cat = table_name(&self.space, "tables");
-            io.extend(self.ask(c, node, &cat, cat.clone(), Purpose::Catalog { capped: Some(caps) }));
+            io.extend(self.ask(c, w.node, &cat, cat.clone(), Purpose::Catalog { capped: Some(caps) }));
         }
         io
     }

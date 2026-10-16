@@ -112,6 +112,8 @@ export async function start(ctx) {
     const st = await keys.remove(index);
     await storage.adopt(node).catch(e => ctx.failed("members", e, `adopting ${node.slice(0, 12)}…'s rows: ${e.message}`));
     await (await storage.table(MEMBERS)).put(`x/${node}`, JSON.stringify({ epoch: st.epoch, at: Date.now() }));
+    // Its writing in every SPACE: recorded as departed, where it stood (`moderation.retire`, owner 10-16).
+    await ctx.background("membership: moderation.retire", (await ctx.require("moderation")).retire());
     cache = null;
     ctx.log("members", { what: `${node.slice(0, 12)}… removed at epoch ${st.epoch}: told in this node's members feed` });
     return st;

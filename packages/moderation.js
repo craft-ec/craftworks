@@ -22,15 +22,26 @@
 export async function start(ctx) {
   const [roles, keys, directory, storage, space] = await Promise.all(["roles", "keys", "directory", "storage", "space"].map(n => ctx.require(n)));
 
-  // DEPARTED: before a commit takes a person's nodes out, where each of their feeds stands — so what they wrote still
-  // counts, up to there, for everyone who opens the space later (`storage`: the space's table `departed`).
-  async function departed(sp, did) {
-    const nodes = await directory.devices.strict(did);
-    if (!nodes.length) return;
+  // DEPARTED — the one record of a writer that stopped being a member's: a member put out (before the commit takes
+  // their nodes out), OR a device dropped from its account (`nodes`: those; owner 10-16). Where each of its feeds stands
+  // — so what it wrote still counts, up to there, for everyone who opens the space later, never after (the space's
+  // table `departed`, read by `storage.writersOf`; its public copy `pub-departed`, for whoever reads the space from
+  // outside — Discover, a guest: its public acts' authors).
+  async function departed(sp, did, nodes = null) {
+    nodes ??= await directory.devices.strict(did);
+    if (!nodes.length) return 0;
     const heads = await storage.headsOf(sp, nodes);
-    const t = await storage.table(space.tableOf(sp, "departed"), sp);
-    await t.settled;
-    for (const [node, h] of Object.entries(heads)) if (Object.keys(h).length) await t.put(node, JSON.stringify({ did, heads: h, at: Date.now() }));
+    const [t, pub] = await Promise.all(["departed", "pub-departed"].map(n => storage.table(space.tableOf(sp, n), sp)));
+    await Promise.all([t.settled, pub.settled]);
+    let n = 0;
+    for (const [node, h] of Object.entries(heads)) {
+      if (!Object.keys(h).length) continue;
+      const row = JSON.stringify({ did, heads: h, at: Date.now() });
+      await t.put(node, row);
+      await pub.put(node, row);
+      n += 1;
+    }
+    return n;
   }
 
   async function of(sp) {
@@ -136,5 +147,28 @@ export async function start(ctx) {
     })().catch(e => ((listsOpen = null), Promise.reject(e))));
   }
 
-  return { of, lists };
+  // DEVICES DROPPED from this account (owner 10-16): each space it is in records them as DEPARTED — where they stood —
+  // so what they wrote stays its own, up to there (a space's rules written by a device since dropped read as none,
+  // and the space left Discover). After a device is removed (`membership.remove`), and now and then for any found not
+  // recorded yet (a device dropped before this, or while a space was not open). How many recorded.
+  async function retire() {
+    const me = (await space.account())?.id;
+    if (!me) return 0;
+    const [ever, now] = await Promise.all([directory.devicesEver.strict(me), directory.devices.strict(me)]);
+    const gone = ever.filter(n => !now.includes(n));
+    if (!gone.length) return 0;
+    let n = 0;
+    for (const sp of (await space.mine.strict()).filter(s => s.kind !== "account")) {
+      const w = await ctx.optional("moderation: writersOf", storage.writersOf(sp), () => null);
+      const todo = gone.filter(node => !w?.byNode.get(node)?.caps);
+      if (!w || !todo.length) continue;
+      const did = await ctx.optional("moderation: departed", departed(sp, me, todo), () => 0);
+      if (did) ctx.log("moderation", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${did} device(s) dropped from this account recorded as departed` });
+      n += did;
+    }
+    return n;
+  }
+  (await ctx.require("lifecycle")).job("departed devices", { every: 6 * 3600e3, delay: 60e3, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => retire() });
+
+  return { of, lists, retire };
 }

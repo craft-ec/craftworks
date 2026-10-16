@@ -129,7 +129,7 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
     fa.flush(&mut net);
     fa.put(&mut net, "k/f2", "A's f2", None);
     let mut da = Feed::new(&a, &departed, &blinded("departed"), &epochs);
-    da.put(&mut net, &table::hex(&pubkey(&d)), &serde_json::json!({ "heads": { files.clone(): 1 } }).to_string(), None);
+    da.put(&mut net, &table::hex(&pubkey(&d)), &serde_json::json!({ "did": "did:craftec:D", "heads": { files.clone(): 1 } }).to_string(), None);
     // B: f3, and f1 again over A's version.
     catalog(&mut net, &b, &epochs, &["files"]);
     let mut fb = Feed::new(&b, &files, &blinded("files"), &epochs);
@@ -144,7 +144,7 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
     let e = writer(5);
     catalog(&mut net, &b, &epochs, &["files", "departed"]);
     let mut db = Feed::new(&b, &departed, &blinded("departed"), &epochs);
-    db.put(&mut net, &table::hex(&pubkey(&e)), &serde_json::json!({ "heads": { files.clone(): 1 } }).to_string(), None);
+    db.put(&mut net, &table::hex(&pubkey(&e)), &serde_json::json!({ "did": "did:craftec:E", "heads": { files.clone(): 1 } }).to_string(), None);
     catalog(&mut net, &e, &epochs, &["files"]);
     let mut fe = Feed::new(&e, &files, &blinded("files"), &epochs);
     fe.put(&mut net, "k/e1", "E's e1", None);
@@ -163,6 +163,9 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
     assert_eq!(rows, want, "notes: {:?}", r.notes);
+    // THEIR ROWS ARE THEIR AUTHORS' (the one map, `craftworks_account::writers`): a departed writer → its DID.
+    assert!(r.writer_dids.contains(&(pubkey(&d), "did:craftec:D".to_string())), "a departed writer keeps its author");
+    assert!(r.writer_dids.contains(&(pubkey(&e), "did:craftec:E".to_string())));
     // The tree was read (A's flushed rows are there) — and C, never listed, was never asked for.
     let c_catalog = data::Open::new(TAIL, &pubkey(&c), &table::table_name(&SPACE, "tables")).id_bytes();
     assert!(!asked.contains(&c_catalog), "a writer not in the bag is never asked");

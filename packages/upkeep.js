@@ -10,6 +10,8 @@
 // let in, written as `admitted` acts (when it happened). A page that ticks keeps the delegate out of its way.
 export async function start(ctx) {
   const [space, conversation, roles, keys, auth, index] = await Promise.all(["space", "conversation", "roles", "keys", "auth", "index"].map(n => ctx.require(n)));
+  // (Its jobs started with the page's upkeep: devices dropped from this account recorded in its spaces, `retire`.)
+  ctx.background("upkeep: moderation", ctx.require("moderation"));
   // The account's record of key packages used (`conversation.welcome` writes it too).
   const storage = async () => {
     const t = await (await ctx.require("storage")).table("keypacks");

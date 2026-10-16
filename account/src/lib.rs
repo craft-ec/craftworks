@@ -381,9 +381,108 @@ pub fn members(did: &[u8; 32], log: &Log, creds: &[Vec<u8>], removals: &[([u8; 3
     valid.into_iter().filter(|n| !removed.contains(n)).collect()
 }
 
+/// AN ACCOUNT's DEVICES NOW — the one resolution, the page's and the node's: its DEVICES contract's credentials on the
+/// key log's current key (`craftworks_devices_contract::current`); where it holds none there (not read, or none on
+/// that key yet), its CARD's credentials by the members rule (`members`, no removals: a credential on an older key
+/// counts for nothing either way). (10-16: the page returned none where the node fell back to the card.)
+pub fn devices(did: &[u8; 32], log: &Log, contract: Option<&[Vec<u8>]>, card: &[Vec<u8>]) -> Vec<[u8; 32]> {
+    if let Some(all) = contract {
+        let now: Vec<[u8; 32]> = craftworks_devices_contract::current(did, log, all).into_iter().map(|(n, _)| n).collect();
+        if !now.is_empty() {
+            return now;
+        }
+    }
+    members(did, log, card, &[])
+}
+
+/// EVERY DEVICE THE ACCOUNT HAS HAD: each credential its devices contract holds for this DID (a grow-only set — each
+/// signed by a key its key log has had, `craftworks_devices_contract::valid`), current or not. What a dropped device
+/// wrote before it was dropped is still its account's (`writers`: up to where it stood) — this is how it is known.
+pub fn devices_ever(did: &[u8; 32], contract: &[Vec<u8>]) -> Vec<[u8; 32]> {
+    let mut out: Vec<[u8; 32]> = contract.iter().filter_map(|c| read_credential(c)).filter(|(d, ..)| d == did).map(|(_, _, node, _)| node).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// One WRITER of a space's rows: whose it is (its DID) and — a DEPARTED one — up to where each of its feeds counts
+/// (`caps`: table name → the seq it counts to; None: a current device, uncapped).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Writer {
+    pub node: [u8; 32],
+    pub did: String,
+    pub caps: Option<std::collections::BTreeMap<String, u64>>,
+}
+
+/// WHO WROTE A SPACE's ROWS — the one map, the page's and the node's (owner 10-16: "any question about access should
+/// be centralized"): every CURRENT device of every member → its DID, uncapped; and every DEPARTED writer → its DID, its
+/// feeds counted up to their heads. DEPARTED: the space's `departed` rows (`node hex` → `{ did, heads: { table: seq } }`),
+/// written when a member was put out OR a device was dropped from its account — what it wrote stays its author's, up to
+/// there, never after (a stolen device writes nothing that counts). A node that is a current device is never capped; a
+/// departed row naming no DID or no heads counts for nothing. (Before: each reader mapped current devices only, so a
+/// dropped device's rows had no author — the owner's space read as having no public acts, 10-16.)
+pub fn writers(members: &[(String, Vec<[u8; 32]>)], departed: &[(String, String)]) -> Vec<Writer> {
+    let mut out: std::collections::BTreeMap<[u8; 32], Writer> = std::collections::BTreeMap::new();
+    for (did, nodes) in members {
+        for n in nodes {
+            out.entry(*n).or_insert(Writer { node: *n, did: did.clone(), caps: None });
+        }
+    }
+    for (node, value) in departed {
+        let Some(node) = unhex32(node) else { continue };
+        if out.contains_key(&node) {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(value) else { continue };
+        let Some(did) = v["did"].as_str().filter(|d| d.starts_with("did:craftec:")) else { continue };
+        let caps: std::collections::BTreeMap<String, u64> = v["heads"].as_object().map(|o| o.iter().filter_map(|(t, s)| Some((t.clone(), s.as_u64()?))).collect()).unwrap_or_default();
+        if caps.is_empty() {
+            continue;
+        }
+        out.insert(node, Writer { node, did: did.to_string(), caps: Some(caps) });
+    }
+    out.into_values().collect()
+}
+
+fn unhex32(h: &str) -> Option<[u8; 32]> {
+    if h.len() != 64 {
+        return None;
+    }
+    let mut o = [0u8; 32];
+    for (i, b) in o.iter_mut().enumerate() {
+        *b = u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(o)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_departed_writer_stays_its_authors_up_to_its_heads_and_a_current_device_is_never_capped() {
+        let (a, b, gone, junk) = ([1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]);
+        let hx = |n: &[u8; 32]| n.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let members = vec![("did:craftec:A".to_string(), vec![a]), ("did:craftec:B".to_string(), vec![b])];
+        let departed = vec![
+            // A device dropped from A's account: its rows A's, up to seq 7 of `acts`.
+            (hx(&gone), r#"{"did":"did:craftec:A","heads":{"x1-acts":7}}"#.to_string()),
+            // A row for a CURRENT device: it stays uncapped.
+            (hx(&b), r#"{"did":"did:craftec:B","heads":{"x1-acts":1}}"#.to_string()),
+            // No heads / no DID: nothing.
+            (hx(&junk), r#"{"did":"did:craftec:C","heads":{}}"#.to_string()),
+            ("zz".to_string(), r#"{"did":"did:craftec:D","heads":{"t":1}}"#.to_string()),
+        ];
+        let w = writers(&members, &departed);
+        let of = |n: [u8; 32]| w.iter().find(|x| x.node == n).cloned();
+        assert_eq!(of(a).unwrap().caps, None);
+        assert_eq!(of(b).unwrap().caps, None, "a current device is never capped");
+        let g = of(gone).expect("a dropped device's rows keep their author");
+        assert_eq!(g.did, "did:craftec:A");
+        assert_eq!(g.caps.unwrap().get("x1-acts"), Some(&7));
+        assert!(of(junk).is_none(), "a departed row with no heads counts for nothing");
+        assert_eq!(w.len(), 3);
+    }
 
 
     fn hex(b: &[u8]) -> String {

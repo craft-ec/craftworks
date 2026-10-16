@@ -587,15 +587,17 @@ export async function start(ctx) {
   // LEFTOVERS (FOUNDATION.md §5): a listing whose space does not OPEN — its public acts unread, or none of them counts
   // (a space under keys nobody holds any more) — is left out, never shown as a space that opens nothing; how many,
   // reported once a page (`leftover`).
-  const openable = new Map(); // space id → Promise<bool>, once a page
   // (Unread is left out NOW, never remembered: R4 — asked again, it is read again.)
-  const opens = d =>
-    ctx.cache(openable, d.id, async () => {
-      const pr = await (await ctx.require("roles")).ofPublic(d);
-      const st = (await pr.decided?.()) ?? pr.state;
-      if (st?.s === "unknown") throw new Error(`${d.id.slice(0, 8)}: its public acts not read yet`);
-      return pr.acts().length > 0;
-    }, false);
+  // OPENS: its public acts read (its roles from outside — `roles.ofPublic`, kept by roles and LIVE: an author learned
+  // later, a departed writer's record arriving after its acts, counts as it comes) and any counted. Asked each time,
+  // never kept: a "no" decided before its departed record arrived stayed "no" for the page (fx 10-16, a space whose
+  // rules a dropped device wrote).
+  const opens = async d => {
+    const pr = await (await ctx.require("roles")).ofPublic(d);
+    const st = (await pr.decided?.()) ?? pr.state;
+    if (st?.s === "unknown") throw new Error(`${d.id.slice(0, 8)}: its public acts not read yet`);
+    return pr.acts().length > 0;
+  };
   let leftoverSaid = false;
   async function publicSpaces() {
     const seen = new Map();
@@ -608,7 +610,7 @@ export async function start(ctx) {
       seen.set(d.id, { id: d.id, name: String(d.name ?? "").slice(0, 100), kind: "server", governance: d.governance });
       candidates.push(seen.get(d.id));
     }
-    const ok = await Promise.all(candidates.map(opens));
+    const ok = await Promise.all(candidates.map(d => ctx.optional("items: opens", opens(d), () => false)));
     const shown = candidates.filter((_, i) => ok[i]);
     const hidden = candidates.length - shown.length;
     if (hidden && !leftoverSaid) {

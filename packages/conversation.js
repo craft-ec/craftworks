@@ -57,7 +57,7 @@ export function frame() {
 }
 
 export async function start(ctx) {
-  const [space, keys, directory, index, content] = await Promise.all(["space", "keys", "directory", "index", "content"].map(n => ctx.require(n)));
+  const [space, keys, directory, index, content, storage] = await Promise.all(["space", "keys", "directory", "index", "content", "storage"].map(n => ctx.require(n)));
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
   // WELCOME a person into a space: they (their DID) added to its group WITH THE KEY THEIR REQUEST CARRIES (`key`: `{ kp,
@@ -315,7 +315,8 @@ export async function start(ctx) {
     const r = await (await ctx.require("roles")).of(sp);
     await r.settled;
     // Its owner as its acts say — or, a member whose keys are behind (the acts unread), as the space's record says.
-    const devs = await directory.devices.strict(r.owner ?? sp.governance?.owner);
+    // Its devices NOW (the one map: `storage.writersOf`).
+    const devs = devicesNow(await storage.writersOf(sp), r.owner ?? sp.governance?.owner);
     return (await index.spacePointers.strict(sp, "writers")).filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
   }
   const ownerBranch = async sp => (await ownerBranches(sp))[0] ?? null;
@@ -328,8 +329,9 @@ export async function start(ctx) {
     const ptrs = await index.spacePointers(sp, "writers");
     const own = (await ctx.optional("conversation: ownerBranches", ownerBranches(sp), () => []))[0] ?? null;
     const out = new Map();
+    const w = await storage.writersOf(sp);
     for (const m of r.members()) {
-      const devs = await directory.devices(m.did);
+      const devs = devicesNow(w, m.did);
       const anns = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
       const a = anns[0] ?? null;
       const repaired = ptrs.filter(p => p?.repair === m.did || p?.welcomed === m.did);
@@ -388,11 +390,13 @@ export async function start(ctx) {
     await ctx.background("conversation: storage.setUpkeepMark", storage.setUpkeepMark(key, now));
     return true;
   }
-  // The member a device writes for (`{ did: true }`), among this space's members.
+  // The member a device writes for (`{ did: true }`) — the one map (`storage.writersOf`): a departed device's too.
   async function whoseDevice(w, r) {
-    for (const m of r.members()) if ((await directory.devices(m.did)).includes(w)) return { [m.did]: true };
-    return {};
+    const x = (await storage.writersOf(r.space)).byNode.get(w);
+    return x ? { [x.did]: true } : {};
   }
+  // A member's devices NOW (not departed), from the one map.
+  const devicesNow = (w, did) => [...w.byNode].filter(([, x]) => x.did === did && !x.caps).map(([n]) => n);
   // BEHIND: this node's keys of a space not on the owner's branch at the owner's epoch (a welcome that opened onto an
   // older branch; a restored account's) — it reads nothing new there. It ASKS IN AGAIN (`askAgainIn`, the space's
   // member bag, carrying where its keys are): one member lets it in (`admit`) — onto the owner's branch.

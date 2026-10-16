@@ -77,8 +77,6 @@ export async function start(ctx) {
   };
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
-  const didOf = h => new Uint8Array(h.match(/../g).slice(4, 36).map(x => parseInt(x, 16)));
-  const signerOf = h => h.slice(72, 136);
   const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, "0")).join("");
 
   const spaces = new Map();
@@ -131,20 +129,18 @@ export async function start(ctx) {
     let lastSaid = null;
     // The group READ at least once (owner 10-08: a space showed "0 members" while its keys were still arriving).
     let groupRead = false;
+    // MEMBERS and WRITERS: the one map (`storage.writersOf` — members whose credential is really theirs, their devices,
+    // and the space's DEPARTED writers, a dropped device's rows its author's up to where it stood; owner 10-16).
     const learn = async st => {
       if (st) groupRead = true;
       left = !!st?.removed;
-      const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: node.glue.did_of(didOf(m.cred)), signer: signerOf(m.cred) }));
-      const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
-      for (const [i, m] of all.entries()) if (!real[i]) ctx.log("roles", { what: `a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
-      group = all.filter((_, i) => real[i]);
+      const w = await storage.writersOf(sp);
+      const all = (st?.members ?? []).filter(m => m.cred);
+      group = w.members;
+      for (const [n, x] of w.byNode) writers.set(n, x.did);
       // SAID when it changes (owner 10-07: a member's space showed 0 members): what the group gave, and what was kept.
       const said = `${st ? `${st.members?.length ?? 0} member(s) at epoch ${st.epoch ?? "?"}${st.removed ? " (this node removed)" : ""}` : "not ready"}, ${all.length} with a credential, ${group.length} kept`;
       if (said !== lastSaid) (lastSaid = said), ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}` });
-      // Each member's DEVICES write on its behalf (their feeds): device key → the DID (the DID's card, checked
-      // against its key log).
-      const sets = await Promise.all(group.map(m => directory.devices.strict(m.did)));
-      group.forEach((m, i) => sets[i].forEach(k => writers.set(k, m.did)));
     };
     if (!out) await learn(await g.ready());
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
@@ -187,18 +183,30 @@ export async function start(ctx) {
     // listed once): read from outside instead of every member's public acts.
     const ACTS = `acts ${sp.id}`;
     const actWriters = out ? await ctx.optional("roles: index.pointers", index.pointers(ACTS).then(ps => [...new Set(ps.map(p => p?.w).filter(w => typeof w === "string"))]), () => []) : [];
+    // Its DEPARTED writers, as outsiders read them (`pub-departed`, the public copy of `departed`).
+    const pubDeparted = out ? storage.readOnly(space.tableOf(sp, "pub-departed"), []) : null;
     async function widen() {
       if (!out) return;
       for (;;) {
         const fresh = [...roster].filter(d => !known.has(d));
         if (!fresh.length) return;
         fresh.forEach(d => known.add(d));
-        const sets = await Promise.all(fresh.map(d => directory.devices(d)));
-        fresh.forEach((d, i) => sets[i].forEach(k => writers.set(k, d)));
-        await pubActs.add(actWriters);
-        replay();
+        const devs = (await Promise.all(fresh.map(d => directory.devices(d)))).flat();
+        await pubDeparted.add([...devs, ...writers.keys(), ...actWriters]);
+        await authors();
       }
     }
+    // WHO WROTE: the one map (`storage.writersOf`) — the roster's devices, and its departed writers capped where they
+    // stood; the public acts read from exactly those (a writer the map does not know authors nothing). Again whenever
+    // the departed record changes (it may arrive after the acts).
+    async function authors() {
+      const w = await storage.writersOf(sp, { roster: [...known], departedRows: pubDeparted.rows() });
+      for (const [n, x] of w.byNode) writers.set(n, x.did);
+      const caps = new Map([...w.byNode].filter(([, x]) => x.caps).map(([n, x]) => [n, x.caps[pubName]]).filter(([, c]) => typeof c === "number"));
+      await pubActs.add([...w.byNode.keys()], caps);
+      replay();
+    }
+    if (out) pubDeparted.onChange(() => ctx.background("roles: authors", authors()));
     if (out) {
       await widen();
       group = [...roster].map(did => ({ did }));

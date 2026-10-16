@@ -11,6 +11,16 @@ use craftworks_identity::{decode_answer, encode_request, Answer, Request};
 use serde_json::{json, Value};
 use wire::{AckKind, Incoming, Reassembler};
 
+fn unhex32(h: &str) -> Option<[u8; 32]> {
+    if h.len() != 64 {
+        return None;
+    }
+    let mut o = [0u8; 32];
+    for (i, b) in o.iter_mut().enumerate() {
+        *b = u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(o)
+}
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -1592,17 +1602,41 @@ mod js {
             self.put_obj(&account::devices_put(devices_code, idlog_code, &did, &bytes_list(&creds)))
         }
 
-        /// The account's devices NOW, from its devices contract (read: `got`) and its key log: the node keys (hex) on the
-        /// log's current key. `undefined` when the devices contract was not read — the caller reads the card instead.
-        pub fn account_devices(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<JsValue, JsValue> {
+        /// The account's devices NOW — the one resolution (`craftworks_account::devices`, the node's too): its devices
+        /// contract (when read: `got`) on the key log's current key, else its CARD's credentials (`card`: bytes each).
+        /// Node keys, hex. The key log read first.
+        pub fn account_devices(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8], card: js_sys::Array) -> Result<js_sys::Array, JsValue> {
             let did = b32(did)?;
             let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
-            let Some(st) = self.0.got(&dev) else { return Ok(JsValue::UNDEFINED) };
-            let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
+            let contract = match self.0.got(&dev) {
+                Some(st) => Some(craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?),
+                None => None,
+            };
             let id = account::idlog_put(idlog_code, &did, None).id_bytes;
             let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
             let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
-            Ok(craftworks_devices_contract::current(&did, &log, &creds).iter().map(|(n, _)| JsValue::from(hex(n))).collect::<js_sys::Array>().into())
+            Ok(account::devices(&did, &log, contract.as_deref(), &bytes_list(&card)).iter().map(|n| JsValue::from(hex(n))).collect())
+        }
+
+        /// EVERY DEVICE the account has had (`craftworks_account::devices_ever`), its devices contract read (`got`):
+        /// node keys, hex. Empty where the contract was not read.
+        pub fn account_devices_ever(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let did = b32(did)?;
+            let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
+            let Some(st) = self.0.got(&dev) else { return Ok(js_sys::Array::new()) };
+            let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
+            Ok(account::devices_ever(&did, &creds).iter().map(|n| JsValue::from(hex(n))).collect())
+        }
+
+        /// WHO WROTE A SPACE's ROWS — the one map (`craftworks_account::writers`, the node's too): `members` JSON
+        /// `[[did, [node hex…]]…]` (each member's current devices), `departed` JSON `[[node hex, row value]…]` (the
+        /// space's `departed` table). → JSON `[{ node, did, caps }]` (`caps`: table → seq, a departed writer's; null).
+        pub fn space_writers(members: &str, departed: &str) -> Result<String, JsValue> {
+            let m: Vec<(String, Vec<String>)> = serde_json::from_str(members).map_err(|e| err(format!("members: {e}")))?;
+            let d: Vec<(String, String)> = serde_json::from_str(departed).map_err(|e| err(format!("departed: {e}")))?;
+            let m: Vec<(String, Vec<[u8; 32]>)> = m.into_iter().map(|(did, ns)| (did, ns.iter().filter_map(|h| unhex32(h)).collect())).collect();
+            let out: Vec<serde_json::Value> = account::writers(&m, &d).into_iter().map(|w| serde_json::json!({ "node": hex(&w.node), "did": w.did, "caps": w.caps })).collect();
+            Ok(serde_json::Value::Array(out).to_string())
         }
 
         /// The account's data key seed from the words' entropy (handed once to the identity delegate, never kept).

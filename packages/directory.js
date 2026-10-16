@@ -247,25 +247,16 @@ export async function start(ctx) {
           // card says they have one (an absent contract costs a whole network search on every page). Their card's
           // devices otherwise (the card is the data key's: any of its devices could rewrite it).
           const c = await card(did, { fresh });
-          const contract = async () => {
-            const devicesCode = await ctx.require("devices-wasm");
-            if (!(await auth.identity.readDevices(didBytes(did)))) return null;
-            const now = core.account_devices(devicesCode, idlogCode, didBytes(did));
-            return now ? Array.from(now) : null;
-          };
-          if (c?.hasDevices) {
-            const now = await contract();
-            if (now) return (deviceWhy.delete(did), now);
-          }
           const creds = (c?.nodes ?? []).map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
-          const out = creds.length ? Array.from(core.account_members(idlogCode, didBytes(did), creds, [])) : [];
+          // WHICH COUNT: the one resolution (`craftworks_account::devices` in the core — the node's too): their devices
+          // contract when read, else their card's. (Here only what to READ, and when.)
+          const devicesCode = await ctx.require("devices-wasm");
+          const resolve = () => Array.from(core.account_devices(devicesCode, idlogCode, didBytes(did), creds));
+          if (c?.hasDevices) await auth.identity.readDevices(didBytes(did));
+          let out = resolve();
+          // Nothing counts and their card does not say: an account that put its contract before cards said so.
+          if (!out.length && !c?.hasDevices && (await auth.identity.readDevices(didBytes(did)))) out = resolve();
           if (out.length) return (deviceWhy.delete(did), out);
-          // Nothing on the card counts (no card read, or its devices on a key the log moved past) and it does not say
-          // yet: an account that put its contract before cards said so — looked up then only.
-          if (!c?.hasDevices) {
-            const now = await contract();
-            if (now) return (deviceWhy.delete(did), now);
-          }
           if (!c) return none("their card not read");
           return none(c.nodes.length ? `none of their card's ${creds.length} device(s) on their key log` : "their card lists no device");
         })().catch(e => (deviceWhy.set(did, `reading their devices: ${String(e?.message ?? e).slice(0, 80)}`), [])),
@@ -273,6 +264,14 @@ export async function start(ctx) {
     return deviceSets.get(did);
   }
   const devicesWhy = did => deviceWhy.get(did) ?? null;
+  // EVERY DEVICE they have had (their devices contract: a grow-only set — `craftworks_account::devices_ever`), current
+  // or dropped: what a dropped one wrote before is still theirs (`storage.writersOf`, up to where it stood).
+  async function devicesEver(did) {
+    if (!(await keysOf(did))) return [];
+    const devicesCode = await ctx.require("devices-wasm");
+    if (!(await auth.identity.readDevices(didBytes(did)))) return [];
+    return Array.from(core.account_devices_ever(devicesCode, idlogCode, didBytes(did)));
+  }
 
   // DISCOVER's people: whoever chose to be shown. A pointer in one public bag says where to look; their own CARD says
   // whether they still want it (row `listed`): a bag keeps its pointers, so leaving is the card's word.
@@ -293,5 +292,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, keyNotTheirs, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
+  return { credTable, keyNotTheirs, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, devicesEver: ctx.total("directory.devicesEver", () => [], devicesEver), handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
 }
