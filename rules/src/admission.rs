@@ -113,7 +113,10 @@ pub fn decide(q: &Request, v: &View) -> Decision {
         return skip("this request was answered already: only a newer request is let in");
     }
     match q.entry {
-        Entry::Join if v.held => return skip("in the group already"),
+        // A JOIN from someone the group HOLDS — an entry of theirs with no admission behind it (a stray left by the
+        // 10-13 add loop) or a device that lost the group: let in as `Again { from: None }` is, its old entry replaced
+        // in the same commit, once per request (above). Skipped before (10-16, the owner in Ivvor's New Space: "in the
+        // group already" to every request, while their device held nothing — let in by neither side, ever).
         Entry::Again { from: Some(e), seen } if v.held => match seen {
             None => return skip("its request does not say where it saw the group: it asks again from an updated app"),
             Some(s) if e >= s => return skip("not behind when it asked"),
@@ -214,9 +217,11 @@ mod tests {
         assert!(matches!(decide(&then, &view(&me, &a, &[], &[], true)), Decision::Skip(_)), "not behind when it asked");
         let unsaid = Request { entry: Entry::Again { from: Some(4), seen: None }, ..q };
         assert!(matches!(decide(&unsaid, &view(&me, &a, &[], &[], true)), Decision::Skip(_)), "where it saw the group unsaid");
-        // A JOIN from someone the group holds: nothing.
+        // A JOIN from someone the group HOLDS (a stray entry, no admission behind it; or a device that lost it): let in,
+        // its old entry replaced — once per request (10-16: skipped before, the asker never let in).
         let join = Request { entry: Entry::Join, ..q };
-        assert!(matches!(decide(&join, &view(&me, &a, &[], &[], true)), Decision::Skip(_)));
+        assert!(matches!(decide(&join, &view(&me, &a, &[], &[], true)), Decision::Admit { .. }), "a held asker is let in again");
+        assert!(matches!(decide(&join, &view(&me, &a, &[], &w, true)), Decision::Skip(_)), "answered once");
     }
 
     #[test]
