@@ -197,6 +197,12 @@ joining and catching up; none converged.
    ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
 4. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
    admitter by turn) — now deciding list entries; the follower acts on the list, never on requests.
+5. **THROUGH THE LIFECYCLE** (§1 — every step a move of its machine, reported; no timer or ask beside them):
+   | Machine | Its moves here |
+   |---|---|
+   | `group` (this device's keys of a space) | upkeep sets HELD / BEHIND / OFF_BRANCH / NOT_HELD / UNREADABLE; ENTERING any not-reading state while listed posts "my key" — once per entry, never on a timer; the follower's commit is its `commit` step (`why`: n in, m out) |
+   | `join` (the asker, keyed by its key) | ASKED = "my key" posted; WAITING with why — "not on the list yet" or "listed: keys coming"; MEMBER = its `group` reached HELD; FAILED with why |
+   | `member` (the decider, keyed by the asker's key) | SKIPPED (why: `rules::admission`); LISTED (the list entry written — new); WELCOMED when the follower's commit carried that key; FAILED |
 
 **Deleted** (each with its tests): the three add paths and two remove paths (one follower), the inline per-kind
 member conditions, `askAgainIn` / the stuck bag / catch-up asks / repair welcomes / the resend outbox / welcome-again

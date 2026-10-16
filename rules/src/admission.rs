@@ -1,4 +1,4 @@
-//! LETTING SOMEONE INTO A GROUP — the ONE rule the page and the identity delegate both run (FOUNDATION §3, "Groups";
+//! LETTING SOMEONE INTO A GROUP — the ONE rule the page and the identity delegate both run (FOUNDATION §3, "Members and keys";
 //! owner 10-13: one implementation, the right key to the right invite). Every group kind (a space, an audience, a
 //! circle, a conversation, a level group) lets people in by it; the kind supplies only who may let in.
 //!

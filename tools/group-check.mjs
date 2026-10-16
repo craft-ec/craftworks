@@ -1,4 +1,4 @@
-// GROUP CHECK (the build's): LETTING SOMEONE INTO A GROUP HAS ONE IMPLEMENTATION (FOUNDATION.md §3, "Groups"; owner
+// GROUP CHECK (the build's): LETTING SOMEONE INTO A GROUP HAS ONE IMPLEMENTATION (FOUNDATION.md §3, "Members and keys"; owner
 // 10-13: "one implementation and no duplicate"). Every MLS group — a space, an audience, a circle, a conversation, a
 // level group — is entered the same way: a REQUEST carrying its asker's own key (`conversation.askIn`, the one
 // `index.request`), decided by `rules::admission` (the one `admission_decide`, in `conversation.admit`; the identity

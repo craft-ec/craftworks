@@ -102,7 +102,7 @@ export async function start(ctx) {
         "history-handed": { from: "*" },
       },
     },
-    // LETTING SOMEONE INTO A GROUP (FOUNDATION §3, "Groups"), keyed by the REQUEST — `q:<its key's tag>`, the same on
+    // LETTING SOMEONE INTO A GROUP (FOUNDATION §3, "Members and keys"), keyed by the REQUEST — `q:<its key's tag>`, the same on
     // every side — so one request's whole story is one key in the health reports: the asker's `join`, the deciders'
     // `member` (a page's, or the node's: `by`). Every move reported (owner 10-14: what another user faces is read here).
     join: {
@@ -124,6 +124,8 @@ export async function start(ctx) {
       journal: true,
       events: {
         skip: { from: "*", to: "SKIPPED" },
+        // LISTED: the list entry written (the decision — the keys follow it: the follower's commit is WELCOMED).
+        listed: { from: "*", to: "LISTED" },
         admit: { from: ["NONE", "SKIPPED", "FAILED"], to: "ADMITTING" },
         kept: { from: ["ADMITTING"], to: "KEPT" },
         welcomed: { from: "*", to: "WELCOMED" },
