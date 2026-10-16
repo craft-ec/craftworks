@@ -428,3 +428,19 @@ fn a_lapse_counts_only_in_a_level_group_and_never_against_an_admin() {
     assert!(!gov(&[pol, a_in, m_in, lapse_m]).roster.contains(M));
     assert!(!level_reaches("vip", "gold") && !level_reaches("free", "gold"), "an unknown level is reached by nobody");
 }
+
+/// THE ONE STAMP (`Gov::stamp`, the page's and the node's): deps = the counted heads, newest first; `at` past the latest
+/// counted time, never following a clock far ahead; an act's own `at` kept. `missing`: ids named but not held.
+#[test]
+fn stamp_names_the_heads_and_moves_past_the_latest_time() {
+    use serde_json::json;
+    let mut g = Gov::default();
+    g.counted = vec![json!({ "id": "a", "at": 100.0, "deps": [] }), json!({ "id": "b", "at": 200.0, "deps": ["a"] }), json!({ "id": "c", "at": 9.0e12, "deps": [] })];
+    let v = g.stamp(json!({ "act": "admitted", "did": "d" }), 150.0);
+    assert_eq!(v["deps"], json!(["c", "b"]), "heads only, newest first");
+    assert_eq!(v["at"], json!(201.0), "just past the latest — the clock far ahead not followed");
+    assert_eq!(g.stamp(json!({ "act": "x" }), 5000.0)["at"], json!(5000.0), "now, when now is later");
+    assert_eq!(g.stamp(json!({ "act": "x", "at": 42.0 }), 5000.0)["at"], json!(42.0), "its own time kept");
+    let have: BTreeSet<String> = ["b".to_string(), "c".to_string()].into();
+    assert_eq!(g.missing(&have), vec!["a".to_string()]);
+}

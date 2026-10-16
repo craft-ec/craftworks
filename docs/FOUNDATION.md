@@ -200,11 +200,13 @@ joining and catching up; none converged.
    the join-again, stuck, catch-up and repair asks. A person not on the list asks to join with the same message plus where
    they ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
 4. **NO MEMBER MUST STAY ONLINE, and ONE IMPLEMENTATION OF THE WHOLE STEP** (owner 10-16: "the design is still
-   duplicate"): the whole step — read the list, the key entries and the answers; decide (`members::follow`); build the
-   commit; build each welcome; write a list entry (the dated, DAG-stamped record entry) — is ONE Rust implementation,
-   run by the page's core (wasm) and the identity delegate (natively) alike. The page's JavaScript and the node only
-   carry bytes to and from the network; neither gathers inputs, decides or builds on its own. So the node admits and
-   follows with every page closed, and the two can never disagree. DELIVERY is the send door's (the one `index.send`: what it could
+   duplicate"): the whole step — read the list (the acts, replayed by `gov`), the key entries, the "my key" posts and the
+   answers; decide (`rules::admission`, `members::follow`); write a list entry (`Gov::stamp`); build the commit and each
+   welcome — runs in ONE place: the account's node (the identity delegate's upkeep), on every wake-up and whenever a page
+   asks it to run now. It holds the account's keys already and runs with every page closed. The page writes acts the
+   person chooses (by the same `Gov::stamp`), posts "my key", and follows the commits from the epoch logs; it never
+   gathers the inputs, decides or commits for membership itself. The node reads the list from the acts, never from a
+   page-computed copy (a mandate keeps only what names the space and its group). DELIVERY is the send door's (the one `index.send`: what it could
    not deliver it keeps and sends again) — never a membership mechanism.
 5. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
    admitter by turn) — now deciding list entries; the follower acts on the list, never on requests.

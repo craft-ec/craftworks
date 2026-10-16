@@ -16,6 +16,15 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+/// A clock ahead by more than this is not followed by `Gov::stamp`.
+pub const AHEAD_MS: f64 = 3_600_000.0;
+/// How many acts a new one names (`deps`).
+pub const DEPS: usize = 8;
+
+fn deps_of(e: &Value) -> impl Iterator<Item = &str> {
+    e.get("deps").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)
+}
+
 /// An APP's name as an act names it: the app's route (`chat`, `note`, `mail`…) — the apps themselves are the manifest's,
 /// never a second list here (one went stale when apps were renamed, and acts adding them were refused).
 pub fn app_name(x: &str) -> bool {
@@ -270,6 +279,34 @@ impl Gov {
     }
     fn set_policy(&mut self, path: &str, action: &str, who: Option<String>, at: f64) {
         self.history.entry(format!("{path}|{action}")).or_default().push((at, who));
+    }
+
+    /// THE ONE STAMP of an act to write (the page's `roles.act` and the node's alike): `deps`, the acts it builds on —
+    /// the newest DEPS of the counted acts no other names — and `at` (kept when the act carries one: when it happened),
+    /// else now, or just past the latest counted time (a clock more than AHEAD_MS ahead is not followed: one writer's
+    /// wrong clock would push every later act — and when policies take effect — into the future). Only counted acts
+    /// count (a refused act moves nobody's clock).
+    pub fn stamp(&self, mut act: Value, now: f64) -> Value {
+        let at = |e: &Value| e.get("at").and_then(Value::as_f64).filter(|x| x.is_finite()).unwrap_or(0.0);
+        let named: std::collections::HashSet<&str> = self.counted.iter().flat_map(|e| deps_of(e)).collect();
+        let latest = self.counted.iter().map(at).filter(|t| *t <= now + AHEAD_MS).fold(0.0, f64::max);
+        let mut heads: Vec<&Value> = self.counted.iter().filter(|e| s(e, "id").is_some_and(|id| !named.contains(id))).collect();
+        heads.sort_by(|a, b| at(b).partial_cmp(&at(a)).unwrap_or(std::cmp::Ordering::Equal).then_with(|| s(a, "id").cmp(&s(b, "id"))));
+        let deps: Vec<Value> = heads.iter().take(DEPS).filter_map(|e| s(e, "id")).map(|id| Value::String(id.to_string())).collect();
+        if let Some(o) = act.as_object_mut() {
+            if o.get("at").is_none_or(Value::is_null) {
+                o.insert("at".into(), serde_json::json!(now.max(latest + 1.0)));
+            }
+            o.insert("deps".into(), Value::Array(deps));
+        }
+        act
+    }
+
+    /// The ids counted acts name that are not among `have` (every id written, counted or not): this reader's view is
+    /// short.
+    pub fn missing(&self, have: &BTreeSet<String>) -> Vec<String> {
+        let named: BTreeSet<&str> = self.counted.iter().flat_map(|e| deps_of(e)).collect();
+        named.into_iter().filter(|id| !have.contains(*id)).map(str::to_string).collect()
     }
 
     /// THE REPLAY. `first`: the space's first owner (its id proves it). `writers`: node key → DID. `now`: the time an

@@ -4029,6 +4029,16 @@ mod js {
                 .map(|a| a.to_string())
                 .collect()
         }
+        /// THE ONE STAMP of an act to write (`Gov::stamp`): the act (JSON) with its `deps` and `at`.
+        pub fn stamp(&self, act: &str, now: f64) -> Result<String, JsValue> {
+            let v: serde_json::Value = serde_json::from_str(act).map_err(|e| err(e.to_string()))?;
+            Ok(self.0.stamp(v, now).to_string())
+        }
+        /// The ids counted acts name that are not among `have` (JSON [id]): `Gov::missing`.
+        pub fn missing(&self, have: &str) -> Result<String, JsValue> {
+            let have: std::collections::BTreeSet<String> = serde_json::from_str(have).map_err(|e| err(e.to_string()))?;
+            Ok(serde_json::to_string(&self.0.missing(&have)).unwrap_or_default())
+        }
         /// The acts that counted (JSON), all or of one kind.
         pub fn counted(&self, kind: Option<String>) -> String {
             serde_json::Value::Array(
