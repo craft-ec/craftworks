@@ -191,22 +191,45 @@ joining and catching up; none converged.
    device, behind the current epoch or on another branch) re-added with the fresh key package their device posted —
    their old leaf replaced in the same commit; the welcome recorded. Re-added members are handed the history
    (`a38358f`'s path). Nothing is added without a list entry; nobody listed is left unable to read.
-3. **ONE MESSAGE from a member's device: "my key".** A device that is on the list and cannot read posts a fresh key
-   package (as a request carries one now) — once per state it is in, never on a timer. That replaces the join-again,
-   stuck, catch-up, repair and resend asks. A person not on the list asks to join with the same message plus where they
-   ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
-4. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
+3. **ONE MESSAGE from a member's device: "my key".** A device on the list that CANNOT read posts a fresh key package
+   (as a request carries one now). CANNOT READ means what reading the log cannot fix: never held (NOT_HELD), another
+   branch (OFF_BRANCH), UNREADABLE, STUCK, or a welcome that failed to open (`join` FAILED) — and, its last key ANSWERED
+   (a welcome recorded for it) yet still not reading once that welcome should have arrived. BEHIND is NOT one: a member
+   that missed commits reads them from the epoch logs (ordinary processing) — re-adding everyone who lags pushes the rest
+   behind (the churn that ran Ivvor's space to epoch 485). Posted once per such condition, never on a timer. It replaces
+   the join-again, stuck, catch-up and repair asks. A person not on the list asks to join with the same message plus where
+   they ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
+4. **NO MEMBER MUST STAY ONLINE** (the two rules): the node writes list entries and runs the follower with every page
+   closed — the ONE act writer (the dated, DAG-stamped record entry the page writes) and the ONE follower, both in Rust,
+   shared by the page's core and the identity delegate. DELIVERY is the send door's (the one `index.send`: what it could
+   not deliver it keeps and sends again) — never a membership mechanism.
+5. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
    admitter by turn) — now deciding list entries; the follower acts on the list, never on requests.
-5. **THROUGH THE LIFECYCLE** (§1 — every step a move of its machine, reported; no timer or ask beside them):
+6. **THROUGH THE LIFECYCLE** (§1 — every step a move of its machine, reported; no timer or ask beside them):
    | Machine | Its moves here |
    |---|---|
    | `group` (this device's keys of a space) | upkeep sets HELD / BEHIND / OFF_BRANCH / NOT_HELD / UNREADABLE; ENTERING any not-reading state while listed posts "my key" — once per entry, never on a timer; the follower's commit is its `commit` step (`why`: n in, m out) |
    | `join` (the asker, keyed by its key) | ASKED = "my key" posted; WAITING with why — "not on the list yet" or "listed: keys coming"; MEMBER = its `group` reached HELD; FAILED with why |
    | `member` (the decider, keyed by the asker's key) | SKIPPED (why: `rules::admission`); LISTED (the list entry written — new); WELCOMED when the follower's commit carried that key; FAILED |
 
+**THE FLOWS, walked end to end (10-16 — every one must hold before code):**
+| # | Scenario | Flow |
+|---|---|---|
+| 1 | a new person joins, a member's page open | "my key" + where → `rules::admission` → list entry (LISTED) → follower commit → welcome sent → asker HELD |
+| 2 | the same, every page closed | the node: the same rule → the same act writer → the same follower → the send door |
+| 3 | a welcome lost in transit | the send door sends again; still not reading after its key was answered → "my key" again (answered once) |
+| 4 | a welcome that does not open | `join` FAILED (why) → "my key" again |
+| 5 | a member that missed commits | BEHIND → reads the epoch logs; only a walk that cannot go on (UNREADABLE, OFF_BRANCH, STUCK) → "my key" |
+| 6 | a member removed or banned | the act → off the list → the follower takes its entries out |
+| 7 | a device dropped from an account | the account's list (its devices) → its keys; spaces keep its writing (`departed`) |
+| 8 | a PRO/VIP card changes level | the list is the card's level → the follower adds or removes |
+| 9 | a direct chat | the list: the two |
+| 10 | Ivvor's space | its owner writes the 7 into the record; their devices, NOT_HELD / UNREADABLE, post "my key" on the new build's first load; the follower re-adds all 7 in one commit |
+| 11 | the only member holding current keys offline | its node follows (2) |
+
 **Deleted** (each with its tests): the three add paths and two remove paths (one follower), the inline per-kind
-member conditions, `askAgainIn` / the stuck bag / catch-up asks / repair welcomes / the resend outbox / welcome-again
-paths, the asker's join-vs-again choice. ENFORCED: `tools/group-check.mjs` — a key add, re-add or remove anywhere but
+member conditions, `askAgainIn` / the stuck bag / catch-up asks / repair welcomes / welcome-again paths, the asker's
+join-vs-again choice; the welcome outbox becomes the send door's (delivery, not membership). ENFORCED: `tools/group-check.mjs` — a key add, re-add or remove anywhere but
 the follower fails the build (Rust included); a request built anywhere but the one "my key" site fails it.
 
 **Ivvor's New Space, repaired by the same design.** Its owner's device writes the record to match its real members
@@ -216,8 +239,10 @@ one commit at the current epoch. Done when the health records show all 7 at the 
 **Order of work** (each: built, the negative control red on the old code, proven on fx with a space broken as Ivvor's
 is, released — the identity build moves: a PIN once):
 - G1 the follower in the core (Rust) with tests over broken states: members behind, never announced, forked, dropped
-  devices, strays; one commit each.
-- G2 the page and the delegate on it; "my key" as the one member message; the deletions; group-check.
+  devices, strays; one commit each. (Done: 5b4d3ec.)
+- G2a the ONE act writer in Rust (DAG stamp, the page's format), the page's `roles.act` through it; the node writes
+  list entries. G2b the page and the delegate on the follower; "my key" on the conditions above; the deletions;
+  group-check. Every flow in the table above proven on fx before release.
 - G3 each kind's list on it (space, PRO/VIP, chats, audience, circle, account).
 - G4 Ivvor's space repaired; health shows all 7 current.
 Then the rest of the duplicate sweep (`.claude/feature-progress.md`, batches 3–5).
