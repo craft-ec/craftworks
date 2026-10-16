@@ -245,7 +245,6 @@ export async function mount(ctx, el) {
     if (foot) t.createTFoot().insertRow().append(...foot.map((v, i) => h("td", { textContent: String(v), className: i ? "num" : "" })));
     return t;
   };
-  const month = () => new Date().toISOString().slice(0, 7);
   async function contribute() {
     const usage = await ctx.require("usage");
     const amount = h("input", { type: "number", min: "0", step: "0.000000001", value: "10", title: "Tokens (9 decimals)", size: 8 });
@@ -258,7 +257,7 @@ export async function mount(ctx, el) {
       give.disabled = false;
       draw();
     };
-    const [cs, lv, plan, st] = await Promise.all([usage.contributions(), ctx.optional("wallet-app: usage.level", usage.level(), () => null), usage.levelPlan(), ctx.optional("wallet-app: usage.statement", usage.statement(month()), () => null)]);
+    const [cs, lv, plan, st] = await Promise.all([usage.contributions(), ctx.optional("wallet-app: usage.level", usage.level(), () => null), usage.levelPlan(), ctx.optional("wallet-app: usage.statement", usage.statement(usage.monthOf()), () => null)]);
     const directory = await ctx.require("directory");
     const split = st?.amount
       ? grid(["To", "For", "Tokens"], [
@@ -273,18 +272,18 @@ export async function mount(ctx, el) {
       h("h3", { textContent: "Give (preview: nothing is charged yet)" }),
       h("form", {}, amount, days, give), out,
       grid(["Given", "Days", "From", "To"], cs.map(c => [tok(c.amount), String(c.days), usage.dayOf(c.at), usage.dayOf(c.at + (c.days - 1) * 86400000)])),
-      h("h3", { textContent: `Where it goes (${month()}): creators 60 · keepers 30 · network 10` }),
+      h("h3", { textContent: `Where it goes (${usage.monthOf()}): creators 60 · keepers 30 · network 10` }),
       split);
   }
   // EARNINGS (rewards §5, SHADOW MODE): the contribution ledger, one row per day (today running) — your lines of it.
   async function earnings() {
     const usage = await ctx.require("usage");
-    const e = await usage.earnings(month());
+    const e = await usage.earnings(usage.monthOf());
     const mine = hexOf(me.didBytes);
     const did = (await (await ctx.require("space")).account())?.id ?? mine;
     const days = Object.entries(e.ledger.perDay).sort((x, y) => (x[0] < y[0] ? 1 : -1));
     return h("div", { className: "wl" },
-      h("h3", { textContent: `Contribution ledger (${month()}, preview: nothing is paid yet)` }),
+      h("h3", { textContent: `Contribution ledger (${usage.monthOf()}, preview: nothing is paid yet)` }),
       grid(["Day", "", "You: creator", "You: keeper", "Ledger total", "To creators", "To keepers", "To network"], days.map(([day, d]) => {
         const m = d.by[did] ?? { creator: 0, carrier: 0 };
         return [day, d.final ? "final" : "running", tok(m.creator), tok(m.carrier), tok(d.total), tok(d.creators), tok(d.carriers), tok(d.network)];

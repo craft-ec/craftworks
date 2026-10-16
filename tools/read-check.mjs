@@ -16,9 +16,10 @@ const lineOf = (src, i) => src.slice(0, i).split("\n").length;
 const ONE = [
   [
     /\bcore\.(frames_get|frames_follow|tail_get)\(/g,
-    // node: the door's own; index, storage: the frames each hands the door; blocks, files: content-addressed (a tree
-    // block, a file piece — never change: read once per page). (The loader's newest version: through the door, 10-16.)
-    { "node.js": 1, "index.js": 1, "storage.js": 1, "blocks.js": 2, "files.js": 1 },
+    // node: the door's own two — `contract` (a contract that can change: followed) and `get` (a content-addressed one —
+    // a tree block, a file piece: never changes, read once per page; blocks and files read through it, the sweep's
+    // batch 4, 10-17); index, storage: the frames each hands the door. (The loader's newest version: through the door.)
+    { "node.js": 2, "index.js": 1, "storage.js": 1 },
     "a GET built outside the door (`node.contract`)",
   ],
   [/\bcore\.take_got\(/g, { "node.js": 1, "blocks.js": 1, "files.js": 2 }, "a held copy TAKEN (`held_state` reads it; only immutable reads are freed)"],

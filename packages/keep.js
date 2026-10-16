@@ -179,12 +179,9 @@ export async function start(ctx) {
     // A failure is retried within the hour, as a table's; a keep is good for a DAY.
     await (await keptTable()).put(w.key, JSON.stringify({ ...w.w, ...rec, at: rec.error ? Date.now() - DAY + RETRY : Date.now() }));
   }
-  const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
   async function keepers(root) {
     const index = await ctx.require("index");
-    const now = new Date();
-    const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-    const months = new Set([monthOf(), monthOf(last.getTime())]);
+    const months = new Set([index.monthOf(), index.monthBefore()]);
     const claims = await index.pointers(`keepers:${root}`);
     return [...new Set(claims.filter(c => c && typeof c.did === "string" && months.has(c.m)).map(c => c.did))];
   }
@@ -192,12 +189,13 @@ export async function start(ctx) {
   async function claim(root) {
     const me = await space.me.strict();
     if (!me) return;
-    await (await ctx.require("index")).point(`keepers:${root}`, { did: me, m: monthOf() });
+    const index = await ctx.require("index");
+    await index.point(`keepers:${root}`, { did: me, m: index.monthOf() });
   }
   // ITS OWN FILES' CLAIMS, once a month (no re-read: a file its weekly pass found whole is held here): one a turn.
   async function claimOwn() {
     const t = await records();
-    const m = monthOf();
+    const m = (await ctx.require("index")).monthOf();
     const r = t.rows().find(x => x.key.startsWith("f/") && (v => v && !v.error && v.gens && v.whole === v.gens && v.claimed !== m)(read(x)));
     if (!r) return;
     const v = read(r);

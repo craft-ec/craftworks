@@ -49,7 +49,8 @@ export function frame(cap, ctx) {
 
 export async function start(ctx) {
   const storage = await ctx.require("storage");
-  const monthOf = (t = Date.now()) => new Date(t).toISOString().slice(0, 7);
+  // A month's key: the one (`index.monthOf`).
+  const { monthOf, monthBefore } = await ctx.require("index");
   // In memory until written (every 30 s, and when the page goes away): `m:<month>:<ref>` → { kind, title, s, b, n }.
   const pending = new Map();
   const owners = new Map(); // a file's root → { ref, kind, title, file }
@@ -191,7 +192,7 @@ export async function start(ctx) {
   }
   // ON THE CARD: every contribution not yet settled — running, or ended since the start of last month (anyone settles
   // a day from the card; a level counts only what runs that day, so the ended ones never raise it).
-  const onCard = cs => cs.filter(c => c.at + c.days * 86400000 > Date.parse(`${prevMonth()}-01T00:00:00Z`));
+  const onCard = cs => cs.filter(c => c.at + c.days * 86400000 > Date.parse(`${monthBefore()}-01T00:00:00Z`));
   // LISTED in the statements bag of every month a contribution spans — WHEN IT IS MADE, so the ledger finds its
   // contributor whether or not their page ever runs again (settled by anyone: `ledger`).
   async function listIn(cs) {
@@ -359,11 +360,7 @@ export async function start(ctx) {
   // only the contributor's own page may finalize it, from its whole record.
   const settledDay = (day, now = Date.now()) => day < dayOf(now - 86400000);
   const bagOf = m => `statements ${m}`;
-  const prevMonth = (m = monthOf()) => {
-    const [y, mo] = m.split("-").map(Number);
-    return new Date(Date.UTC(y, mo - 2, 1)).toISOString().slice(0, 7);
-  };
-  async function publishStatements(months = [prevMonth(), monthOf()]) {
+  async function publishStatements(months = [monthBefore(), monthOf()]) {
     const space = await ctx.require("space");
     const me = await space.account.strict();
     if (!me?.shared) return 0;

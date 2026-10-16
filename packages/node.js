@@ -78,6 +78,9 @@ export async function start(ctx) {
   // writer's feed, a place in a list) before showing what it has, the rest merged as it comes; `hint`, a fact that only
   // spares work (a space's writers bag), never waited on longer.
   const WAIT = { hint: 1500, show: 5000, ask: 30000, answer: 120000 };
+  // WITHIN a wait (one of `WAIT`'s): `p`'s value, or `dflt` once `ms` passed first — `p` itself goes on (what comes
+  // later is the caller's to merge). The one race against a wait.
+  const within = (p, ms, dflt = undefined) => Promise.race([p, new Promise(r => setTimeout(r, ms, dflt))]);
   // Send frames and wait for the first answer `match` accepts. Never silent: a timeout is a `transient` fault with its
   // reason (`ms`, and whether the node was being reconnected to). `ms`: WAIT.ask unless said.
   // `signal` (an AbortSignal): no longer wanted — taken off the list at once (a race won by another: its losers), a
@@ -275,6 +278,25 @@ export async function start(ctx) {
   // READ a contract (its 32-byte id) so the core holds its state (`held_state`): true when the node has it. Through the
   // door: read once, then followed. `absent: true`: a contract the node does not have is marked "read, not there"
   // (`core.not_there`), so the core's steps tell it from "not read yet".
+  // ONE GET of an IMMUTABLE contract (a tree block, a file's piece) — the one door: ONE request per id however many ask
+  // at once, through the one cap on gets (`slot`); a "not there" remembered `forget` ms (nothing looked up twice that
+  // is known not to be there — a wait that ran out is not remembered). `match`: which answer is its (default: its id's).
+  const oneGets = new Map();
+  const notThere = new Map();
+  function get(idHex, what, { match = null, forget = 0, urgent = false } = {}) {
+    const no = notThere.get(idHex);
+    if (no && Date.now() - no < forget) return Promise.resolve({ kind: "get-failed", id: idHex });
+    if (!oneGets.has(idHex)) {
+      const [, frames] = core.frames_get(new Uint8Array(idHex.match(/../g).map(b => parseInt(b, 16))));
+      const p = ctx
+        .optional("node: get", slot(() => ask(frames, match ?? (x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex), what, WAIT.ask), { urgent }), () => ({ kind: "get-failed", id: idHex, waited: true }))
+        .then(a => (a.kind === "get-failed" && !a.waited && notThere.set(idHex, Date.now()), a))
+        .finally(() => oneGets.delete(idHex));
+      oneGets.set(idHex, p);
+    }
+    return oneGets.get(idHex);
+  }
+
   async function read(id, what, { absent = false, ms = 30000 } = {}) {
     const hexId = [...id].map(x => x.toString(16).padStart(2, "0")).join("");
     const said = await contract(hexId, what, { frames: () => core.frames_follow(id)[1], match: s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, ms });
@@ -286,5 +308,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
+  return { core, glue, ask, within, get, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
 }

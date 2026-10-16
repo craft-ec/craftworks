@@ -115,18 +115,12 @@ export async function start(ctx) {
     // A chapter is shown in a frame of no origin of its own (the reader's), where no object URL loads: its pictures
     // go in as data: URLs and its stylesheets as text, each read once.
     const datas = new Map(); // an entry's path → its data: URL
-    const dataOf = path => {
-      if (!datas.has(path))
-        datas.set(
-          path,
-          (async () => {
-            const item = [...items.values()].find(i => i.href === path);
-            const b = await z.blob(path, item?.type || typeOfName(path));
-            return b ? await new Promise(r => Object.assign(new FileReader(), { onload: e => r(e.target.result), onerror: () => r(null) }).readAsDataURL(b)) : null;
-          })(),
-        );
-      return datas.get(path);
-    };
+    const dataOf = path =>
+      ctx.cache(datas, path, async () => {
+        const item = [...items.values()].find(i => i.href === path);
+        const b = await z.blob(path, item?.type || typeOfName(path));
+        return b ? await new Promise(r => Object.assign(new FileReader(), { onload: e => r(e.target.result), onerror: () => r(null) }).readAsDataURL(b)) : null;
+      });
     return {
       format: "epub",
       chapters: spine.length,

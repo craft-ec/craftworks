@@ -76,7 +76,7 @@ export async function start(ctx) {
       initial: "UNKNOWN",
       journal: true,
       // Steps that are routine (still kept in the journal): not each a health report.
-      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed"],
+      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found"],
       events: {
         held: { from: "*", to: "HELD" },
         // Ahead of the owner's announcement (it reads: HELD).
@@ -95,6 +95,8 @@ export async function start(ctx) {
         enter: { from: "*" },
         "enter-no-info": { from: "*" },
         "enter-not-listed": { from: "*" },
+        // A NEW WRITER of one of its tables found (`storage`): read now, or waiting to be listed in its writers bag.
+        "writers-found": { from: "*" },
         // Its epoch and group info NOT announced (what a device with no key enters from): why.
         "announce-failed": { from: "*" },
         // An entry SKIPPED by the list check (`mls::entry_ok`: every reader skips it), and a catch-up DEFERRED until

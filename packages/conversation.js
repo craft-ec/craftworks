@@ -708,10 +708,8 @@ export async function start(ctx) {
     }
   }
   function channels(server) {
-    if (!channelSets.has(server.id))
-      channelSets.set(
-        server.id,
-        (async () => {
+    // (`ctx.cache`: one failed to read is not kept.)
+    return ctx.cache(channelSets, server.id, async () => {
           const [roles, items] = await Promise.all(["roles", "items"].map(n => ctx.require(n)));
           // Its acts and its channel items read AT ONCE: who may make channels is checked as the list is drawn.
           const r = await roles.of.strict(server);
@@ -784,12 +782,7 @@ export async function start(ctx) {
               await read();
             },
           };
-        })().catch(e => {
-          channelSets.delete(server.id);
-          throw e;
-        }),
-      );
-    return channelSets.get(server.id);
+    });
   }
 
   // MAIL.

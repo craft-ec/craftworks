@@ -128,12 +128,8 @@ export async function mount(ctx, el) {
   // DATA USED: what the account watched, listened to and opened, and the data it took (its `usage` table).
   async function data() {
     const [usage, items] = await Promise.all(["usage", "items"].map(n => ctx.require(n)));
-    const months = [0, 1, 2].map(n => {
-      const d = new Date();
-      d.setUTCDate(1);
-      d.setUTCMonth(d.getUTCMonth() - n);
-      return d.toISOString().slice(0, 7);
-    });
+    const index = await ctx.require("index");
+    const months = [0, 1, 2].map(n => index.monthBefore(index.monthOf(), n));
     const pick = Object.assign(document.createElement("select"), { title: "Month" });
     pick.append(...months.map(m => Object.assign(document.createElement("option"), { value: m, textContent: m })));
     pick.value = data.month ?? months[0];

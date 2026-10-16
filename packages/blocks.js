@@ -23,32 +23,17 @@ const base58 = hex => {
 };
 export async function start(ctx) {
   const { Fault } = await ctx.require("fault");
-  const { core, ask, slot, WAIT } = await ctx.require("node");
+  const { core, ask, get: nodeGet } = await ctx.require("node");
   const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
 
   // What this page did: blocks read, and how many of them were rebuilt from their group.
   const stats = { read: 0, rebuilt: 0 };
 
-  // ONE GET PER BLOCK, ever, on this page: a request stays until the node answers it (the block — then HELD by the
-  // core for every table — or "not there"), and every race that wants that block joins it. A race already won
-  // simply stops listening; its siblings' requests are never sent again. A block the node answered "not there" is
-  // not asked again for a while (`absent`): nothing is looked up twice that is known not to be there.
+  // ONE GET PER BLOCK, through the node's one door (`node.get`): a request stays until the node answers it (the block —
+  // then HELD by the core for every table — or "not there"), and every race that wants that block joins it. A block
+  // the node answered "not there" is not asked again for LOST_FOR: nothing is looked up twice known not to be there.
   const LOST_FOR = 5 * 60 * 1000;
-  const inflight = new Map(); // block → { p, what, at }
-  const absent = new Map(); // block → when the node said it is not there
-  function get(b, what) {
-    const no = absent.get(b);
-    if (no && Date.now() - no < LOST_FOR) return Promise.resolve({ kind: "get-failed", id: b });
-    if (!inflight.has(b)) {
-      const [, frames] = core.frames_get(bytes(b));
-      sends.set(b, (sends.get(b) ?? 0) + 1);
-      const p = ctx.optional("blocks: slot", slot(() => ask(frames, x => x.block === b || (x.kind === "get-failed" && x.id === b), what, WAIT.ask)), () => ({ kind: "get-failed", id: b, waited: true }))
-        .then(a => (a.kind === "get-failed" && !a.waited && absent.set(b, Date.now()), a))
-        .finally(() => inflight.delete(b));
-      inflight.set(b, { p, what, at: performance.now() });
-    }
-    return inflight.get(b).p;
-  }
+  const get = (b, what) => nodeGet(b, what, { match: x => x.block === b || (x.kind === "get-failed" && x.id === b), forget: LOST_FOR });
 
   // A block LOST (neither it nor enough of its group came back): not asked again for a while — every read of a tree
   // that needs it fails at once (its table shown without that writer's part), never another wait on the same loss.
@@ -149,7 +134,6 @@ export async function start(ctx) {
   // fetched more than once per version is named where it is asked.
   const calls = [];
   const races = [];
-  const sends = new Map(); // block → GETs actually sent to the node
   async function fetch(tail, ids, what) {
     const t0 = performance.now();
     const chain = (new Error().stack ?? "").split("\n").slice(2, 9).map(l => l.trim().replace(/^at /, "").replace(/\(?blob:[^)]*\)?/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" < ");
@@ -176,11 +160,10 @@ export async function start(ctx) {
   // KEEP (phase 4): is the block in contract `c` (hex) on the network? Its GET answered with a state (true) or not
   // found (false). The state is not kept: a probe only counts.
   async function probe(c, what) {
-    const [, frames] = core.frames_get(bytes(c));
-    const a = await ctx.optional("blocks: slot", slot(() => ask(frames, x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c), what, WAIT.ask)), () => ({ kind: "get-failed" }));
+    const a = await nodeGet(c, what, { match: x => (x.kind === "got" && x.id === c) || x.block === c || (x.kind === "get-failed" && x.id === c) });
     core.take_got(c);
     return a.kind !== "get-failed";
   }
 
-  return { fetch, put, probe, address: base58, stats: () => ({ ...stats }) , calls: () => calls.slice(), sends: () => new Map(sends), races: () => races.map(r => ({ ...r, open: performance.now() - r.at })), pending: () => [...inflight.entries()].map(([b, g]) => ({ b: b.slice(0, 12), what: g.what, ms: Math.round(performance.now() - g.at) }))};
+  return { fetch, put, probe, address: base58, stats: () => ({ ...stats }) , calls: () => calls.slice(), races: () => races.map(r => ({ ...r, open: performance.now() - r.at })) };
 }

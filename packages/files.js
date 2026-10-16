@@ -23,7 +23,7 @@
 //   const ref2 = await files.adopt(ref, space)          // a file from another space: listed in this one (then copied)
 //   await files.publicity(refs, space, pub)             // the items holding them are (not) read by anyone now
 export async function start(ctx) {
-  const { core, glue, ask, slot, WAIT } = await ctx.require("node");
+  const { core, glue, ask, get: nodeGet } = await ctx.require("node");
   const [storage, space] = await Promise.all(["storage", "space"].map(n => ctx.require(n)));
   core.set_sealed_code(await ctx.require("sealed-wasm"));
   core.set_piece_code(await ctx.require("piece-wasm"));
@@ -283,9 +283,8 @@ export async function start(ctx) {
     // Measured 2026-10-06: a 4K play logged hundreds of pieces arriving after their ask's deadline, each then asked again.
     const late = core.take_got(idHex);
     if (late) return fetched(root, late), raw ? late : livePiece(late);
-    const [, frames] = core.frames_get(bytes(idHex));
-    // Through the node's one cap on gets (`slot`).
-    const said = await slot(() => ctx.optional("files: ask", ask(frames, x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex, what, WAIT.ask), () => ({ kind: "get-failed" })), { urgent });
+    // Through the node's one door for an immutable read (`node.get`: one request per piece, its one cap on gets).
+    const said = await nodeGet(idHex, what, { urgent });
     const st = said.kind === "got" ? core.take_got(idHex) : null;
     fetched(root, st);
     return !st || raw ? st : livePiece(st);
@@ -296,10 +295,8 @@ export async function start(ctx) {
   // A file OPENED for reading: its root, and each generation's listed fragments (leaves read once).
   const opened = new Map();
   function open(ref) {
-    if (!opened.has(ref.root))
-      opened.set(
-        ref.root,
-        (async () => {
+    // (`ctx.cache`: a failed open is not kept — asked again, it is opened again.)
+    return ctx.cache(opened, ref.root, async () => {
           const key = bytes(ref.key);
           // Each index piece fetched by its hash (the reference's for the root).
           const rootId = core.file_root_id(key, ref.root);
@@ -318,38 +315,29 @@ export async function start(ctx) {
             if (level === root.depth) return root.children[n];
             const at = Math.floor(n / 7000);
             const k = `${level + 1}/${at}`;
-            if (!inner.has(k))
-              inner.set(
-                k,
-                (async () => {
-                  const h = await indexHash(level + 1, at);
-                  const st = await fetchState(core.file_index_id(key, h), `${ref.name}: its index`);
-                  if (!st) throw new Error(`${ref.name}: part of its index is missing`);
-                  return glue.file_inner(key, h, st);
-                })().catch(e => (inner.delete(k), Promise.reject(e))),
-              );
-            return (await inner.get(k))[n % 7000];
+            const got = await ctx.cache(inner, k, async () => {
+              const h = await indexHash(level + 1, at);
+              const st = await fetchState(core.file_index_id(key, h), `${ref.name}: its index`);
+              if (!st) throw new Error(`${ref.name}: part of its index is missing`);
+              return glue.file_inner(key, h, st);
+            });
+            return got[n % 7000];
           };
           const leaves = new Map();
           // The leaf that lists generation g, down from the root through any inner levels.
           const leafOf = async g => {
             const n = Math.floor(g / 192);
-            if (!leaves.has(n))
-              leaves.set(
-                n,
-                (async () => {
-                  const h = await indexHash(0, n);
-                  const st = await fetchState(core.file_index_id(key, h), `${ref.name}: its index`);
-                  if (!st) throw new Error(`${ref.name}: part of its index is missing`);
-                  return JSON.parse(glue.file_leaf(key, root.plan.size, n, h, st));
-                })(),
-              );
-            return (await leaves.get(n))[g % 192];
+            // (A leaf that failed to read is not kept: read again next time — it was before, review 10-17.)
+            const got = await ctx.cache(leaves, n, async () => {
+              const h = await indexHash(0, n);
+              const st = await fetchState(core.file_index_id(key, h), `${ref.name}: its index`);
+              if (!st) throw new Error(`${ref.name}: part of its index is missing`);
+              return JSON.parse(glue.file_leaf(key, root.plan.size, n, h, st));
+            });
+            return got[g % 192];
           };
           return { key, depth: root.depth, plan: root.plan, listed: leafOf, rootHash: ref.root, indexHash };
-        })().catch(e => (opened.delete(ref.root), Promise.reject(e))),
-      );
-    return opened.get(ref.root);
+    });
   }
 
   // A GENERATION, RACED: every listed fragment asked at once, decoded on the first k valid, independent ones.

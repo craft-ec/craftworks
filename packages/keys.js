@@ -887,36 +887,43 @@ export async function start(ctx) {
       if (m.status().epoch === p.epoch + 1) await save(true, before.secret, "commit");
       await t.remove(`${at}~pending`);
     }
-    // A commit that did not apply here (this DID's own, from another device): its state, when that device has saved it.
-    let stuckSaid = false;
+    // BROUGHT CURRENT: every newer commit applied (tried again by the fault policy — its table read again first — when
+    // it would not: `fault.attempt`).
     async function current(fresh = false) {
       await finishPending().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `finishing a kept change: ${e?.message ?? e}` }));
-      for (let tries = 0; ; tries++) {
-        try {
-          // CAUGHT UP one epoch: the epoch before's secret held here is the new log's PREV (owner 10-07: an open row with no
-          // prev breaks every later member's way back). More than one: the logs between were read, not made here.
-          const before = m?.status();
-          if (await logs.catchUp(undefined, fresh)) {
-            const now = m.status();
-            return save(false, before && now.epoch === before.epoch + 1 ? hexOf(before.secret) : null, "catch-up");
+      return attempt(
+        `${sp.name ?? "space"} keys`,
+        "bringing the space's keys current",
+        async n => {
+          if (n) await (await spacekeys()).reread?.();
+          for (;;) {
+            try {
+              // CAUGHT UP one epoch: the epoch before's secret held here is the new log's PREV (owner 10-07: an open row
+              // with no prev breaks every later member's way back). More than one: the logs between were read, not made here.
+              const before = m?.status();
+              if (await logs.catchUp(undefined, fresh)) {
+                const now = m.status();
+                return save(false, before && now.epoch === before.epoch + 1 ? hexOf(before.secret) : null, "catch-up");
+              }
+              return status(m.status());
+            } catch (e) {
+              // STUCK behind its OWN commit (10-07, Ivvor: a commit this device wrote reached the log, its state after
+              // it was never saved — the tab closed): MLS never applies a member's own message. Its own NODE's commit (the
+              // follower) is taken; anything else: this device ENTERS AGAIN by itself (FOUNDATION "Members and keys" 1).
+              if (/CantProcessMessageFromSelf/.test(String(e?.message ?? e))) {
+                const mine = ((await ctx.optional("keys: upkeepStatus", auth.identity.upkeepStatus(), () => null))?.upkeep?.groups ?? []).find(x => x.space === hexOf(sp.idBytes));
+                if (mine && (await adoptNow(mine.epoch, mine.state))) continue;
+                keyEvent("stuck-own-commit", { space: hexOf(sp.idBytes), epoch: m.status().epoch });
+                return enterNow("stuck");
+              }
+              // A newer state another device of this account saved: taken, and on.
+              if (await load()) continue;
+              throw new Fault("transient", "the space's keys would not come current", { message: String(e?.message ?? e), cause: e });
+            }
           }
-          return status(m.status());
-        } catch (e) {
-          // STUCK behind its OWN commit (10-07, Ivvor: a commit this device wrote reached the log, its state after it was
-          // never saved — the tab closed): MLS never applies a member's own message. Its own NODE's commit (the follower)
-          // is taken; anything else: this device ENTERS AGAIN by itself (FOUNDATION "Members and keys" 1).
-          if (/CantProcessMessageFromSelf/.test(String(e?.message ?? e))) {
-            const mine = ((await ctx.optional("keys: upkeepStatus", auth.identity.upkeepStatus(), () => null))?.upkeep?.groups ?? []).find(x => x.space === hexOf(sp.idBytes));
-            if (mine && (await adoptNow(mine.epoch, mine.state))) continue;
-            keyEvent("stuck-own-commit", { space: hexOf(sp.idBytes), epoch: m.status().epoch });
-            return enterNow("stuck");
-          }
-          if (await load()) continue;
-          if (tries >= 3) throw e;
-          await new Promise(r => setTimeout(r, 1500));
-          await (await spacekeys()).reread?.();
-        }
-      }
+        },
+        { policy: { transient: { tries: 4, wait: () => 1500, report: "never" } } },
+      );
     }
     // A change of the group (add, remove): its commit in the log of the epoch it moves from, then saved. Lost to
     // another change first: this device takes the newer group and says so.

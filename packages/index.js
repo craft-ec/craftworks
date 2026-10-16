@@ -24,7 +24,7 @@
 export async function start(ctx) {
   const auth = await ctx.require("auth");
   const space = await ctx.require("space");
-  const { core, glue, ask, WAIT, listen, contract, onContract, changed: wrote } = await ctx.require("node");
+  const { core, glue, ask, WAIT, within, listen, contract, onContract, changed: wrote } = await ctx.require("node");
   const bagCode = await ctx.require("bag-wasm");
   const Core = glue.CraftworksCore;
   const enc = new TextEncoder();
@@ -106,7 +106,7 @@ export async function start(ctx) {
       return [];
     })();
     if (!show) return full;
-    const early = await Promise.race([full.then(x => ({ x })), new Promise(r => setTimeout(r, WAIT.hint, null))]);
+    const early = await within(full.then(x => ({ x })), WAIT.hint, null);
     if (early) return early.x;
     ctx.background("index: full.then", full.then(x => x.length && changed.forEach(f => f())));
     return held(address, id);
@@ -230,7 +230,13 @@ export async function start(ctx) {
   // DOMAIN (text, video, audio) and MONTH (UTC `YYYY-MM`), each pointer naming exactly where its item is (`ref`, `kind`,
   // `at`, and its writer and table — `w`, `t`, `sp` — on a space's public board, or `did` on a profile). A reader reads
   // only the months it shows and only the tails named; each pointer is a claim it checks against what is there.
-  const monthOf = at => new Date(at).toISOString().slice(0, 7);
+  // A MONTH's key (UTC `YYYY-MM`) — the one: the Discover bags', usage's, keepers', statements' (`at`: now) — and the
+  // month `n` before one.
+  const monthOf = (at = Date.now()) => new Date(at).toISOString().slice(0, 7);
+  const monthBefore = (m = monthOf(), n = 1) => {
+    const [y, mo] = m.split("-").map(Number);
+    return new Date(Date.UTC(y, mo - 1 - n, 1)).toISOString().slice(0, 7);
+  };
   const discoverBag = (domain, month) => `discover:${domain}:${month}`;
   const discoverPoint = (domain, at, ptr) => point(discoverBag(domain, monthOf(at)), ptr);
   const discoverPointers = async (domain, months) => (await Promise.all(months.map(m => pointers(discoverBag(domain, m))))).flat();
@@ -320,5 +326,5 @@ export async function start(ctx) {
     return out;
   }
   const bag = { add: (address, payload, what = "adding to a bag") => drop(address, payload, what), read: (address, what = "reading a bag", opts = {}) => read(address, what, opts), chained, chain };
-  return { bag, onChange: f => changed.push(f), send, inbox: ctx.total("index.inbox", () => [], inbox), sendTo, inboxWith, makeInbox, request, requests: ctx.total("index.requests", () => [], requests), openRequests, openPointers, point, pointers: ctx.total("index.pointers", () => [], pointers), watch, listSpace, spaces: ctx.total("index.spaces", () => [], spaces), health, spacePoint, watchSpace, spacePointers: ctx.total("index.spacePointers", () => [], spacePointers), discoverPoint, discoverPointers: ctx.total("index.discoverPointers", () => [], discoverPointers), monthOf, monthsSince, OPEN };
+  return { bag, onChange: f => changed.push(f), send, inbox: ctx.total("index.inbox", () => [], inbox), sendTo, inboxWith, makeInbox, request, requests: ctx.total("index.requests", () => [], requests), openRequests, openPointers, point, pointers: ctx.total("index.pointers", () => [], pointers), watch, listSpace, spaces: ctx.total("index.spaces", () => [], spaces), health, spacePoint, watchSpace, spacePointers: ctx.total("index.spacePointers", () => [], spacePointers), discoverPoint, discoverPointers: ctx.total("index.discoverPointers", () => [], discoverPointers), monthOf, monthBefore, monthsSince, OPEN };
 }

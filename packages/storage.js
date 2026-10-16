@@ -26,7 +26,7 @@ export async function start(ctx) {
   const space = await ctx.require("space");
   // Who may read and write a table here: the person's grant for this site, and the table's key that comes with it.
   const access = await ctx.require("access");
-  const { core, glue, ask, listen, WAIT, contract, onContract, changed: wrote, dataChanged } = await ctx.require("node");
+  const { core, glue, ask, listen, WAIT, within, contract, onContract, changed: wrote, dataChanged } = await ctx.require("node");
   const tailCode = await ctx.require("tail-wasm");
   // A table's tree lives in Sealed contracts, sealed whole (a public table's, in Block contracts): the core names them
   // from this code.
@@ -517,7 +517,7 @@ export async function start(ctx) {
         // most WAIT.hint (no answer yet: shown as not there), and the table changes when the node answers; whatever
         // decides from it (a write, a place noted, a catalog read) waits for the answer (`t.answer()`).
         answer = read().finally(() => mark("read"));
-        const shown = await Promise.race([answer.then(() => true), new Promise(r => setTimeout(r, WAIT.hint, false))]);
+        const shown = await within(answer.then(() => true), WAIT.hint, false);
         if (!shown) {
           t.absent = true;
           ctx.log("table shown before its answer", { what: `${app}: shown after ${WAIT.hint / 1000} s as held; merged when the node answers` });
@@ -1271,7 +1271,11 @@ export async function start(ctx) {
         if (!fresh.length) return;
         let b = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(false), () => bag) : null;
         if (b && !b.blind && fresh.some(o => !b.set.has(o))) b = await ctx.optional("storage: scope.bag", scope.bag(true), () => b);
-        for (const o of fresh) if (!scope.bag || b?.blind || b?.set.has(o)) seen.add(o), ctx.background("storage: gather", gather(o));
+        const now = fresh.filter(o => !scope.bag || b?.blind || b?.set.has(o));
+        for (const o of now) seen.add(o), ctx.background("storage: gather", gather(o));
+        // A NEW WRITER of a space's table: read now, or not listed in its writers bag yet (read when it is) — said, so a
+        // member's write that does not show is seen where it stopped (fx 10-17: one stopped here for minutes, unrecorded).
+        if (sp?.id && sp.kind !== "account") (await ctx.require("lifecycle")).transition("group", sp.id, "writers-found", { table: name.slice(-12), fresh: fresh.length, read: now.length, waiting: fresh.length - now.length });
       });
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
@@ -1295,7 +1299,7 @@ export async function start(ctx) {
         let late = false;
         const pages = all.filter(f => !f.absent && f.page).map(f => {
           const p = timed(f);
-          return Promise.race([p, new Promise(r => setTimeout(r, WAIT.hint, undefined))]).then(x => {
+          return within(p, WAIT.hint).then(x => {
             if (x !== undefined) return x;
             p.then(got => got && !late && ((late = true), changed.forEach(fn => fn())));
             return null;
@@ -1381,7 +1385,7 @@ export async function start(ctx) {
         },
         decided: async () => {
           await me.decided?.();
-          await Promise.race([gathering.then(() => Promise.all(all.map(f => f.decided?.()))), new Promise(r => setTimeout(r, WAIT.answer))]);
+          await within(gathering.then(() => Promise.all(all.map(f => f.decided?.()))), WAIT.answer);
           return t.state;
         },
         // R3: the writers whose feed did not open here, GATHERED AGAIN (keys arrived since).
@@ -1602,15 +1606,11 @@ export async function start(ctx) {
   // SETTLED SOON: a table is ready once every other writer's feed has answered — or after WAIT.hint (`node`), whichever is
   // first. A feed not there (never written) costs the node a whole network search (seconds to over a minute); nobody
   // waits on that. One that arrives later is merged in as it comes (the table's `onChange`): nothing is dropped.
-  const soon = (all, name) => {
-    let done = false;
-    all.finally(() => (done = true));
-    return Promise.race([
-      all,
-      new Promise(r => setTimeout(r, WAIT.hint)).then(() => {
-        if (!done) ctx.log("storage", { what: `${name}: shown without the feeds still being asked (merged as they come)` });
-      }),
-    ]);
+  const soon = async (all, name) => {
+    const LATE = Symbol("late");
+    const x = await within(all, WAIT.hint, LATE);
+    if (x !== LATE) return x;
+    ctx.log("storage", { what: `${name}: shown without the feeds still being asked (merged as they come)` });
   };
 
   // A PUBLIC TABLE READ FROM OUTSIDE (not a member: no catalog, no keys): the merge of these writers' public tails of

@@ -2626,10 +2626,10 @@ each copy onto its existing owner + a build check per owner. Only gap with no ow
       + build check: no writer map built outside it. Rust delegate reader (table.rs) on the same record.
 - [x] 2 LIVE BUGS (734a463; NOT RELEASED): delegate write.rs bag_item → table::seal_writers_item (OPEN); tag.js merge order; loader.js:547
       raw follow → the door.
-- [ ] 3 ACCESS COPIES onto Governance/roles: act-permission table copies (roles.js:380, vote-tally.js:268),
+- [x] 3 ACCESS COPIES onto Governance/roles (6e1ea69; access-check): act-permission table copies (roles.js:380, vote-tally.js:268),
       hand role checks, vote ownerAt/adminAt, creator-as-owner checks, who-reads (file by app vs post by domain),
       bans/lapsed replays, credential byte parsing → identity::read_credential.
-- [ ] 4 MECHANICS onto their owners: node reads (blocks/files/loader) → node door; retries → fault.attempt;
+- [x] 4 MECHANICS onto their owners (node.get one door for immutable GETs, read-check budget moved with it; node.within; index.monthOf/monthBefore; keys.current on fault.attempt; files/conversation/book-studio memos on ctx.cache — a failed leaf read was kept for the page's life; storage.signed's fork protocol kept as its own, not a plain retry): node reads (blocks/files/loader) → node door; retries → fault.attempt;
       timeouts → WAIT; Map caches → ctx.cache; months → index.monthOf.
 - [ ] 5 REFS/COUNTS/KEYS/NAMES: refs → items pure + one builder; table names → space.tableOf/table_name;
       counts → items.tally; ranking → RANK; sealing key choice (write.rs vs JS); names → directory.shown.
@@ -2722,6 +2722,9 @@ windows, post_key/once/fresh/answered, follower adds, admission request decision
 - [ ] D6 release (owner's say: identity build moves — a PIN once; old builds retired); Ivvor's space: its 7 written to
       the acts (owner's page), each device enters by itself; done when health shows 7/7.
 Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
+- OPEN (fx v829, 10-17): A's open page did not read B's NEW acts feed for >4 min (a fresh load did at once); not
+  reproduced on v830 (14 s). Cause UNKNOWN — settled by the new `writers-found` journal steps (storage: a new writer
+  found, read or waiting for the writers bag) if it recurs; absent steps mean the `craftworks:keys` trigger never came.
 - Ivvor 10-16 19:32 (live v398): "can't get 2 other IDs accepted; can't tell how to make a new space public; manual
   invite codes don't look like working". IDs/codes: the ask/answer layer this redesign deletes (self-entry). Public:
   the Space app's space-level settings had NO Read — public reading was per app only. FIXED (uncommitted): space
