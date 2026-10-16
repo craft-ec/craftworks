@@ -223,8 +223,10 @@ The app machine makes each app what a separately published site already is, and 
   the host's. A WRITE only on the person's gesture, FAIL-CLOSED: an exact set of read names passes. SYSTEM SURFACES the
   host draws: an app's settings in a space (in its place), an item's editions (a sheet: money never in a frame), the
   person menu; `theme.ask` is the one way to ask (no browser dialogs — a frame has none). GRANTS are what the code
-  reaches (`tools/app-check.mjs`, `--fix`). Done 10-16: all ten apps framed. Open: narrowing grants a kit part widens
-  (keep, video-studio, index); the audience and publish pickers still draw inside the frame.
+  reaches (`tools/app-check.mjs`, `--fix`). Done 10-16: all ten apps framed. The audience and publish pickers stay in
+  the app (10-16): they show only what its grants already give it (a space's roles and members) — a host-drawn copy
+  would protect nothing. A FILES picker that hands an app only the files chosen needs grants finer than a whole
+  capability first: the next step of grants, not of drawing.
 - **System controls are SYSTEM PICKERS.** A frame cannot draw the host's elements, and a copy of a control inside the
   frame would be a second implementation. So an app ASKS (`api.pick("audience", { space, kind })`, `api.pick("files",
   …)`, `api.pick("sort")`): the system shows its own control above the frame, the person chooses, the value comes

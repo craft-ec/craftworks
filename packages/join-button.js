@@ -74,7 +74,10 @@ export async function start(ctx) {
     await draw();
     people.onChange(() => box.isConnected && draw());
     // In at last (the welcome accepted): Open.
-    ctx.background("join-button: table", (await ctx.require("storage")).table("spaces").then(t => t.onChange(() => box.isConnected && draw())));
+    // Drawn again when this person's spaces change (a join let in): the one data signal — every table's change, the
+    // page's and an app frame's alike.
+    const again = () => (box.isConnected ? draw() : removeEventListener("craftworks:data", again));
+    addEventListener("craftworks:data", again);
     return box;
   }
   return { control };
