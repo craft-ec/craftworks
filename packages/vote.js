@@ -346,7 +346,7 @@ export async function mount(ctx, el) {
     // YOURS (and those for your followers or friends: your circles' places), or a PERSON's.
     let polls = await at.read({ kinds: ["poll"] });
     if (at.who === "mine" && !at.saved) {
-      const circles = (await space.mine()).filter(s => s.circle && s.governance?.owner === me);
+      const circles = (await space.mine()).filter(s => s.circle && space.madeBy(s, me));
       if (circles.length) polls = [...polls, ...(await items.inPlaces({ spaces: circles }, "poll", { withVotes: false }))];
     }
     const seen = new Set();

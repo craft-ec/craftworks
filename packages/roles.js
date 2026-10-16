@@ -317,6 +317,10 @@ export async function start(ctx) {
       },
       role,
       can,
+      // The permission an act needs (`gov::act_need`); an ADMIN — the owner or an admin, now or WHEN (`Gov::role_at`).
+      needOf: a => gv.act_need(JSON.stringify(a)) ?? null,
+      // (`at`: as it was then — `Gov::role_at`.)
+      isAdmin: (did, at = Infinity) => ["owner", "admin"].includes(at === Infinity ? role(did) : gv.role_at(did, at)),
       author,
       acts: kind => (kind ? counted.filter(a => a.act === kind) : [...counted]),
       missing: () => (out ? [] : missingOf(t.rows().map(x => x.key))),
@@ -358,6 +362,10 @@ export async function start(ctx) {
       held: did => JSON.parse(gv.roles_held())[did] ?? [],
       // A DOMAIN's policy for an action (`kinds.policyDomain(kind)`: what an item is decides, not the app showing it).
       policyIn: (domain, action, at = Infinity) => policyInOf(domain, action, at),
+      // WHETHER A DOMAIN READS IN PUBLIC (a post's, a file's — `text`, `file`, `video` …): the one test.
+      readsAnyone: (domain, at = Infinity) => policyInOf(domain, "read", at) === "anyone",
+      // THE DEFAULT at a path where nothing is set (public participation where anyone reads): what Settings shows.
+      fallback: (path, action) => fallback(action === "read" ? null : policyOf(path, "read", Infinity), action, Infinity),
       allowsIn: (action, did, domain, at = Infinity) => passes(policyInOf(domain, action, at), did),
       domains: () => DOMAINS,
       banned: did => bans.has(did),
@@ -414,7 +422,8 @@ export async function start(ctx) {
       async act(a) {
         if (!me) throw space.loginNeeded();
         if (out) throw new Error("not a member of this space");
-        const need = { role: "roles", assign: "roles", grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite", reject: "invite" }[a.act];
+        // What it needs: the replay's one table (`gov::act_need`).
+        const need = gv.act_need(JSON.stringify(a));
         // Leaving is any member's own act (the owner hands the space on first).
         const leaving = a.act === "leave" && role(me.id) && role(me.id) !== "owner";
         // A list of named people: any member's own (only its maker changes it — the acts' check).
@@ -506,6 +515,7 @@ export async function start(ctx) {
         policiesAt: path => Object.fromEntries(ACTIONS.map(a => [a, policyAt(path, a, Infinity)]).filter(([, w]) => w)),
         policy: (path, action, at = Infinity) => along(path, action, at),
         policyIn: (domain, action, at = Infinity) => along(domain, action, at),
+        readsAnyone: (domain, at = Infinity) => along(domain, "read", at) === "anyone",
         role: d => (d === did ? "owner" : null),
         can: d => d === did,
         config: (_a, _k, dflt = null) => dflt,
@@ -600,5 +610,5 @@ export async function start(ctx) {
     await p.ready;
     return { who: p.policyIn(domain, action), loaded: p.loaded() };
   }
-  return { allows, personalPolicy, of: ctx.total("roles.of", () => null, of), ofPublic: ctx.total("roles.ofPublic", () => null, ofPublic), personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), names: ["owner", "admin", "member"], perms: G.perms() };
+  return { allows, personalPolicy, of: ctx.total("roles.of", () => null, of), ofPublic: ctx.total("roles.ofPublic", () => null, ofPublic), personal, mayWrite, credToCite, followable, onChecked: f => checked.push(f), can: (role, what) => G.can_role(role, what), actions: ACTIONS, validWho: w => G.valid_who(w), names: ["owner", "admin", "member"], perms: G.perms() };
 }

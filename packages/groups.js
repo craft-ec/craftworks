@@ -19,7 +19,7 @@ export async function start(ctx) {
   const making = new Map();
   async function of(key, { name, setup = null } = {}) {
     const me = await space.me.strict();
-    const had = (await mine()).find(s => keyOf(s) === key && s.governance?.owner === me);
+    const had = (await mine()).find(s => keyOf(s) === key && space.madeBy(s, me));
     if (had) return had;
     if (!making.has(key))
       making.set(

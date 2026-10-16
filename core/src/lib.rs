@@ -3933,6 +3933,10 @@ mod js {
         pub fn role(&self, did: &str, in_group: bool) -> Option<String> {
             self.0.role(did, in_group)
         }
+        /// A valid policy `who` (`gov::valid_who`: the built-in ones, a composed role, a list, a level).
+        pub fn valid_who(who: &str) -> bool {
+            craftworks_gov::valid_who(who)
+        }
         /// The actions a policy names.
         pub fn actions() -> Vec<String> {
             craftworks_gov::ACTIONS
@@ -3953,6 +3957,15 @@ mod js {
         /// `undefined`.
         pub fn may_list(&self, did: &str) -> Option<String> {
             craftworks_rules::guards::may_list(&self.0, did).err()
+        }
+        /// THE PERMISSION an act needs (`gov::act_need`, the replay's one table): `grant` (the owner's), `remove`,
+        /// `moderate`, `apps`, `roles`, `invite` — or `undefined` (a person's own act).
+        pub fn act_need(&self, act: &str) -> Option<String> {
+            craftworks_gov::act_need(&serde_json::from_str(act).unwrap_or_default()).map(str::to_string)
+        }
+        /// The BASE ROLE `did` held at `at` (`Gov::role_at`): "owner", "admin", "member", or `undefined`.
+        pub fn role_at(&self, did: &str, at: f64) -> Option<String> {
+            self.0.role_at(did, at).map(str::to_string)
         }
         /// THE LIST an MLS entry is judged by (`mls::List`; the node's `GovList`): EVER on the list and not banned.
         pub fn entry_listed(&self, did: &str) -> bool {

@@ -191,7 +191,7 @@ export async function start(ctx) {
   }
   // A DOMAIN's read setting in a space: its own (`text`, `video`, `caption` …: content decides, whatever app shows it),
   // else the space's.
-  const domainReads = (r, domain) => r.policyIn(domain, "read") === "anyone";
+  const domainReads = (r, domain) => r.readsAnyone(domain);
   // Whether an item of `kind` is public in a space now.
   async function publicIn(sp, kind) {
     const r = await roles.of.strict(sp);

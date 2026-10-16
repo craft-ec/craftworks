@@ -7,8 +7,10 @@ set -euo pipefail
 node "$(cd "$(dirname "$0")" && pwd)/tools/style-check.mjs"
 # A FAILURE IS HANDLED IN ONE PLACE: no package writes its own fallback catch (tools/failure-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/failure-check.mjs"
-# LETTING SOMEONE INTO A GROUP HAS ONE IMPLEMENTATION: one request, one rule, one welcome, one turn (tools/group-check.mjs).
+# KEYS FOLLOW THE LIST ONE WAY: the listed device enters by itself, the follower takes out (tools/group-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/group-check.mjs"
+# WHO MAY DO WHAT HAS ONE OWNER: the replay, through `roles` — no access rule copied beside it (tools/access-check.mjs).
+node "$(cd "$(dirname "$0")" && pwd)/tools/access-check.mjs"
 # EVERY CONTRACT THAT CAN CHANGE IS READ ONCE, THEN FOLLOWED: one door, no GET or retry loop elsewhere (tools/read-check.mjs).
 node "$(cd "$(dirname "$0")" && pwd)/tools/read-check.mjs"
 # A TIMER IS A JOB OR A VIEW'S CLOCK: background work in lifecycle jobs, a view's clock through ctx.every (tools/job-check.mjs).

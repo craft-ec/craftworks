@@ -84,7 +84,7 @@ export async function mount(ctx, el) {
     if (form.outside) return false;
     const r = await (await ctx.require("roles")).of(place);
     await r.settled;
-    return ["owner", "admin"].includes(await r.role(me));
+    return r.isAdmin(me);
   }
   // The MAILBOX its responses arrive in: the space's (space mail), else this person's own.
   const mailboxOf = async place => (F.toSpace(place) ? mail.of(place) : mail);
@@ -431,7 +431,7 @@ export async function mount(ctx, el) {
     root.replaceChildren(h("h2", { textContent: `🗒 ${title}` }), list);
     let all = await at.read({ kinds: ["form"] });
     if (at.who === "mine" && !at.saved) {
-      const circles = (await space.mine()).filter(s => s.circle && s.governance?.owner === me);
+      const circles = (await space.mine()).filter(s => s.circle && space.madeBy(s, me));
       if (circles.length) all = [...all, ...(await items.inPlaces({ spaces: circles }, "form", { withVotes: false }))];
     }
     const seen = new Set();

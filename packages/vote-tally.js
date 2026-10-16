@@ -32,7 +32,7 @@
 //   await place.delegate(did | null) // this person's delegation in the space (null: revoked)
 //   await place.finalize(p)  await place.applyOutcome(p)
 // Pure parts (exported; `node --test tools/vote-tally.test.mjs`): normalizePoll, recordOf, recordHash, withHashes,
-// newest, nextSeq, pollTally, resolve, proposalTally, snapshot, verifyFinal, pickFinal, outcomeProblem, outcomeNeed,
+// newest, nextSeq, pollTally, resolve, proposalTally, snapshot, verifyFinal, pickFinal, outcomeProblem,
 // outcomeText, appliedAct, participation, graphOf.
 
 export const DEPTH = 10;
@@ -263,23 +263,20 @@ export async function pickFinal(proposal, records, mayFinalize) {
 }
 
 // ── OUTCOMES ────────────────────────────────────────────────────────────────────────────────────────────────────────
-// What a passed proposal may DO: one act the space's acts already have (`roles.act`, replayed by `gov`), and the
-// permission that act needs — whoever holds it applies it (no new authority).
-export const OUTCOMES = Object.freeze({ grant: "grant", assign: "roles", policy: "apps" });
-// (A grant, and a policy on who READS, are the owner's alone in the replay: "owner".)
-const POLICY_ACTIONS = ["read", "post", "comment", "vote", "edit", "join", "invite", "react", "save", "share", "tag"];
-const POLICY_WHO = ["anyone", "members", "admins", "owner", "nobody"];
-export function outcomeProblem(a) {
+// What a passed proposal may DO: one act the space's acts already have (`roles.act`, replayed by `gov`); the permission
+// it needs is the replay's one table (`gov::act_need`, `r.needOf`) — whoever holds it applies it (no new authority).
+export const OUTCOMES = Object.freeze(new Set(["grant", "assign", "policy"]));
+// `rules`: the replay's own vocabulary (`roles.actions`, `roles.validWho` — `gov::ACTIONS`, `gov::valid_who`).
+export function outcomeProblem(a, rules) {
   if (a == null) return null;
-  if (typeof a !== "object" || !OUTCOMES[a.act]) return "an outcome is a role granted, a role assigned or a policy set";
+  if (typeof a !== "object" || !OUTCOMES.has(a.act)) return "an outcome is a role granted, a role assigned or a policy set";
   if (a.act === "grant") return DID.test(String(a.did)) && ["admin", "member"].includes(a.role) ? null : "a grant names a member and admin or member";
   if (a.act === "assign") return DID.test(String(a.did)) && /^[\w-]{1,40}$/.test(String(a.role)) && typeof a.on === "boolean" ? null : "an assignment names a member, a role and on/off";
   if (typeof a.path !== "string" || a.path.length > 120) return "a policy names a path (an app's domain, or \"\" for the space)";
-  if (!POLICY_ACTIONS.includes(a.action)) return `a policy's action is one of ${POLICY_ACTIONS.join(", ")}`;
-  if (!POLICY_WHO.includes(a.who) && !/^role:[\w-]{1,40}$/.test(String(a.who))) return "a policy's who is anyone, members, admins, owner, nobody or a role";
+  if (!rules.actions.includes(a.action)) return `a policy's action is one of ${rules.actions.join(", ")}`;
+  if (!rules.validWho(String(a.who))) return "a policy's who is anyone, members, admins, owner, nobody, a role, a list or a level";
   return null;
 }
-export const outcomeNeed = a => (a?.act === "grant" || (a?.act === "policy" && a.action === "read") ? "owner" : (OUTCOMES[a?.act] ?? null));
 export function outcomeText(a, name = d => d) {
   if (!a) return "no outcome (a decision only)";
   if (a.act === "grant") return `make ${name(a.did)} ${a.role === "admin" ? "an admin" : "a member (not admin)"}`;
@@ -347,7 +344,7 @@ export function delegationChains(electorate, delegations) {
 // IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the pure parts beside the host's proxy — the tally itself
 // runs in the host, over the space's roles, counted the same for everyone.
 export function frame() {
-  return { normalizePoll, outcomeText, outcomeProblem, participation, graphOf, delegationChains, DEPTH, CHOICES };
+  return { normalizePoll, outcomeText, participation, graphOf, delegationChains, DEPTH, CHOICES };
 }
 
 export async function start(ctx) {
@@ -413,11 +410,9 @@ export async function start(ctx) {
     // The ELECTORATE of a proposal: the space's members (one account each) its `vote` rule lets vote.
     const electorate = p => members().filter(d => eligibility(p, r)(d) === true);
     // WHO MAY FINALIZE, as it was WHEN the finalization was written (a role changed later never unseats one): its
-    // proposer, the owner then (the space's first owner, then each `transfer` act), an admin then (their last `grant`
-    // act before it). Now (`at` Infinity): as the roles are now.
-    const ownerAt = at => r.acts("transfer").filter(a => (a.at ?? 0) <= at).reduce((o, a) => a.did ?? o, sp.governance?.owner ?? r.owner);
-    const adminAt = (did, at) => r.acts("grant").filter(a => a.did === did && (a.at ?? 0) <= at).at(-1)?.role === "admin";
-    const mayFinalize = p => (by, at = Infinity) => (at === Infinity ? by === p.by || ["owner", "admin"].includes(r.role(by)) : by === p.by || by === ownerAt(at) || adminAt(by, at));
+    // proposer, or one who held the owner's or an admin's role then (`Gov::role_at`, the replay's). Now (`at`
+    // Infinity): as the roles are now.
+    const mayFinalize = p => (by, at = Infinity) => by === p.by || r.isAdmin(by, at);
     async function proposalView(p) {
       const E = electorate(p);
       const t = proposalTally({ proposal: p, records, electorate: E });
@@ -425,7 +420,7 @@ export async function start(ctx) {
       const verified = fin ? await verifyFinal(fin.final, p, records) : null;
       const outcome = p.meta?.action ?? null;
       const applied = outcome ? appliedAct(r.acts(outcome.act), p.ref) : null;
-      const need = outcomeNeed(outcome);
+      const need = outcome ? r.needOf(outcome) : null;
       return {
         tally: t,
         final: fin,
@@ -436,7 +431,7 @@ export async function start(ctx) {
         myDelegate: t.delegations.get(self) ?? null,
         outcome,
         applied,
-        mayApply: !!(outcome && need && (need === "owner" ? r.role(self) === "owner" : r.can(self, need))),
+        mayApply: !!(outcome && need && r.can(self, need)),
         mayFinalize: !fin && mayFinalize(p)(self),
         mayVote: !fin && E.includes(self),
       };
@@ -489,7 +484,7 @@ export async function start(ctx) {
       mayPropose: r.allowsIn("post", self, "vote"),
       async propose({ title, body, action = null, quorum = 1, audience = "members", write = null }) {
         if (!String(title ?? "").trim()) throw new Error("a proposal needs a title");
-        const why = outcomeProblem(action);
+        const why = outcomeProblem(action, roles);
         if (why) throw new Error(why);
         return items.submit({ board: sp.id, kind: PROPOSAL, title, body, audience, write, meta: { quorum: Math.max(1, Number(quorum) || 1), ...(action ? { action } : {}) } });
       },
@@ -503,5 +498,5 @@ export async function start(ctx) {
   }
   // OPEN or CLOSE a poll (its maker): its meta as it was, `open` and `closedAt` changed.
   const setOpen = (poll, open) => items.editItem(poll.ref, poll.body ?? "", { meta: { ...poll.meta, open, closedAt: open ? null : Date.now() } });
-  return { pollView, vote, inSpace, createPoll, setOpen, spaceOf, normalizePoll, participation, graphOf, delegationChains, outcomeText, outcomeProblem, DEPTH, CHOICES };
+  return { pollView, vote, inSpace, createPoll, setOpen, spaceOf, normalizePoll, participation, graphOf, delegationChains, outcomeText, outcomeProblem: a => outcomeProblem(a, roles), DEPTH, CHOICES };
 }

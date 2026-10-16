@@ -392,7 +392,7 @@ export async function start(ctx) {
   // The page a section item is attached to (a space's: its id there; a person's: its whole reference).
   const pageRefOf = it => (String(it.in ?? "").includes("/") ? it.in : it.in ? `${placeOf(it.ref)}/${it.in}` : null);
   // A person's CIRCLES this reader is in (theirs: yours, your friends' and followers'): part of their personal wiki.
-  const circlesOf = async did => (await space.mine.strict()).filter(s => s.circle && s.governance?.owner === did);
+  const circlesOf = async did => (await space.mine.strict()).filter(s => s.circle && space.madeBy(s, did));
 
   // THE SCOPE of a place (`where`'s): a person's own wiki, or a space's. The COMMONS (the global, ownerless wiki) is
   // its own scope, later (after Vote): refused here by name.

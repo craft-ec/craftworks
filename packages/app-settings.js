@@ -50,7 +50,7 @@ export async function start(ctx) {
     // where anyone reads (`roles`' default: public participation).
     // A signal's action with nothing set anywhere: as its parent (`signals`), said so.
     const parent = S.parentOf(action);
-    const inherited = from == null ? (parent ? r.policy(path, action) : r.personal || (S.interactions().some(a => a.action === action && a.openWhereRead) && r.policy(path, "read") === "anyone") ? "anyone" : "members") : r.policy(from, action);
+    const inherited = from == null ? (parent ? r.policy(path, action) : r.personal ? "anyone" : r.fallback(path, action)) : r.policy(from, action);
     const LEVEL = p => (p === "" ? (r.personal ? "everything you post" : "the space") : p === "chat" ? "Chat" : p === "board" ? "Board" : p === "note" ? "Note" : p);
     // A personal space's: anyone · your followers · your friends · only you (`roles.personal`).
     // A shared space's: anyone (where it may) · members · admins · owner · nobody — and every ROLE composed there (its

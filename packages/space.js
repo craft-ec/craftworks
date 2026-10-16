@@ -161,6 +161,8 @@ export async function start(ctx) {
   // A space as it would be listed, before it is (to join its group first).
   const describe = async (id, v) => made(id, v, await account());
 
+  // MADE BY `did` (its id proves who made it: a circle's, a group's, a level group's maker — never handed on).
+  const madeBy = (sp, did) => !!did && (sp?.parent ?? sp)?.governance?.owner === did;
   // The id an owner's space has with a nonce.
   const idOf = async (owner, nonce) => hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`craftworks space\0${owner}\0${nonce}`))));
   const owner = async sp => {
@@ -213,5 +215,5 @@ export async function start(ctx) {
 
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
-  return { isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, idOf, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
+  return { isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, idOf, madeBy, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
 }

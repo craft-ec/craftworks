@@ -198,11 +198,12 @@ test("participation in words, the graph laid out, outcomes checked", async () =>
   assert.deepEqual(chains.get(D("C")), { choice: null, how: "delegated", path: [D("C"), D("A"), D("B")] });
   assert.equal(chains.get(D("B")).how, "direct");
   assert.equal(chains.get(D("D")).how, "none");
-  assert.equal(V.outcomeProblem({ act: "grant", did: D("A"), role: "admin" }), null);
-  assert.equal(V.outcomeProblem({ act: "policy", path: "text", action: "post", who: "admins" }), null);
-  assert.match(V.outcomeProblem({ act: "ban", did: D("A") }), /role granted/);
-  assert.match(V.outcomeProblem({ act: "policy", path: "", action: "fly", who: "admins" }), /action is one of/);
-  assert.equal(V.outcomeNeed({ act: "assign" }), "roles");
-  assert.equal(V.outcomeNeed({ act: "grant" }), "owner");
+  // (The vocabulary is the replay's — `roles.actions` / `roles.validWho` in the page; a stand-in here.)
+  const rules = { actions: ["read", "post"], validWho: w => ["admins", "members"].includes(w) };
+  assert.equal(V.outcomeProblem({ act: "grant", did: D("A"), role: "admin" }, rules), null);
+  assert.equal(V.outcomeProblem({ act: "policy", path: "text", action: "post", who: "admins" }, rules), null);
+  assert.match(V.outcomeProblem({ act: "ban", did: D("A") }, rules), /role granted/);
+  assert.match(V.outcomeProblem({ act: "policy", path: "", action: "fly", who: "admins" }, rules), /action is one of/);
+  // (The permission each outcome needs is the replay's one table: `gov::act_need`, tested there.)
   assert.equal(V.appliedAct([{ act: "grant", proposal: "x" }, { act: "grant", proposal: PROP.ref }], PROP.ref).proposal, PROP.ref);
 });

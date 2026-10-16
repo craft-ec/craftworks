@@ -148,7 +148,7 @@ export async function mount(ctx, el) {
     if (discovering()) {
       // Public boards only (a space may be listed for joining, its board still its members').
       const listed = await posts.publicSpaces();
-      const spaces = (await Promise.all(listed.map(async x => ((await (await roles.ofPublic(x))?.policyIn("text", "read")) === "anyone" ? x : null)))).filter(Boolean);
+      const spaces = (await Promise.all(listed.map(async x => ((await roles.ofPublic(x))?.readsAnyone("text") ? x : null)))).filter(Boolean);
       const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
       return [
         d ? await publicPanel(d) : null,
@@ -167,7 +167,7 @@ export async function mount(ctx, el) {
       // Who may post: the TEXT domain's rule (`kinds.policyDomain`: what enforces a post — set in the Space app).
       const mayPost = await r.allowsIn("post", me, "text");
       const myRole = await r.role(me);
-      const pubRead = (await r.policyIn("text", "read")) === "anyone";
+      const pubRead = r.readsAnyone("text");
       return [
         h(
           "div",

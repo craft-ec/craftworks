@@ -301,7 +301,7 @@ export async function start(ctx) {
     const r = await ctx.optional("conversation: of", (await ctx.require("roles")).of(sp), () => null);
     const now = (await keys.group(sp).ready())?.epoch ?? 0;
     const below = Math.max(Number(detail.below) + 1 || 0, now);
-    const ranked = (r?.members() ?? []).sort((a, b) => ["owner", "admin"].includes(b.role) - ["owner", "admin"].includes(a.role)).map(m => m.did);
+    const ranked = (r?.members() ?? []).sort((a, b) => r.isAdmin(b.did) - r.isAdmin(a.did)).map(m => m.did);
     // THIS ACCOUNT FIRST (its other devices hold the space's whole history — 10-13: the owner's recovered device asked
     // only the other members, who joined after the epochs it lacked; its own original device was never asked), then
     // the owner and admins. (This device reads the ask too: it holds none of what it asks, and answers nothing.)
@@ -677,7 +677,7 @@ export async function start(ctx) {
     const r = await roles.of.strict(sp);
     await r.settled;
     const prefix = `audience:${sp.id}/`;
-    const adminsOf = d => ["owner", "admin"].includes(r.role(d));
+    const adminsOf = d => r.isAdmin(d);
     for (const g of await space.mine.strict()) {
       if (!g.group?.startsWith(prefix)) continue;
       const who = g.group.slice(prefix.length);
@@ -685,7 +685,7 @@ export async function start(ctx) {
       const gr = await roles.of(g);
       if (!gr) continue;
       await gr.settled;
-      const maker = g.governance?.owner === me;
+      const maker = space.madeBy(g, me);
       if (maker) {
         await groups.keep(g, want);
         // The space's admins in it (as it stands now): the group's admins too — they keep it when its maker is away.
@@ -835,7 +835,7 @@ export async function start(ctx) {
     const [roles, storage] = await Promise.all(["roles", "storage"].map(n => ctx.require(n)));
     const r = await roles.of.strict(sp);
     const me = await space.account.strict();
-    const may = () => ["owner", "admin"].includes(r.role(me.id));
+    const may = () => r.isAdmin(me.id);
     // Its admins' group (made by whoever first needs it: the owner, turning space mail on): the key, and kept mail.
     let gp = null;
     const group = () => (gp ??= audience(sp, "admins"));

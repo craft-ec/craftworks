@@ -495,3 +495,25 @@ fn an_entry_is_judged_the_same_whenever_it_is_read() {
     let listed = gov(&[act("a", "no", 2, json!({"act":"added","did":M}))]);
     assert!(!listed.may_be_taken_out(M) && listed.may_be_taken_out("did:stray"));
 }
+
+#[test]
+fn one_permission_table_and_roles_over_time() {
+    assert_eq!(act_need(&json!({"act":"grant"})), Some("grant"));
+    assert_eq!(act_need(&json!({"act":"policy","action":"read"})), Some("grant"), "who reads: the owner's");
+    assert_eq!(act_need(&json!({"act":"policy","action":"post"})), Some("apps"));
+    assert_eq!(act_need(&json!({"act":"reject"})), Some("invite"));
+    assert_eq!(act_need(&json!({"act":"leave"})), None, "one's own act");
+    // An admin's policy on who READS: refused by the table (the owner's alone) — the replay's own arm reads it.
+    let g = gov(&[
+        act("g", "no", 1, json!({"act":"grant","did":A,"role":"admin"})),
+        act("p", "na", 2, json!({"act":"policy","path":"","action":"read","who":"anyone"})),
+        act("q", "na", 3, json!({"act":"policy","path":"","action":"post","who":"admins"})),
+    ]);
+    assert_eq!(g.counted.iter().filter(|a| a["act"] == "policy").count(), 1, "the read policy refused, the post one counted");
+    // Who held what WHEN.
+    assert_eq!(g.role_at(A, 0.5), None);
+    assert_eq!(g.role_at(A, 1.0), Some("admin"));
+    assert_eq!(g.role_at(O, 99.0), Some("owner"));
+    let t = gov(&[act("t", "no", 5, json!({"act":"transfer","did":M})), act("m", "no", 1, json!({"act":"added","did":M}))]);
+    assert_eq!((t.role_at(M, 2.0), t.role_at(M, 5.0), t.role_at(O, 5.0)), (Some("member"), Some("owner"), Some("admin")));
+}

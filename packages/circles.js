@@ -24,7 +24,7 @@ export async function start(ctx) {
   const AUDIENCES = { friends: { name: "Friends", relation: "friend" }, followers: { name: "Followers", relation: "follower" } };
   const mineOf = async which => {
     const me = await space.me.strict();
-    return (await space.mine.strict()).find(s => s.circle === which && s.governance?.owner === me) ?? null;
+    return (await space.mine.strict()).find(s => s.circle === which && space.madeBy(s, me)) ?? null;
   };
 
   // A CIRCLE is a GROUP (`groups`: the one "seen by just these people"), keyed by its audience.
