@@ -69,12 +69,10 @@ export async function start(ctx) {
       if (!k) return null;
       const o = keyState.owner;
       const text = k.state === "current" ? "🔑 keys current" : k.state === "behind" ? `🔑 behind: epoch ${k.epoch} of ${o?.epoch}` : k.state === "another branch" ? `🔑 on another branch (epoch ${k.epoch})` : k.state === "not announced" ? "🔑 keys not announced" : k.state === "devices not read" ? `🔑 devices not read here (${k.why})` : `🔑 ${k.state}`;
-      const by = k.repairedBy.length ? ` · caught up by ${[...new Set(k.repairedBy)].join(", ")}` : "";
-      const chip = h("span", { className: `chip key ${k.state === "current" ? "ok" : "warn"}`, textContent: text + by });
+      const chip = h("span", { className: `chip key ${k.state === "current" ? "ok" : "warn"}`, textContent: text });
       // What their page reported it cannot read here — shown in full (no hover on a touch screen).
       const warns = [
         ...(k.unread?.length ? [h("span", { className: "chip key warn", textContent: `⚠ can't read: ${k.unread.join(" · ")}` })] : []),
-        ...(k.state !== "current" && k.welcomeFailed?.length ? [h("span", { className: "chip key warn", textContent: `⚠ welcome failed: ${k.welcomeFailed.join(" · ")}` })] : []),
       ];
       if (!warns.length) return chip;
       return h("span", { className: "reads" }, chip, ...warns);

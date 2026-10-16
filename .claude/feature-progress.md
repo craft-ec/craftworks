@@ -2647,7 +2647,83 @@ each copy onto its existing owner + a build check per owner. Only gap with no ow
 - [ ] G2c PAGE: no admit/welcome/resend/stuck/catch-up/repair paths (conversation, keys add/readd/remove, upkeep.js,
       membership remove, moderation); "my key" on the group conditions; asks the node to run now; group-check.
       fx: the 11 flows, one with every page closed.
-- [ ] G3 the other kinds (chat, PRO/VIP card level, audience, circle).
-- [ ] G4 release (one PIN); Ivvor's 7 written to the record; DONE only when live health shows all 7 current.
+- [~] (SUPERSEDED 10-17: the ask/answer layer is deleted) G2d REVIEW ROUND 1 (independent reviewer, 10-16) + fx v812 — every finding fixed before commit:
+  BUGS
+  - [x] fx: page STUCK after its own delegate's commit (same leaf): adopt the delegate's group before "stuck" (keys.js current)
+  - [x] fx: a listed member's junk key took their entry out → members::In carries its own stale entries (test added)
+  - [x] H1 "my key" never posted by a keyless member (page listed check reads its own group) → no page listed check (the node's follow decides)
+  - [x] H2 guards::standing ignores re-adds → built on gov's `gone` (the replay's own answer)
+  - [x] H3 listed person's OLD join key re-adds a working member → a listed person's join key only when they hold no entry
+  - [x] H4 unguarded re-ask paths (askStuck let-in-never-in; failed welcome with a code) → through myKey
+  - [x] M5 my key waits forever after a refused key → the follower writes refusals into the writers list (an answer); mykey row cleared on join; per device
+  - [x] M6 transient read error → not-held → re-add; `u` counts other members' feed failures → why = no state; unreadable = own epoch gaps only
+  - [x] M7 moderation.enforce rewrites departed heads every tick → once per member's devices
+  - [x] M8 remove "not in this space" by leaves → by the list; mineKey = any held kp → only this device's my-key tags
+  DUPLICATES → their one owner
+  - [x] who may let in (role perm / may_invite / passes_did) → gov may_invite (the replay's) everywhere
+  - [x] turn wait (admission / members / lapse) → one guards::my_turn
+  - [x] key once + ask once composed in admission, members, core → one guards::fresh; welcomed parsing one core helper; waitingIn passes the real spent
+  - [x] "listed" four forms → gov roster (replay) only; drop redundant bans filter
+  - [x] letIn/invite duplicate + ban re-check → one list-entry function + standing guard
+  - [x] level-group detection regex (conversation, roles) → gov level_of via core
+  - [x] keyStatus/selfState branch classification → guards::group_state
+  - [x] key tag in JS (keys.holdsTag sha) → core admission_tag
+  - [x] bag names JS vs Rust → one bag_name via core
+  - [x] upkeep::now repeats woke's STUCK test → one running()
+  LIFECYCLE / GUARDS
+  - [x] node per-key skips only in plan text → `member` moves; decided buffer 32 → 128
+  - [x] guard logic outside guards.rs: self-skip, listed check, unlisted my-key drop → guards::listed / guards::not_self
+  - [x] admission Entry::Again dead → removed (chats send joins)
+  - [x] core space_member_of unused second "theirs" → deleted
+  - (also: one spentTags; problems by kind — unreadable = own key gaps; group_state unknown/ahead; refusals answered in the writers list)
+  - [x] review rounds 2–6 fixed (see commit message); fx v814/v816 all four rows passed (traced)
+  - [x] ROUND 6 → DESIGN CHANGE (10-16): re-adds BOUNDED BY CONSTRUCTION — `guards::readd`: no entry → always; holds an
+        entry → once per READD_EPOCHS (16), by its last welcome's epoch (writers list `epoch`). Device side only "one
+        unanswered at a time" (`post_key`); its record = its newest member-bag item. Per-device code removed (a space's
+        member credential is the account's). Follower reports its next turn (`next`); the page asks then.
+  - [x] fx out of background slots (Freenet: 64 background delegates per app; every build a new delegate) — measured in
+        the fx log; fx data moved to fx/data.capped-1016, delegates+secrets restored, db fresh. RELEASE ITEM: old builds
+        must give back their background slot (retire), or users lose wake-ups after 64 releases.
+  - [ ] REVIEW ROUND 7 clean + fx v818 (follow + closed-page, traced) → commit
+  OPEN DESIGN (bring to owner before code): signed answers — writers-list `welcomed`/`refused` and member-bag asks are
+  unauthenticated (forgeable by anyone with the space id); the "welcome leads onto the space's real key history" guard;
+  a follower on a losing fork re-adding (now bounded by readd).
+- [~] (SUPERSEDED 10-17 by D1–D6 below) G3 EVERY kind on the delegate round: direct chat, group chat, audience, circle, account devices, level lapses; page add/readd/remove deleted for all; build check.
+- [~] (SUPERSEDED 10-17 by D6) G4 release (one PIN); Ivvor's 7 written to the record; DONE only when live health shows all 7 current.
 UNRELEASED on main (live = v398 b9f4951): batch 2 734a463, batch 1 26b4fd4 (fixes the owner's Craftworks space
 missing from Discover once released and opened — its dropped device recorded by the `departed devices` job).
+
+## ONE GROUP, SELF-ENTRY (10-17, FOUNDATION "Members and keys" — The design (10-17)) — owner: "complete A and B"
+Why: 8 review rounds patched an invented ask/answer layer; MLS external commits (already our account's join) make it
+unnecessary. Kept from 10-16: Gov::stamp, gov out_acts/may_be_added/standing, guards whole/list_for/turn/takeover,
+group_state/on_branch, delegate acts reading + Remove side, follow lifecycle events. Deleted: my-key, answers, readd
+windows, post_key/once/fresh/answered, follower adds, admission request decisions.
+- [x] D1 core: one `enter` (`mls::enter_with`: the account's words join + a space's listed entry, own old leaf out),
+      `apply_checked` + `entry_ok` over a `List` (EVER listed, a proof by `Gov::admits`, `may_be_taken_out`), the proof
+      in the entrant's own leaf (ext 0xF0A1), `rules::ordering::order`; gov `admits`/`join_proof`/`ever_*`/`reject`.
+- [x] D2 page: door `door-<e>` (open key), info parts + `ih` announcements (owner always, others only where none),
+      catch-up over epoch log ∪ door with the list check (deferred until the list reads whole), `enterNow` from
+      AUTHENTIC info only (owner by the space id, or a listed member; never its own); stuck/off-branch/not-held enter;
+      the ask/answer layer deleted (my key, welcomes, key packages, admit, waitingIn, resend, askStuck).
+- [x] D3 node: follower removes only (unlisted + not admitted by its leaf's proof; the acts' put-out always), by turn
+      with `due_since`; catch-up by the same rule; owner's node publishes its info once an epoch; a page's FollowNow
+      takes over another member's round; randomness armed before a commit. group-check: no add/welcome/key request.
+- [x] D4 self-service `join` act (code proof bound to the DID, open door, level); requests: requestJoin, cancelJoin,
+      letIn, reject (`reject` act + notice checked against the public acts); every waiting request shown (with why one
+      is out); join modes anyone / ask / members; invite acts never published.
+- [x] D5 chats (direct/group: listIn + tell), audiences + circles (`groups.keep` writes the list by the roster), PRO/VIP
+      (gate carries the group's owner/nonce; entered with the level proof; lapse → follower out).
+- [x] Ivvor's report: the space's own settings shown (Space app → Overview → Settings): Visibility Private/Public, Join.
+- [x] Review 10-17 (independent, vs I1–I8): 4 critical + 7 important fixed (join/reject acts, codes published, proof
+      entries never removed, forged info; I5 by ever-sets; member removals limited; committer index; door bounded…).
+- [x] fx v827 traced (`pw/enter.mjs`): join by code 41 s (listed), re-entry (one entry), spent code skipped, invite,
+      removal one commit, request rejected then let in — 6/6. Found on the way: info bytes as hex; node randomness not
+      armed; own-list guard too strict; another member's round blocking; removed requester hidden.
+- [ ] D6 release (owner's say: identity build moves — a PIN once; old builds retired); Ivvor's space: its 7 written to
+      the acts (owner's page), each device enters by itself; done when health shows 7/7.
+Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
+- Ivvor 10-16 19:32 (live v398): "can't get 2 other IDs accepted; can't tell how to make a new space public; manual
+  invite codes don't look like working". IDs/codes: the ask/answer layer this redesign deletes (self-entry). Public:
+  the Space app's space-level settings had NO Read — public reading was per app only. FIXED (uncommitted): space
+  settings "Who sees it" (read, owner only, inherited by every app); Anyone → published + listed in Discover; a space
+  taking requests ("ask") counts as public too (`Gov::is_public`).

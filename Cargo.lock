@@ -389,6 +389,7 @@ dependencies = [
  "ed25519-dalek",
  "freenet-stdlib 0.10.0",
  "hmac",
+ "serde_json",
  "sha2",
  "wire",
  "x25519-dalek",
@@ -550,6 +551,7 @@ dependencies = [
 name = "craftworks-gov"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "serde_json",
 ]
 
@@ -635,9 +637,11 @@ name = "craftworks-rules"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "craftworks-account",
  "craftworks-allowance-contract",
  "craftworks-bag-contract",
  "craftworks-beacon-contract",
+ "craftworks-gov",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-reputation",
@@ -648,6 +652,7 @@ dependencies = [
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
+ "serde_json",
 ]
 
 [[package]]

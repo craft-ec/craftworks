@@ -146,6 +146,15 @@ export async function start(ctx) {
           ),
           el("div", { style: "display:grid;grid-template-columns:max-content minmax(0,1fr);gap:var(--cw-space-1) var(--cw-space-3);margin-bottom:var(--cw-space-3)" }, ...[["Role", "Can"], ["Owner", "everything · hand on"], ["Admin", "invite · channels · remove messages, members"], ["Member", "post · invite"]].flatMap(([a, b], i) => [el(i ? "span" : "b", { textContent: a }), el(i ? "span" : "b", { textContent: b })])),
         );
+        // THE SPACE's OWN SETTINGS (`app-settings`: Visibility — public or private —, joining, inviting, posting, its
+        // about and history): drawn here, the one place (10-16, Ivvor: not shown anywhere — no way to make a space public).
+        main.append(el("h3", { textContent: "Settings" }));
+        const own = el("div", {}, el("p", { className: "note", textContent: "Reading its settings…" }));
+        main.append(own);
+        ctx.require("app-settings").then(a => a.page(server)).then(
+          x => own.replaceChildren(x),
+          e => own.replaceChildren(el("p", { className: "said", textContent: ctx.say(e) })),
+        );
         // LEAVE: out of this person's list. An owner with others still in hands it on first.
         const others = r.members().filter(m => m.did !== me.id);
         main.append(el("h3", { textContent: "Leave" }));
@@ -270,21 +279,21 @@ export async function start(ctx) {
         main.append(
           el("p", {
             className: "note",
-            textContent: "Code → asks to join → a member who may invite lets them in (automatic).",
+            textContent: "A code lets its holder in by themselves. Where the space lets people ask, a member who may invite lets each one in or rejects them.",
           }),
         );
-        // WHO IS WAITING (asked under the open door or a code, not let in yet) — each let in here, or by any page or node
-        // of a member who may invite on its own — and WHO WAS LET IN lately (when, by whom, how).
+        // WHO IS WAITING (a request: asked, not let in, rejected or cancelled yet) — each let in or rejected here — and WHO
+        // CAME IN lately (when, how).
         const asking = el("div", {}, el("p", { className: "note", textContent: "Reading who asked…" }));
         main.append(el("h4", { textContent: "Waiting to join" }), asking);
         conversation.requestsOf(server).then(
           ({ waiting, admitted }) => {
-            const how = c => (c === "open" ? "the open door" : c ? `code ${c}` : "an invite");
+            const how = c => (c === "open" ? "the open door" : c === "ask" ? "a request" : c === "level" ? "their level" : c === "added" ? "an invite" : c ? `code ${c}` : "an invite");
             asking.replaceChildren(
               waiting.length
-                ? el("ul", { className: "asks" }, ...waiting.map(q => el("li", {}, directory.nameEl(q.did), ` · ${when(q.at)} · by ${how(q.code)} `, act("Let in", () => conversation.letIn(server, q.did, q.code), "main"))))
+                ? el("ul", { className: "asks" }, ...waiting.map(q => el("li", {}, directory.nameEl(q.did), ` · ${when(q.at)} · by ${how(q.code)}${q.out ? ` · ${q.out}` : ""} `, act("Let in", () => conversation.letIn(server, q.did), "main"), " ", act("Reject", () => conversation.reject(server, q.did)))))
                 : el("p", { className: "note", textContent: "Nobody is waiting." }),
-              el("h4", { textContent: "Let in lately" }),
+              el("h4", { textContent: "In lately" }),
               admitted.length
                 ? el("ul", { className: "asks" }, ...admitted.map(a => el("li", {}, directory.nameEl(a.did), ` · ${when(a.at)} · ${how(a.code)}`, a.by ? el("span", {}, " · by ", directory.nameEl(a.by)) : "")))
                 : el("p", { className: "note", textContent: "Nobody yet." }),

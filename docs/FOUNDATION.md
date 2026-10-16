@@ -171,86 +171,118 @@ joining and catching up; none converged.
   its own reading of the record; when the record and the keys disagree it sends the wrong one and waits for ever
   (`rules::admission` skipped it: "in the group already").
 
-**The design.**
+**What went wrong after (10-16, eight review rounds).** The first fix kept the ask/answer shape — a device that could not
+read POSTED A KEY and a member's node ANSWERED by re-adding it — and wrapped it in rules (once, answered, windows,
+turns, refusals, waits). Every round found new loops and dead ends in that layer; an audit against the invariants found
+six of eight broken. The layer was invented: MLS already lets a member enter BY ITSELF (an EXTERNAL COMMIT from the
+group's published info) — and this codebase already does so for the account's own group (`mls::Account::join`); the
+spaces never did. Prior art agrees (MLS RFC 9420 external commits; Matrix's room-state DAG; Keybase's team sigchains;
+DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
 
-1. **ONE MEMBER LIST per kind — the only thing anyone decides.** Each kind says only how its list is written:
-   | Kind | Its member list | Written by |
+**The design (10-17).**
+
+1. **ONE GROUP IMPLEMENTATION, every kind.** A space, a PRO/VIP group, a direct or group chat, an audience, a circle and
+   the account's own devices are each an MLS group with the SAME operations, implemented once (Rust core; the page and
+   the identity delegate through it):
+   | Operation | MLS | Who does it |
    |---|---|---|
-   | a space | its acts' roster (admitted, added, removed, banned) | an admitter's `admitted` act (`rules::admission` decides who may); moderation's acts |
-   | a PRO/VIP group | members whose card shows the level | the card (the honor system: checked, never asked) |
-   | a direct / group chat | its started / added acts | its maker, a member adding |
-   | an audience | the role's or the list's assignments | the space's admins |
-   | a circle | the owner's friends / followers | the owner's edges |
-   | the account | its devices contract | `membership` (the words) |
-   Letting someone in IS writing them into the list. Nothing else is a decision.
-2. **ONE KEY-FOLLOWER — the keys always brought in line with the list.** One implementation, in the shared Rust core
-   (`craftworks_account`-style: the page runs it through the core, the identity delegate natively), run by whichever
-   member's device has the TURN (`rules::admission::turn`, the one ranking). Inputs: the list; the keys' leaves (who, at
-   which key); each member's announced state (its epoch and branch, in the space's writers list). Output: ONE commit —
-   every leaf of someone not listed taken out; every listed member who cannot read (no leaf, a leaf of a dropped
-   device, behind the current epoch or on another branch) re-added with the fresh key package their device posted —
-   their old leaf replaced in the same commit; the welcome recorded. Re-added members are handed the history
-   (`a38358f`'s path). Nothing is added without a list entry; nobody listed is left unable to read.
-3. **ONE MESSAGE from a member's device: "my key".** A device on the list that CANNOT read posts a fresh key package
-   (as a request carries one now). CANNOT READ means what reading the log cannot fix: never held (NOT_HELD), another
-   branch (OFF_BRANCH), UNREADABLE, STUCK, or a welcome that failed to open (`join` FAILED) — and, its last key ANSWERED
-   (a welcome recorded for it) yet still not reading once that welcome should have arrived. BEHIND is NOT one: a member
-   that missed commits reads them from the epoch logs (ordinary processing) — re-adding everyone who lags pushes the rest
-   behind (the churn that ran Ivvor's space to epoch 485). Posted once per such condition, never on a timer. It replaces
-   the join-again, stuck, catch-up and repair asks. A person not on the list asks to join with the same message plus where
-   they ask in (a code, the open door, a level); an admitter writing them into the list is the answer.
-4. **NO MEMBER MUST STAY ONLINE, and ONE IMPLEMENTATION OF THE WHOLE STEP** (owner 10-16: "the design is still
-   duplicate"): the whole step — read the list (the acts, replayed by `gov`), the key entries, the "my key" posts and the
-   answers; decide (`rules::admission`, `members::follow`); write a list entry (`Gov::stamp`); build the commit and each
-   welcome — runs in ONE place: the account's node (the identity delegate's upkeep), on every wake-up and whenever a page
-   asks it to run now. It holds the account's keys already and runs with every page closed. The page writes acts the
-   person chooses (by the same `Gov::stamp`), posts "my key", and follows the commits from the epoch logs; it never
-   gathers the inputs, decides or commits for membership itself. The node reads the list from the acts, never from a
-   page-computed copy (a mandate keeps only what names the space and its group). DELIVERY is the send door's (the one `index.send`: what it could
-   not deliver it keeps and sends again) — never a membership mechanism.
-5. **Who may**, unchanged: `rules::admission` (only the request's own key; never a spent one; once per request; one
-   admitter by turn) — now deciding list entries; the follower acts on the list, never on requests.
-6. **THROUGH THE LIFECYCLE** (§1 — every step a move of its machine, reported; no timer or ask beside them):
-   | Machine | Its moves here |
-   |---|---|
-   | `group` (this device's keys of a space) | upkeep sets HELD / BEHIND / OFF_BRANCH / NOT_HELD / UNREADABLE; ENTERING any not-reading state while listed posts "my key" — once per entry, never on a timer; the follower's commit is its `commit` step (`why`: n in, m out) |
-   | `join` (the asker, keyed by its key) | ASKED = "my key" posted; WAITING with why — "not on the list yet" or "listed: keys coming"; MEMBER = its `group` reached HELD; FAILED with why |
-   | `member` (the decider, keyed by the asker's key) | SKIPPED (why: `rules::admission`); LISTED (the list entry written — new); WELCOMED when the follower's commit carried that key; FAILED |
+   | create | a new group | its maker |
+   | ENTER / RE-ENTER | an EXTERNAL COMMIT from the group's published info — removing its own old entry in the same commit (`with_removal`) | the LISTED account's own device, by itself, whenever it cannot read (never held, another branch, stuck) — nobody else online, nobody answering |
+   | follow the list OUT | a Remove of every entry whose account is not listed | any member, by turn (`admission::turn`) |
+   | bring current | apply the commits from the epoch logs | each device |
+   A kind supplies only: WHO IS LISTED (below) and WHERE its group info is published. Nothing else differs.
 
-**THE FLOWS, walked end to end (10-16 — every one must hold before code):**
+2. **ONE MEMBER LIST per kind**, the only thing decided:
+   | Kind | Its member list | How someone gets on it |
+   |---|---|---|
+   | a space | its acts' roster | self-service: an invite CODE (their entry carrying the code's proof bound to their DID — `gov::join_proof`; invite acts are never made public), the OPEN door (their own join act under the "anyone" policy); or MANUAL approval (a request, below) |
+   | a PRO/VIP group | members whose card shows the level | self-service: entered with the level as its proof (the honor system); a member whose page reads their card short writes `lapsed` (in turn), and the follower takes them out |
+   | a direct / group chat | its started / added acts | its maker, a member adding |
+   | an audience | the role's / list's assignments | the space's admins |
+   | a circle | the owner's friend / follower edges | the owner |
+   | the account | its devices contract | the words (`membership`) |
+   The REPLAY decides every entry (`gov`: the same on every node). Getting the keys then needs nobody: the listed device
+   enters by itself (1).
+
+3. **A REQUEST (manual approval only) never hangs** (owner 10-17): its own lifecycle, every one ending decided —
+   | From | Event | To | By | Recorded |
+   |---|---|---|---|---|
+   | — | ask | REQUESTED | the asker | their signed request item |
+   | REQUESTED | cancel | CANCELLED | the asker | their signed cancel item |
+   | REQUESTED | let in | LISTED | one who may invite | a `let-in` act naming the request |
+   | REQUESTED | reject | REJECTED | one who may invite | a `reject` act naming it (an optional reason the asker sees) |
+   | LISTED | enter | MEMBER | the asker's own device | its external commit |
+   One end per request (the replay orders a cancel and a decision that race); a new request after CANCELLED / REJECTED
+   is new. Self-service entries have no REQUESTED step.
+
+4. **WHERE AN ENTRY GOES, and the group info** (checked against the code 10-17: an epoch's log is written only with a
+   key from that epoch's secret — a device that lost its keys cannot write it). Members' commits stay in their epoch
+   logs. An external commit goes into the epoch's DOOR — an open bag per group and epoch (`door-<epoch>`, sealed with
+   the group's open key from its id, as the writers list is). Position `e`'s entries = the epoch log's ∪ the door's, in
+   ONE order (`rules::ordering::order`). The GROUP INFO of an epoch is put in its door in parts, announced in the writers
+   list (`{w, epoch, branch, ih}`): the OWNER's always (its owner's node too, once an epoch, with every page closed),
+   another member's only where no whole info is there yet (a door holds 256 KiB). A device enters only from AUTHENTIC
+   info — signed by the space's OWNER (proven by the space's id) or, its list read whole, by a listed member; never its
+   own account's (its own fork). HISTORY is unchanged: each epoch log's `open` row (prev / back secrets), written by any
+   member reaching the epoch — the entered device then reads back.
+
+5. **EVERY ENTRY CHECKED AGAINST THE LIST, above MLS** (one rule, `mls::entry_ok`, the page and the node alike), by
+   answers that NEVER CHANGE as more acts are read (acts only grow — I5: every reader alike, whenever it reads; review
+   10-17): the committer EVER listed and not banned, or entering by itself with a proof the acts admit (`Gov::admits`:
+   uses, expiry, standing — one entering is listed by its own `join` act soon after, so a reader behind judges it as
+   listed); everyone added the same; an entry takes out only its committer's own; a member's commit takes
+   out only accounts the acts EVER put out or never listed (`Gov::may_be_taken_out` — no member removes a listed
+   account on its own). A reader takes the LOWEST VALID entry at each position; an invalid one is skipped by everyone
+   (an outsider's never holds a position: no jam). Nothing is skipped from a list not read whole (deferred: I6). A
+   self-entrant's PROOF also rides its own leaf (a leaf extension): the follower keeps that entry while the acts admit
+   it NOW (`Gov::admits`: never the banned, never one REMOVED — back only by an invite) and the acts have not put it
+   out, until its own `join` act lists it.
+
+6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
+   in 3), the follower's `commit` step. No ask, no answer, no window, no timer.
+
+**THE INVARIANTS — every rule derives from one; a change starts from a row, never from a symptom (owner 10-16:
+"coordinated and synergized rules, not whack-a-mole"); a review checks the code against this table:**
+| # | Always true | The one rule that keeps it (where) |
+|---|---|---|
+| I1 | Keys follow the list: an account holds an entry ⇔ it is listed | IN: the listed device enters itself (1); OUT: the follower's Remove (1); every commit checked (5) |
+| I2 | A listed account without working keys gets them, needing nobody | its own external commit from the published info (1, 4) |
+| I3 | Nobody unlisted gets keys | the check above MLS (5): an unlisted entry is skipped by every reader |
+| I4 | Churn is bounded: a device enters only while it holds no usable state (never held, another branch, stuck) — entering gives it one, so it cannot repeat; BEHIND reads the logs; history gaps are asked of members, never re-entered | the `group` states (6) |
+| I5 | Every node decides alike from shared data (the acts, the logs) | the replay (2), the lowest valid entry (5) |
+| I6 | Nothing permanent from a short read | a removal only on a whole read of the list (`guards::whole`); an entry is the device's own, from its own read of its own listing |
+| I7 | One actor at a time where one is needed (removals) | `admission::turn` + takeover |
+| I8 | Requests never hang | the request lifecycle (3) |
+
+**THE FLOWS (every one must hold before code):**
 | # | Scenario | Flow |
 |---|---|---|
-| 1 | a new person joins, a member's page open | "my key" + where → `rules::admission` → list entry (LISTED) → follower commit → welcome sent → asker HELD |
-| 2 | the same, every page closed | the node: the same rule → the same act writer → the same follower → the send door |
-| 3 | a welcome lost in transit | the send door sends again; still not reading after its key was answered → "my key" again (answered once) |
-| 4 | a welcome that does not open | `join` FAILED (why) → "my key" again |
-| 5 | a member that missed commits | BEHIND → reads the epoch logs; only a walk that cannot go on (UNREADABLE, OFF_BRANCH, STUCK) → "my key" |
-| 6 | a member removed or banned | the act → off the list → the follower takes its entries out |
-| 7 | a device dropped from an account | the account's list (its devices) → its keys; spaces keep its writing (`departed`) |
-| 8 | a PRO/VIP card changes level | the list is the card's level → the follower adds or removes |
-| 9 | a direct chat | the list: the two |
-| 10 | Ivvor's space | its owner writes the 7 into the record; their devices, NOT_HELD / UNREADABLE, post "my key" on the new build's first load; the follower re-adds all 7 in one commit |
-| 11 | the only member holding current keys offline | its node follows (2) |
+| 1 | a new person joins by a code / the open door / a level | their own join act (proof) → the replay lists them → their device enters (external commit) |
+| 2 | manual approval | request → let in (an act) → their device enters; or reject / cancel: ended |
+| 3 | every other page closed | 1 and 2 need nobody else; a removal waits for any member (its node by turn) |
+| 4 | a device that lost its keys / on another branch / stuck | it enters again by itself, its old entry out in the same commit |
+| 5 | a member that missed commits | BEHIND → reads the logs |
+| 6 | removed or banned | the act → off the list → a member's Remove; their own later external commit is skipped by every reader |
+| 7 | a device dropped from an account | the account's list → out of the account's group |
+| 8 | a PRO/VIP card falls below its level | off the list → Remove |
+| 9 | Ivvor's space | the 7 written into the acts; each of their devices enters by itself on the new build's first load |
+| 10 | an outsider posting commits | skipped by every reader (5) |
 
-**Deleted** (each with its tests): the three add paths and two remove paths (one follower), the inline per-kind
-member conditions, `askAgainIn` / the stuck bag / catch-up asks / repair welcomes / welcome-again paths, the asker's
-join-vs-again choice; the welcome outbox becomes the send door's (delivery, not membership). ENFORCED: `tools/group-check.mjs` — a key add, re-add or remove anywhere but
-the follower fails the build (Rust included); a request built anywhere but the one "my key" site fails it.
+**Deleted** (each with its tests): the space-only join path and every ask/answer piece built 10-16 — "my key" and the
+member bag, answers in the writers list, `guards::readd` / `post_key` / `once` / `fresh` / `answered`, the follower's
+adds, `rules::admission`'s request decisions (the replay decides list entries), the per-kind admit paths in the page.
+ENFORCED: `tools/group-check.mjs` — a second group implementation, an Add of another account's key, or a key request
+anywhere fails the build.
 
-**Ivvor's New Space, repaired by the same design.** Its owner's device writes the record to match its real members
-(the 7 the keys hold, each one `member` act — the record becomes the truth once), then the follower re-adds all 7 in
-one commit at the current epoch. Done when the health records show all 7 at the space's epoch — measured, not assumed.
-
-**Order of work** (each: built, the negative control red on the old code, proven on fx with a space broken as Ivvor's
-is, released — the identity build moves: a PIN once):
-- G1 the follower in the core (Rust) with tests over broken states: members behind, never announced, forked, dropped
-  devices, strays; one commit each. (Done: 5b4d3ec.)
-- G2a the ONE act writer in Rust (DAG stamp, the page's format), the page's `roles.act` through it; the node writes
-  list entries. G2b the page and the delegate on the follower; "my key" on the conditions above; the deletions;
-  group-check. Every flow in the table above proven on fx before release.
-- G3 each kind's list on it (space, PRO/VIP, chats, audience, circle, account).
-- G4 Ivvor's space repaired; health shows all 7 current.
-Then the rest of the duplicate sweep (`.claude/feature-progress.md`, batches 3–5).
+**Order of work** (each: built, tested with a negative control, proven on fx traced, audited against the invariants):
+- D1 the core (Rust): ONE `enter` (the account's words join and a space's listed entry), `entry_ok`, the ordered
+  candidates of a position; tests with negative controls.
+- D2 the page: the door, `info` in announcements, catch-up over both with `entry_ok`, enter on NOT_HELD / OFF_BRANCH /
+  STUCK; the ask/answer layer deleted (page).
+- D3 the node: its follower removes only, catches up by the same rule; its adds and answers deleted; group-check.
+- D4 self-service list entries (code proof, open door, level) and the request lifecycle.
+- D5 each kind's list on it (chats, audiences, circles, PRO/VIP).
+- D6 release (a PIN once; old builds give back their background slot), then Ivvor's space — done when health shows all 7.
 
 ### Apps are installed, not built in
 

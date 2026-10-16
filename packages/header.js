@@ -365,7 +365,7 @@ export function mount(ctx, el) {
   addEventListener("craftworks:auth", () => switcher());
   // THE BACKGROUND — on every page, AFTER it: started one at a time, each once the node is idle (the page's own reads
   // answered), never on a clock that lands among them. ACTIVITY (what is new: notified, whichever app is open);
-  // UPKEEP (welcomes joined, askers let in); FILE KEYS (every file on the key its access calls for); KEEP (this person's
+  // UPKEEP (spaces told of, entered); FILE KEYS (every file on the key its access calls for); KEEP (this person's
   // data kept on the network); VIDEO STUDIO (renditions still to make).
   ctx.background("header: async", (async () => {
     const node = await ctx.require("node");

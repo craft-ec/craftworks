@@ -46,9 +46,6 @@ fn put_index<H: Host>(h: &mut H, name: &[u8], i: &Index) {
     h.set_secret(name, &[TAG, &bincode::serialize(i).expect("a round encodes")[..]].concat());
 }
 
-pub fn wakeups<H: Host>(h: &H) -> u64 {
-    h.get_secret(identity::UPKEEP_WAKEUPS).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0)
-}
 pub fn load<H: Host>(h: &H, name: &[u8]) -> Option<Round> {
     let i = index(h, name)?;
     let got = i.read.iter().map(|id| (*id, h.get_secret(&got_key(name, id)).unwrap_or_default())).collect();
@@ -73,7 +70,7 @@ pub fn save<H: Host>(h: &mut H, name: &[u8], r: Option<&Round>) {
 }
 /// Whether a round is IN FLIGHT (and not stuck): no new one starts.
 pub fn busy<H: Host>(h: &H, name: &[u8]) -> bool {
-    index(h, name).is_some_and(|r| wakeups(h).saturating_sub(r.started) < STUCK)
+    index(h, name).is_some_and(|r| identity::upkeep_wakeups(h).saturating_sub(r.started) < STUCK)
 }
 /// Whether a round is kept waiting on NO read (paused by its step: work left for a later call, `witness_statement`).
 pub fn paused<H: Host>(h: &H, name: &[u8]) -> bool {

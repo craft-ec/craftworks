@@ -47,6 +47,8 @@
 //   await roles.ofPublic(desc)  // a space seen from OUTSIDE (`desc`: { id, name, governance }): its public acts only —
 //                            // its writers found from its owner (the id proves them) and the roster, each DID's devices
 //                            // from its card; the same `r` to read by (role, author, config, allows, members, acts)
+// ACTS NEVER MADE PUBLIC, whatever the space: an invite's code is a bearer secret.
+const SECRET_ACTS = new Set(["invite", "revoke-invite"]);
 export async function start(ctx) {
   const [space, storage, keys, node, directory, K, S] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds", "signals"].map(n => ctx.require(n)));
 
@@ -174,6 +176,21 @@ export async function start(ctx) {
         const said = `acts ${rows.length} (${causal} naming what they saw), ${counted.length} counted; ${miss.length ? `${miss.length} named by others NOT HERE yet (${miss.slice(0, 3).join(", ")})` : "none missing"}`;
         if (said !== missSaid) ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said}` });
         missSaid = said;
+        // THE LIST every entry of the space's keys is checked against (`keys`: `mls::entry_ok` — the node's `GovList`):
+        // the acts' answers that never change as more are read (EVER listed, a proof's entry rule, who may be taken
+        // out). WHOLE only when no act is named that is not here and the acts read decided (I6).
+        const text = h => new TextDecoder().decode(new Uint8Array((String(h).match(/../g) ?? []).map(x => parseInt(x, 16))));
+        keys.setList(sp.id, {
+          roster: [...roster],
+          owner,
+          whole: !miss.length && t.state?.s === "present",
+          gen: counted.length,
+          check: {
+            listed: did => gv.entry_listed(did),
+            admits: (did, aadHex) => gv.entry_admits(did, text(aadHex), Date.now()),
+            mayTakeOut: did => gv.may_be_taken_out(did),
+          },
+        });
       }
     }
     let missSaid = null;
@@ -259,7 +276,9 @@ export async function start(ctx) {
     // and every role composed in the space they hold (`gov`).
     const inGroup = did => group.some(m => m.did === did) && !(left && did === me?.id);
     const passes = (who, did) => who === "anyone" || (!!role(did) && gv.passes_did(who, did, inGroup(did)));
-    const can = (did, what) => (!role(did) ? false : what === "invite" ? passes(gv.effective("", "invite", Infinity), did) : gv.may(did, inGroup(did), what));
+    // WHO MAY LET IN: the replay's own invite rule (`Gov::may_invite` — what its `admitted` acts are judged by, and the
+    // node's follower ranks admitters by).
+    const can = (did, what) => (!role(did) ? false : what === "invite" ? gv.may_invite(role(did), Infinity) : gv.may(did, inGroup(did), what));
 
     // This device listed as a writer of the space's public acts (once a page): after it writes one, and on opening a
     // space whose public acts it wrote before the bag.
@@ -342,6 +361,13 @@ export async function start(ctx) {
       allowsIn: (action, did, domain, at = Infinity) => passes(policyInOf(domain, action, at), did),
       domains: () => DOMAINS,
       banned: did => bans.has(did),
+      // THE GUARD "in standing" (`rules::guards::standing`, the node's too): why `did`, asking at `at`, is not let in by a
+      // request (banned, removed, left before asking) — or null.
+      standing: (did, at) => gv?.standing(did, Number(at) || 0) ?? null,
+      // THE GUARD "may list" (`rules::guards::may_list`): why `did` may not be put on the list (an invite), or null.
+      mayList: did => gv?.may_list(did) ?? null,
+      // The acts that put someone OUT (the replay's one list: remove, ban, leave, lapsed), in order.
+      outActs: () => (gv ? JSON.parse(gv.out_acts()) : []),
       bannedList: () => [...bans],
       // Out by the acts — removed, banned, left — and not added back: their nodes leave the group (`moderation`).
       goneList: () => [...gone],
@@ -378,29 +404,32 @@ export async function start(ctx) {
       async publish() {
         if (out || !me || role(me.id) !== "owner") throw new Error("only the owner makes the space's acts public");
         const have = new Set(pubActs.rows().map(x => x.key));
-        const ids = new Set(counted.map(a => a.id));
+        // (Never an INVITE: its code is a bearer secret — one who reads it enters by it: review 10-17.)
+        const ids = new Set(counted.filter(a => !SECRET_ACTS.has(a.act)).map(a => a.id));
         for (const row of sealedActs.rows()) if (ids.has(row.key) && !have.has(row.key)) await pubActs.put(row.key, row.value);
-        const listed = new Set(counted.filter(a => ["member", "added", "admitted"].includes(a.act)).map(a => a.did));
+        const listed = new Set(counted.filter(a => ["member", "added", "admitted", "join"].includes(a.act)).map(a => (a.act === "join" ? a.by : a.did)));
         for (const m of r.members()) if (m.did !== owner && !listed.has(m.did)) await pubActs.put(newId(), JSON.stringify(stamp({ act: "member", did: m.did })));
         await listActWriter();
       },
       async act(a) {
         if (!me) throw space.loginNeeded();
         if (out) throw new Error("not a member of this space");
-        const need = { role: "roles", assign: "roles", grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite" }[a.act];
+        const need = { role: "roles", assign: "roles", grant: "grant", remove: "remove", ban: "remove", unban: "remove", hide: "moderate", app: "apps", config: "apps", policy: "apps", transfer: "grant", invite: "invite", "revoke-invite": "invite", admitted: "invite", added: "invite", member: "invite", reject: "invite" }[a.act];
         // Leaving is any member's own act (the owner hands the space on first).
         const leaving = a.act === "leave" && role(me.id) && role(me.id) !== "owner";
         // A list of named people: any member's own (only its maker changes it — the acts' check).
         const listing = a.act === "list" && !!role(me.id);
         // A LAPSE (a level group): any member's, as the replay rules it (`gov`: level groups only, never the owner or an
         // admin) — owner 10-07: this check had no entry for it, so no page could write one.
-        const lapsing = a.act === "lapsed" && !!role(me.id) && /^level:(pro|vip)$/.test(policyOf("", "join", Infinity) ?? "");
-        if (!leaving && !listing && !lapsing && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
+        const lapsing = a.act === "lapsed" && !!role(me.id) && !!node.glue.level_of_policy(policyOf("", "join", Infinity) ?? "");
+        // ENTERED BY ITSELF: its own `join` act (its proof judged by the replay's rule — `Gov::admits`).
+        const joining = a.act === "join" && !a.did;
+        if (!leaving && !listing && !lapsing && !joining && (!need || !can(me.id, need))) throw new Error(`as ${role(me.id) ?? "nobody here"}, you cannot ${a.act} in this space`);
         // A public space's acts are public (readers outside must know them); a private one's sealed. An OPEN space's
         // admissions too (10-11: sealed, the asker — reading only the public acts — never learned it was let in, so a
         // welcome that failed was never asked for again: "Requested" for days while listed as a member).
         const admits = ["admitted", "added", "member"].includes(a.act) && policyOf("", "join", Infinity) === "anyone";
-        const toPublic = isPublic() || admits || (a.act === "policy" && (a.action === "read" || a.action === "join") && a.who === "anyone");
+        const toPublic = !SECRET_ACTS.has(a.act) && (isPublic() || admits || (a.act === "policy" && (a.action === "read" || a.action === "join") && ["anyone", "ask"].includes(a.who)));
         // Its time: after every act seen (`Gov::stamp`: now, or just past the latest) — or when it happened (upkeep let someone
         // in while no page ran: the act says when); and the acts it builds on.
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify(stamp(a)));

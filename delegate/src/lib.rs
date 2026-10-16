@@ -135,8 +135,18 @@ mod entry {
                         Some(MessageOrigin::WebApp(id)) => Some(*id),
                         _ => None,
                     };
-                    match identity::serve_bytes(&mut Ctx(ctx), &m.payload, app) {
-                        identity::Out::Answer(answer) => Ok(vec![reply(answer)]),
+                    let mut c = Ctx(ctx);
+                    match identity::serve_bytes(&mut c, &m.payload, app) {
+                        identity::Out::Answer(answer) => {
+                            let mut out = vec![reply(answer)];
+                            // THE FOLLOWER NOW (a page asked): its round begun at once, when none is running.
+                            if let Some(member) = identity::upkeep_take_now(&mut c) {
+                                let now = clock_now(&c);
+                                let io = crate::upkeep::now(&mut c, member, now);
+                                out.extend(send(&c, io));
+                            }
+                            Ok(out)
+                        }
                         // A question only the person can answer: the NODE shows it (naming the asking app itself), and
                         // re-enters here with their choice.
                         identity::Out::Ask(p) => Ok(vec![OutboundDelegateMsg::RequestUserInput(UserInputRequest {

@@ -32,7 +32,7 @@ export async function start(ctx) {
     e.append(...kids.filter(k => k != null && k !== false));
     return e;
   };
-  const NAMES = { anyone: "Anyone (public)", members: "Members", admins: "Admins", owner: "The owner", nobody: "Nobody", followers: "Your followers", friends: "Your friends", author: "Only you" };
+  const NAMES = { anyone: "Anyone (public)", members: "Members", admins: "Admins", owner: "The owner", nobody: "Nobody", followers: "Your followers", friends: "Your friends", author: "Only you", ask: "Anyone may ask (a member decides)" };
   const parentOf = path => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path ? "" : null);
 
   // ONE POLICY's choice: Inherit (what the parent says), or a who. Reading by anyone is offered to the owner only.
@@ -56,19 +56,26 @@ export async function start(ctx) {
     // A shared space's: anyone (where it may) · members · admins · owner · nobody — and every ROLE composed there (its
     // holders, the owner and admins: `roles`), for anything but joining.
     const composed = r.personal || action === "join" ? [] : (r.roles?.() ?? []);
-    const options = r.personal
+    // JOINING a shared space: the open door (they enter at once), a request a member decides, or by invite only.
+    // A SHARED SPACE's VISIBILITY (its own read): exactly Private or Public — one switch, no "default".
+    const visibility = !r.personal && action === "read" && path === "";
+    const options = visibility
+      ? ["members", "anyone"]
+      : r.personal
       ? ["anyone", "followers", "friends", "author"].filter(w => !(action === "follow" && w === "followers"))
-      : [...["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", ...S.interactions().map(a => a.action)].includes(action)), ...composed.map(ro => `role:${ro.id}`)];
-    const named = w => NAMES[w] ?? (w?.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name ?? "deleted role"}` : w);
+      : action === "join"
+        ? ["anyone", "ask", "members"]
+        : [...["anyone", "members", "admins", "owner", "nobody"].filter(w => w !== "anyone" || ["read", "join", "post", ...S.interactions().map(a => a.action)].includes(action)), ...composed.map(ro => `role:${ro.id}`)];
+    const named = w => (visibility ? { members: "Private — members only", anyone: "Public — anyone can see it (listed in Discover)" }[w] : null) ?? NAMES[w] ?? (w?.startsWith("role:") ? `Role: ${(r.roles?.() ?? []).find(ro => `role:${ro.id}` === w)?.name ?? "deleted role"}` : w);
     const sel = h(
       "select",
       { ariaLabel: `${action} at ${path || "the space"}` },
       // Inherit, from where; or the built-in default (the space itself has nothing above it — a tenant, later, will).
-      h("option", { value: "", textContent: from == null ? `Default: ${named(inherited)}` : `As ${LEVEL(from)}: ${named(inherited)}` }),
+      ...(visibility ? [] : [h("option", { value: "", textContent: from == null ? `Default: ${named(inherited)}` : `As ${LEVEL(from)}: ${named(inherited)}` })]),
       ...options.map(w => h("option", { value: w, textContent: named(w) })),
     );
-    sel.value = own;
-    sel.dataset.was = own;
+    sel.value = visibility ? (own === "anyone" ? "anyone" : "members") : own;
+    sel.dataset.was = sel.value;
     sel.dataset.path = path;
     sel.dataset.action = action;
     if (action === "read" && me && r.role(me) !== "owner") sel.disabled = true;
@@ -93,6 +100,10 @@ export async function start(ctx) {
       fields: [
         { key: "about", app: "space", label: "About" },
         { key: "history", app: "space", label: "History", choices: [["", "7 days · 20 versions"], ["3", "3 days"], ["1", "1 day"], ["0", "Off"]] },
+        // WHO SEES IT — the space's own read (owner only): every app inherits it unless it sets its own. "Anyone": the
+        // space is PUBLIC (listed in Discover, its acts published). (10-16, Ivvor: no way to make a space public — read
+        // was set per app only.)
+        { action: "read", path: "", label: "Visibility" },
         { action: "join", path: "", label: "Join" },
         { action: "invite", path: "", label: "Invite" },
         { action: "post", path: "", label: "Post" },
@@ -100,9 +111,9 @@ export async function start(ctx) {
         { action: "edit", path: "", label: "Edit" },
       ],
       saved: async (changed, r, sp) => {
-        if (changed["|join"] !== "anyone") return;
-        await (await ctx.require("index")).openRequests(`open ${sp.id}`);
-        await madePublic(r, sp);
+        // Public reading, the open door or requests: seen from outside (its requests bag made where people may ask).
+        if (changed["|join"] === "ask") await (await ctx.require("index")).openRequests(await (await ctx.require("conversation")).bagOf("open", sp.id));
+        if (changed["|read"] === "anyone" || ["anyone", "ask"].includes(changed["|join"])) await madePublic(r, sp);
       },
     },
     // AN APP's OWN SETTINGS only (ARCHITECTURE §1): what the app is and does — Board's rules, Blog's approval, Chat's

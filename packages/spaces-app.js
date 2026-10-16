@@ -51,7 +51,7 @@ export async function mount(ctx, el) {
     const mineEl = h("div");
     // REQUESTED: the spaces asked to join, each with where it stands.
     const requested = h("div");
-    const STATUS = { asked: "asked · waiting for a member who may invite", "let-in": "let in · opening the welcome", code: "asked by a code · waiting" };
+    const STATUS = { asked: "asked · a member lets you in or says no", code: "asked by a code · a member lets you in or says no" };
     root.replaceChildren(h("h2", { textContent: "Your spaces" }), mineEl, requested, h("h3", { textContent: "Make one" }), make, h("h3", { textContent: "Join one" }), join, said);
     const person = await ctx.require("person");
     views = [
@@ -62,7 +62,7 @@ export async function mount(ctx, el) {
       }),
       ctx.view(requested, {
         read: () => conversation.waiting(),
-        draw: ws => h("div", {}, h("h3", { textContent: "Requested" }), h("ul", {}, ...ws.map(w => h("li", {}, h("button", { type: "button", className: "cw-flat", title: w.id ?? w.code, textContent: w.name ?? (w.code ? `code ${w.code}` : `a space #${String(w.id).slice(0, 6)}`), onclick: e => w.desc && person.openSpace(e.currentTarget, w.desc) }), h("small", { textContent: STATUS[w.status] ?? w.status ?? "" }))))),
+        draw: ws => h("div", {}, h("h3", { textContent: "Requested" }), h("ul", {}, ...ws.map(w => h("li", {}, h("button", { type: "button", className: "cw-flat", title: w.id ?? w.code, textContent: w.name ?? (w.code ? `code ${w.code}` : `a space #${String(w.id).slice(0, 6)}`), onclick: e => w.desc && person.openSpace(e.currentTarget, w.desc) }), h("small", { textContent: STATUS[w.status] ?? w.status ?? "" }), " ", h("button", { type: "button", className: "cw-flat", textContent: "Cancel", onclick: async e => ((e.currentTarget.disabled = true), await conversation.cancelJoin(w.key)) }))))),
         // (No requests: nothing shown — not a line saying so.)
         looks: { empty: () => document.createTextNode(""), loading: () => document.createTextNode(""), failed: () => document.createTextNode("") },
       }),
@@ -86,7 +86,7 @@ export async function mount(ctx, el) {
     await pr.settled;
     const about = pr.config?.("space", "about", "") ?? "";
     const n = pr.members().length;
-    const join = await (await ctx.require("join-button")).control(desc, { open: `#/spaces/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
+    const join = await (await ctx.require("join-button")).control(desc, { open: `#/spaces/${desc.id}`, policy: pr.policy("", "join") });
     root.replaceChildren(
       h("p", {}, h("a", { href: "#/spaces", textContent: "← Your spaces" })),
       h("h2", { textContent: space.shown(desc) }),

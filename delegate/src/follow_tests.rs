@@ -1,15 +1,16 @@
-//! THE NODE'S FOLLOWER (FOUNDATION "Members and keys", `upkeep.rs`) — whole rounds against a scripted network built
-//! with the real pieces: a provisioned node identity (it signs its own act writes), real accounts (key logs, cards), the
-//! space's acts in sealed feeds, an MLS group, the bags. Each test is one of the design's flows; the end is read the way
-//! a member's page reads it: the acts replayed, the inbox opened, the welcome joined.
+//! THE NODE'S FOLLOWER (FOUNDATION "Members and keys", the design of 10-17; `upkeep.rs`) — whole rounds against a
+//! scripted network built with the real pieces: a provisioned node identity, real accounts (key logs, cards), the
+//! space's acts in sealed feeds, an MLS group its members ENTERED by themselves, the open bags (writers list, doors).
+//! Each test is one of the design's flows; the end is read the way a member's page reads it.
 
-use super::table::{self, Codes, Reading};
+use super::table;
 use super::upkeep::{self, Code, Io, Reply};
 use craftworks_data as data;
 use craftworks_identity::{self as identity, Host, Mandate, Request};
+use craftworks_mls::Account;
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::json;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 const TAIL: &[u8] = b"the tail contract's code";
 const BAG: &[u8] = b"the bag contract's code";
@@ -35,9 +36,6 @@ impl Host for Secrets {
     }
 }
 
-fn codes() -> Codes<'static> {
-    Codes { tail: TAIL, bag_hash: contract_keys::code_hash(BAG), sealed_hash: contract_keys::code_hash(SEALED), block_hash: contract_keys::code_hash(BLOCK), idlog_hash: contract_keys::code_hash(IDLOG), devices_hash: contract_keys::code_hash(DEVICES) }
-}
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -106,8 +104,8 @@ impl Net {
     }
 }
 
-/// An ACCOUNT from its words' entropy: its DID, data seed, key log, and its space member (MLS: key packages whose
-/// credential names the DID).
+/// An ACCOUNT from its words' entropy: its DID, data seed, key log, and its space member (MLS: its credential names the
+/// DID).
 struct Person {
     entropy: [u8; 16],
     did: [u8; 32],
@@ -123,7 +121,7 @@ fn person(e: u8) -> Person {
     let data = craftworks_account::data_seed(&entropy).unwrap();
     let seed = identity::space_member_seed(&data);
     let mls_pub = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
-    let sm = craftworks_mls::SpaceMember::new(&seed, identity::space_member_credential(&did, &data, &mls_pub), &[]).unwrap();
+    let sm = craftworks_mls::SpaceMember::new(&seed, identity::space_member_credential(&did, &data, &mls_pub)).unwrap();
     Person { entropy, did, data, log: craftworks_idlog_contract::Log { events: vec![ev] }, sm, mls_pub }
 }
 impl Person {
@@ -145,12 +143,9 @@ impl Person {
         o.commit(key.sign(&p.signed_message(false, seq, &h)).to_bytes()).unwrap();
         net.st.insert(o.id_bytes(), o.state());
     }
-    fn kp(&self) -> Vec<u8> {
-        self.sm.key_package().unwrap()
-    }
-    /// What their page asks with: a join (`kind: join`) or a listed device's "my key" (`kind: key`).
-    fn ask(&self, kind: &str, kp: &[u8]) -> serde_json::Value {
-        json!({ "kind": kind, "did": self.id(), "at": 1, "kp": hex(kp) })
+    /// ENTERED BY ITSELF from the group's info (`aad`: its proof, if any): the commit it publishes.
+    fn enter(&self, info: &[u8], aad: &[u8]) -> (Account, Vec<u8>) {
+        self.sm.enter(SPACE, info, aad).unwrap()
     }
     /// Their INBOX opened with their key: each item (JSON).
     fn inbox(&self, net: &Net) -> Vec<serde_json::Value> {
@@ -185,15 +180,20 @@ fn blinded(name: &str) -> String {
     identity::blind_name(&identity::space_table_key(&SPACE, &t), &t)
 }
 
-/// THE OWNER'S NODE and the space: its group as `group` made it (the owner first), its acts as `acts` say (written by the
-/// owner's device), the owner's page away. Every leaf's person and the owner published.
+/// THE OWNER'S NODE and the space: its group made by the owner, `inside` entered by themselves (each listed or not,
+/// as the test makes them), its acts as `acts` say (written by the owner's device), the owner's page away.
 struct World {
     h: Secrets,
     net: Net,
     member: [u8; 32],
     owner: Person,
 }
-fn world(acts: &[serde_json::Value], group: impl FnOnce(&mut craftworks_mls::Account)) -> World {
+
+fn world(acts: &[serde_json::Value], inside: &[&Person]) -> World {
+    world_with(acts, &inside.iter().map(|p| (*p, &b""[..])).collect::<Vec<_>>())
+}
+/// …each `inside` entering with its own words (`aad`: a proof, for one entering by a code, the open door, a level).
+fn world_with(acts: &[serde_json::Value], inside: &[(&Person, &[u8])]) -> World {
     let owner = person(0x61);
     let mut h = Secrets::default();
     identity::serve(&mut h, Request::Provision { seed: SEED, did: owner.did, pin: "246810".into(), data: owner.data.to_vec() }, [9; 32]);
@@ -201,14 +201,14 @@ fn world(acts: &[serde_json::Value], group: impl FnOnce(&mut craftworks_mls::Acc
     let mut g = owner.sm.create_space(SPACE).unwrap();
     let s0 = g.epoch_secret().unwrap();
     assert!(identity::keep_epoch(&mut h, &member, Some(SPACE), 0, &s0));
-    group(&mut g);
+    for (p, aad) in inside {
+        let (_, commit) = p.enter(&g.group_info().unwrap(), aad);
+        g.process(&commit).unwrap();
+        assert!(identity::keep_epoch(&mut h, &member, Some(SPACE), g.epoch(), &g.epoch_secret().unwrap()));
+    }
     let epoch = g.epoch();
-    assert!(identity::keep_epoch(&mut h, &member, Some(SPACE), epoch, &g.epoch_secret().unwrap()));
     let me = owner.id();
-    let m = Mandate {
-        space: SPACE, name: "Makers".into(), kind: "server".into(), owner: me.clone(), nonce: None, channel: "ch".into(),
-        open: false, codes: vec![], level: None, bans: vec![], members: vec![], epoch, state: g.save().unwrap(), admitters: vec![],
-    };
+    let m = Mandate { space: SPACE, name: "Makers".into(), kind: "server".into(), owner: me.clone(), nonce: None, channel: "ch".into(), epoch, state: g.save().unwrap() };
     identity::upkeep_set_mandate(&mut h, &member, &me, &[m]);
     identity::upkeep_set_tick(&mut h, &member);
     h.set_secret(identity::UPKEEP_WAKEUPS, &30u64.to_le_bytes());
@@ -235,9 +235,9 @@ fn world(acts: &[serde_json::Value], group: impl FnOnce(&mut craftworks_mls::Acc
         a.put(&format!("a{i}"), &act.to_string());
     }
     net.seed_tail(&a.o);
-    // The writers list (the welcomes made): there, with this device's own entry.
+    // The writers list: there, with this device's own entry.
     let address = table::sealed_bag_address(&SPACE, "writers");
-    let item = table::seal_writers_item(&SPACE, &json!({ "w": hex(&member) }), [1; 12]);
+    let item = table::seal_open_item(&SPACE, &json!({ "w": hex(&member) }), [1; 12]);
     net.st.insert(id(BAG, &address), craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]));
     World { h, net, member, owner }
 }
@@ -245,13 +245,18 @@ fn world(acts: &[serde_json::Value], group: impl FnOnce(&mut craftworks_mls::Acc
 impl World {
     /// A whole round: woken, every answer routed through upkeep. Every ask made.
     fn run(&mut self) -> Vec<Io> {
+        self.run_at(NOW)
+    }
+    /// …at `now` (the node's clock: a takeover's time passed).
+    fn run_at(&mut self, now: u64) -> Vec<Io> {
+        identity::upkeep_set_clock(&mut self.h, now / 1000);
         let mut asked = Vec::new();
-        let mut todo = upkeep::woke(&mut self.h, NOW);
+        let mut todo = upkeep::woke(&mut self.h, now);
         while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
             assert!(asked.len() < 5000, "the round ends");
             let reply = self.net.answer(&io);
             asked.push(io);
-            todo.extend(upkeep::replied(&mut self.h, reply, NOW));
+            todo.extend(upkeep::replied(&mut self.h, reply, now));
         }
         // The next wake-up is a new one (a round never runs twice in one).
         let w = 10 + u64::from_le_bytes(self.h.get_secret(identity::UPKEEP_WAKEUPS).unwrap().try_into().unwrap());
@@ -261,145 +266,192 @@ impl World {
     fn mandate(&self) -> Mandate {
         identity::upkeep_mandate(&self.h, &self.member).unwrap().1.remove(0)
     }
+    fn group(&self) -> Account {
+        Account::load(craftworks_mls::Rule::Space(SPACE), &self.mandate().state).unwrap()
+    }
     /// The group's entries, by DID.
     fn leaves(&self) -> Vec<String> {
-        let g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(SPACE), &self.mandate().state).unwrap();
-        g.members().into_iter().map(|(_, _, cred)| craftworks_account::did(&identity::read_credential(&cred).unwrap().0)).collect()
+        self.group().members().into_iter().map(|(_, _, cred)| craftworks_account::did(&identity::read_credential(&cred).unwrap().0)).collect()
     }
-    /// The space's ACTS as a reader replays them (every epoch the node holds).
-    fn gov(&self) -> craftworks_gov::Gov {
-        let top = identity::latest_epoch(&self.h, &self.member, SPACE).unwrap();
-        let epochs: BTreeMap<u64, [u8; 32]> = (0..=top).filter_map(|e| Some((e, identity::epoch_secret(&self.h, &self.member, SPACE, e)?))).collect();
-        let (mut r, first) = Reading::new(&codes(), SPACE, epochs, vec![self.member], &["acts", "pub-acts"]);
-        let mut todo = first;
-        while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
-            let Io::Get { id, .. } = io else { panic!("a read only GETs") };
-            todo.extend(r.got(&codes(), id, self.net.st.get(&id).cloned()));
-        }
-        crate::rekey::governance(&r, &[(self.member, self.owner.id())], &self.owner.id(), NOW)
-    }
+    /// What the round recorded (its `followed` steps), as "step: why".
     fn said(&self) -> Vec<String> {
-        self.h.0.iter().filter(|(k, _)| k.windows(4).any(|w| w == b"said")).map(|(_, v)| String::from_utf8_lossy(v).into_owned()).collect()
+        identity::upkeep_decided(&self.h, &self.member).into_iter().map(|d| format!("{}: {}", d.step, d.why)).collect()
     }
     fn writes(asked: &[Io]) -> usize {
         asked.iter().filter(|x| !matches!(x, Io::Get { .. })).count()
     }
+    /// An open bag's items (the writers list, a door), opened.
+    fn open_items(&self, name: &str) -> Vec<serde_json::Value> {
+        self.net.bag_items(table::sealed_bag_address(&SPACE, name)).iter().filter_map(|i| table::open_bag_item(&SPACE, &Default::default(), name, i)).collect()
+    }
+    /// A device's ENTRY put in its epoch's door (as the page's `keys.enterNow` puts it).
+    fn door_entry(&mut self, epoch: u64, commit: &[u8]) {
+        let address = table::sealed_bag_address(&SPACE, &format!("door-{epoch}"));
+        let entry = json!({ "commit": hex(commit), "why": "commit enter" }).to_string();
+        let item = table::seal_open_item(&SPACE, &json!({ "k": "enter", "e": epoch, "entry": entry }), [epoch as u8 + 2; 12]);
+        let mut items = self.net.st.get(&id(BAG, &address)).and_then(|s| craftworks_bag_contract::read(&address, s)).unwrap_or_default();
+        items.push(craftworks_bag_contract::grind(&address, &item));
+        self.net.st.insert(id(BAG, &address), craftworks_bag_contract::encode(&address, &items));
+    }
 }
 
-/// Joined by the welcome in their inbox: the group they hold (its epoch).
-fn joined(p: &Person, net: &Net) -> u64 {
-    let items = p.inbox(net);
-    let w = items.iter().rev().find(|i| i["kind"] == "welcome").unwrap_or_else(|| panic!("a welcome in their inbox: {items:?}"));
-    p.sm.join_space(SPACE, &unhex(w["welcome"].as_str().unwrap())).unwrap().epoch()
-}
-
-/// FLOW 1/2 — a new person joins by a code, no page open: the LIST first (an `admitted` act, written by this node, which
-/// the replay counts), then ONE commit, the welcome they join by, their key answered in the writers list. The next round
-/// finds nothing to do.
+/// FLOW 6 — a member removed by the acts: their entry out, ONE commit; the new epoch's group info put in its door and
+/// announced (what a listed device with no key enters from). The next round: nothing.
 #[test]
-fn a_join_by_code_is_listed_then_followed_and_its_welcome_joins_them() {
-    let asker = person(0x22);
-    let mut w = world(&[json!({ "act": "invite", "code": CODE, "uses": 1, "at": 100 })], |_| {});
-    asker.publish(&mut w.net, &[]);
-    w.net.drop_in(identity::invite_address(CODE), &asker.ask("join", &asker.kp()));
-    w.run();
-    let g = w.gov();
-    assert!(g.roster.contains(&asker.id()), "listed by an admitted act: {:?} — said {:?}", g.roster, w.said());
-    assert!(g.live_invites(NOW as f64).is_empty(), "the one-use code used up by it");
-    assert_eq!(joined(&asker, &w.net), 1, "one commit");
-    assert!(w.leaves().contains(&asker.id()));
-    let answered: Vec<serde_json::Value> = w.net.bag_items(table::sealed_bag_address(&SPACE, "writers")).iter().filter_map(|i| table::open_bag_item(&SPACE, &Default::default(), "writers", i)).collect();
-    assert!(answered.iter().any(|v| v["welcomed"] == asker.id().as_str()), "their key answered: {answered:?}");
-    let again = w.run();
-    assert_eq!(World::writes(&again), 0, "nothing more: {:?}", w.said());
-}
-
-/// FLOW 6 — a member removed by the acts: their entry out, one commit, no welcome.
-#[test]
-fn a_removed_member_is_taken_out_with_no_welcome() {
+fn a_removed_member_is_taken_out_and_the_new_info_published() {
     let x = person(0x33);
-    let kp = x.kp();
-    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], |g| {
-        g.follow(&[], &[kp.clone()]).unwrap();
-    });
+    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x]);
     x.publish(&mut w.net, &[]);
     let e = w.mandate().epoch;
     assert!(w.leaves().contains(&x.id()));
     w.run();
     assert_eq!(w.mandate().epoch, e + 1, "one commit: {:?}", w.said());
     assert!(!w.leaves().contains(&x.id()), "out");
-    assert!(x.inbox(&w.net).is_empty(), "no welcome");
+    let parts: Vec<serde_json::Value> = w.open_items(&format!("door-{}", e + 1)).into_iter().filter(|v| v["k"] == "info").collect();
+    assert!(!parts.is_empty(), "the new epoch's info in its door");
+    let ih = parts[0]["d"].as_str().unwrap().to_string();
+    let info: String = { let mut p = parts.clone(); p.sort_by_key(|v| v["i"].as_u64()); p.iter().map(|v| v["x"].as_str().unwrap().to_string()).collect() };
+    assert_eq!(craftworks_mls::info_facts(&unhex(&info)).unwrap().epoch, e + 1, "whole, at the new epoch");
+    assert!(w.open_items("writers").iter().any(|v| v["epoch"].as_u64() == Some(e + 1) && v["ih"] == ih.as_str()), "announced with its hash");
+    let again = w.run();
+    assert_eq!(World::writes(&again), 0, "nothing more: {:?}", w.said());
 }
 
-/// FLOW 10 — IVVOR's SPACE: A, B, C listed. The group holds C (current), an old entry of A's and a stray D (not listed);
-/// B never got keys. A and B post "my key": ONE commit — A's old entry and D out, A and B in; C untouched. Both join by
-/// the one welcome. Asked again with the same keys: answered once.
+/// FLOW 9 — IVVOR'S SPACE: A, B, C listed. The group holds A, C and a stray D (not listed); B never held keys. ONE
+/// commit takes D out; nobody is added (B enters by itself — the node never adds anyone).
 #[test]
-fn the_keys_follow_the_list_in_one_commit_ivvors_space() {
+fn ivvors_space_the_stray_out_in_one_commit_nobody_added() {
     let (a, b, c, d) = (person(0x41), person(0x42), person(0x43), person(0x44));
-    let (a_old, c_kp, d_kp) = (a.kp(), c.kp(), d.kp());
     let acts: Vec<serde_json::Value> = [&a, &b, &c].iter().map(|p| json!({ "act": "member", "did": p.id(), "at": 10 })).collect();
-    let mut w = world(&acts, |g| {
-        g.follow(&[], &[a_old.clone(), c_kp.clone(), d_kp.clone()]).unwrap();
-    });
+    let mut w = world(&acts, &[&a, &c, &d]);
     for p in [&a, &b, &c, &d] {
         p.publish(&mut w.net, &[]);
     }
     let e = w.mandate().epoch;
-    let key = identity::invite_address(&upkeep::bag_name("key", &SPACE));
-    let (a_kp, b_kp) = (a.kp(), b.kp());
-    w.net.drop_in(key, &a.ask("key", &a_kp));
-    w.net.drop_in(key, &b.ask("key", &b_kp));
+    // (Whoever's turn: this node acts now, or once a takeover's time passed with nobody else acting.)
     w.run();
+    if w.mandate().epoch == e {
+        w.run_at(NOW + 3 * craftworks_rules::guards::TAKEOVER_MS);
+    }
     assert_eq!(w.mandate().epoch, e + 1, "ONE commit: {:?}", w.said());
     let mut leaves = w.leaves();
     leaves.sort();
-    let mut want = vec![w.owner.id(), a.id(), b.id(), c.id()];
+    let mut want = vec![w.owner.id(), a.id(), c.id()];
     want.sort();
-    assert_eq!(leaves, want, "A once (new), B in, C kept, D out");
-    assert_eq!((joined(&a, &w.net), joined(&b, &w.net)), (e + 1, e + 1), "both by the one welcome");
-    let again = w.run();
-    assert_eq!(World::writes(&again), 0, "answered once: {:?}", w.said());
+    assert_eq!(leaves, want, "D out; B not added");
 }
 
-/// A SHORT READ takes nobody out: a removal in the acts, but one member's key log does not answer — the list may be
-/// short, so the removal waits for a whole read.
+/// A SHORT READ decides nothing: a removal in the acts, but one member's key log does not answer — the list may be
+/// short, so nothing is judged and nobody taken out.
 #[test]
-fn a_short_read_takes_nobody_out() {
+fn a_short_read_decides_nothing() {
     let (x, y) = (person(0x33), person(0x34));
-    let (x_kp, y_kp) = (x.kp(), y.kp());
-    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], |g| {
-        g.follow(&[], &[x_kp.clone(), y_kp.clone()]).unwrap();
-    });
+    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x, &y]);
     x.publish(&mut w.net, &[]); // (Y's key log never answers.)
     let asked = w.run();
     assert_eq!(World::writes(&asked), 0, "nothing moves: {:?}", w.said());
     assert!(w.leaves().contains(&x.id()));
-    assert!(w.said().iter().any(|s| s.contains("SHORT")), "said why: {:?}", w.said());
+    assert!(w.said().iter().any(|s| s.starts_with("short")), "said why: {:?}", w.said());
 }
 
-/// A join carrying SOMEONE ELSE's key: not listed, nothing committed.
+/// CATCH-UP by the one rule: a LISTED device's entry in the door is taken; an OUTSIDER's at the same position is skipped
+/// by the list check — whichever is lower. Control: with the outsider listed, its entry is taken when it is lowest.
 #[test]
-fn a_join_with_someone_elses_key_is_not_listed_nor_let_in() {
-    let (asker, other) = (person(0x22), person(0x23));
-    let mut w = world(&[json!({ "act": "invite", "code": CODE, "uses": 1, "at": 100 })], |_| {});
-    asker.publish(&mut w.net, &[]);
-    other.publish(&mut w.net, &[]);
-    w.net.drop_in(identity::invite_address(CODE), &asker.ask("join", &other.kp()));
-    let asked = w.run();
-    assert_eq!(World::writes(&asked), 0, "{:?}", w.said());
-    assert!(!w.gov().roster.contains(&asker.id()));
-    assert_eq!(w.mandate().epoch, 0);
+fn the_door_a_listed_entry_taken_an_outsiders_skipped() {
+    let (b, z) = (person(0x52), person(0x5f));
+    let acts = [json!({ "act": "member", "did": b.id(), "at": 10 })];
+    let mut w = world(&acts, &[]);
+    for p in [&b, &z] {
+        p.publish(&mut w.net, &[]);
+    }
+    let e = w.mandate().epoch;
+    let info = w.group().group_info().unwrap();
+    let (bg, b_in) = b.enter(&info, b"");
+    let (_, z_in) = z.enter(&info, b"");
+    w.door_entry(e, &b_in);
+    w.door_entry(e, &z_in);
+    w.run();
+    assert_eq!(w.mandate().epoch, e + 1, "{:?}", w.said());
+    assert!(w.leaves().contains(&b.id()) && !w.leaves().contains(&z.id()), "B in, Z skipped: {:?}", w.said());
+    assert_eq!(w.group().epoch_secret().unwrap(), bg.epoch_secret().unwrap(), "the node follows B's entry");
+    // Control: Z listed too — the LOWER of the two entries is taken (the one order every reader keeps).
+    let acts2 = [json!({ "act": "member", "did": b.id(), "at": 10 }), json!({ "act": "member", "did": z.id(), "at": 10 })];
+    let mut w2 = world(&acts2, &[]);
+    for p in [&b, &z] {
+        p.publish(&mut w2.net, &[]);
+    }
+    let info = w2.group().group_info().unwrap();
+    let (_, b_in) = b.enter(&info, b"");
+    let (_, z_in) = z.enter(&info, b"");
+    w2.door_entry(0, &b_in);
+    w2.door_entry(0, &z_in);
+    w2.run();
+    let entry = |c: &[u8]| json!({ "commit": hex(c), "why": "commit enter" }).to_string();
+    let lowest = if entry(&b_in) < entry(&z_in) { b.id() } else { z.id() };
+    assert!(w2.leaves().contains(&lowest), "the lower entry taken: {:?}", w2.said());
 }
 
-/// "My key" from someone NOT listed is no join: nothing.
+/// SELF-ENTRY BY A CODE (FOUNDATION "Members and keys" 2): a person not listed enters with the code's proof bound to
+/// their DID — taken; the same with a wrong proof — skipped.
 #[test]
-fn my_key_from_someone_not_listed_lets_nobody_in() {
-    let z = person(0x55);
-    let mut w = world(&[], |_| {});
+fn a_self_entry_with_a_code_proof_is_taken_a_wrong_one_skipped() {
+    let z = person(0x5e);
+    let acts = [json!({ "act": "invite", "code": CODE, "uses": 1, "at": 100 })];
+    for (proof, taken) in [(craftworks_gov::join_proof(CODE, &z.id()), true), (craftworks_gov::join_proof("wrong-code", &z.id()), false)] {
+        let mut w = world(&acts, &[]);
+        z.publish(&mut w.net, &[]);
+        let aad = json!({ "why": "code", "join": "code", "p": proof }).to_string();
+        let (_, z_in) = z.enter(&w.group().group_info().unwrap(), aad.as_bytes());
+        w.door_entry(0, &z_in);
+        w.run();
+        assert_eq!(w.leaves().contains(&z.id()), taken, "{:?}", w.said());
+    }
+}
+
+/// ONE FOLLOWER AT A TIME: two listed members hold keys and a stray must go — the one ranked second waits (and says
+/// when its turn comes); once the first stays away a takeover's time, it acts.
+#[test]
+fn one_follower_at_a_time_the_second_waits_then_takes_over() {
+    // A listed member Q ranked FIRST for this epoch, the owner's node second.
+    let stray = person(0x70);
+    let q = (0x71u8..0xff).map(person).find(|q| {
+        let ids = vec![person(0x61).id(), q.id()];
+        let w = world(&[json!({ "act": "member", "did": q.id(), "at": 10 })], &[q, &stray]);
+        craftworks_rules::admission::turn(&format!("follow|{}", w.mandate().epoch), &ids, &ids[0]) == 1
+    });
+    let q = q.expect("a member ranked first");
+    let mut w = world(&[json!({ "act": "member", "did": q.id(), "at": 10 })], &[&q, &stray]);
+    for p in [&q, &stray] {
+        p.publish(&mut w.net, &[]);
+    }
+    let e = w.mandate().epoch;
+    w.run();
+    assert_eq!(w.mandate().epoch, e, "not its turn: no commit: {:?}", w.said());
+    let Some(next) = (match identity::upkeep_status(&w.h, Some(&w.member)) { identity::Answer::Upkeep { next, .. } => next, _ => None }) else { panic!("it says when: {:?}", w.said()) };
+    assert!(next > NOW, "its turn later");
+    // Q stays away: after a takeover's time this node acts — one commit.
+    w.run_at(next + 1);
+    assert_eq!(w.mandate().epoch, e + 1, "taken over: {:?}", w.said());
+}
+
+/// AN ENTRY BY A PROOF is kept only while the acts have not put its account out: Z entered by the open door (no `join`
+/// act yet) — kept; Z BANNED — taken out, its proof whatever it says. (Review 10-17: a lapsed or removed proof-entrant
+/// kept the keys for ever.)
+#[test]
+fn a_proof_entry_is_kept_until_the_acts_put_it_out() {
+    let z = person(0x5d);
+    let open = json!({ "act": "policy", "path": "", "action": "join", "who": "anyone", "at": 5 });
+    let aad = json!({ "why": "open", "join": "open" }).to_string();
+    let mut w = world_with(&[open.clone()], &[(&z, aad.as_bytes())]);
     z.publish(&mut w.net, &[]);
-    w.net.drop_in(identity::invite_address(&upkeep::bag_name("key", &SPACE)), &z.ask("key", &z.kp()));
-    let asked = w.run();
-    assert_eq!(World::writes(&asked), 0, "{:?}", w.said());
-    assert!(!w.leaves().contains(&z.id()));
+    let e = w.mandate().epoch;
+    w.run();
+    assert_eq!((w.mandate().epoch, w.leaves().contains(&z.id())), (e, true), "control — its proof admits it: kept: {:?}", w.said());
+    let mut w = world_with(&[open, json!({ "act": "ban", "did": z.id(), "at": 9 })], &[(&z, aad.as_bytes())]);
+    z.publish(&mut w.net, &[]);
+    w.run();
+    if w.leaves().contains(&z.id()) {
+        w.run_at(NOW + 3 * craftworks_rules::guards::TAKEOVER_MS);
+    }
+    assert!(!w.leaves().contains(&z.id()), "banned: out, whatever its leaf says: {:?}", w.said());
 }

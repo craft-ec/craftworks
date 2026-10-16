@@ -126,8 +126,8 @@ pub fn block_id(o: &data::Open, cid: &[u8; 32], sealed_hash: &[u8; 32], block_ha
     Some(crate::upkeep::id_of(if sealed { sealed_hash } else { block_hash }, &params))
 }
 
-/// The WRITERS list's own seal (`index.spacePoint`'s `OPEN`): the space's key from its id, read whatever epochs a
-/// member holds.
+/// The OPEN BAGS' seal (`index.spacePoint`'s `OPEN`: the writers list, each epoch's door): the space's key from its id,
+/// read whatever epochs a member holds — or none.
 pub const OPEN: u32 = 0xffff_ffff;
 
 /// An item of a space's sealed bag opened: `epoch (u32, big-endian) ‖ nonce (12) ‖ AES-GCM` under that epoch's key for
@@ -138,7 +138,7 @@ pub fn open_bag_item(space: &[u8; 32], epochs: &BTreeMap<u64, [u8; 32]>, name: &
         return None;
     }
     let epoch = u32::from_be_bytes(item[..4].try_into().ok()?);
-    let key = if epoch == OPEN && name == "writers" {
+    let key = if epoch == OPEN && (name == "writers" || name.starts_with("door-")) {
         identity::space_table_key(space, "bag-writers-open")
     } else {
         identity::epoch_table_key(epochs.get(&(epoch as u64))?, &format!("bag-{name}"))
@@ -148,8 +148,9 @@ pub fn open_bag_item(space: &[u8; 32], epochs: &BTreeMap<u64, [u8; 32]>, name: &
     serde_json::from_slice(&plain).ok()
 }
 
-/// An item for a space's WRITERS list, sealed `OPEN` (as `index.spacePoint` seals it): what a page writes there.
-pub fn seal_writers_item(space: &[u8; 32], value: &serde_json::Value, nonce: [u8; 12]) -> Vec<u8> {
+/// An item for one of a space's OPEN bags (its writers list, an epoch's door), sealed `OPEN` (as `index.spacePoint` seals
+/// it): what a page writes there.
+pub fn seal_open_item(space: &[u8; 32], value: &serde_json::Value, nonce: [u8; 12]) -> Vec<u8> {
     use aes_gcm::aead::{Aead, KeyInit};
     let cipher = aes_gcm::Aes256Gcm::new_from_slice(&identity::space_table_key(space, "bag-writers-open")).expect("a 32-byte key");
     let ct = cipher.encrypt(aes_gcm::Nonce::from_slice(&nonce), value.to_string().as_bytes()).expect("sealing never fails");

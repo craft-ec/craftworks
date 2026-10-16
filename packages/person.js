@@ -191,7 +191,7 @@ export async function start(ctx) {
     const about = pr.config?.("space", "about", "") ?? "";
     const apps = ctx.apps.filter(a => (a.views ?? []).includes("shared") && !a.always && pr.apps().includes(a.route.slice(1)));
     const n = pr.members().length;
-    const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, joinable: pr.policy("", "join") === "anyone" });
+    const join = await (await ctx.require("join-button")).control(desc, { open: `#/s/${desc.id}`, policy: pr.policy("", "join") });
     // Its MAIL, where its owner turned it on: written to from here, member or not.
     const mailable = await ctx.optional("person: conversation.mail.accepts", conversation.mail.accepts(desc.id), () => false);
     // HIDE (private, everywhere) and FLAG (public: your list, Discover) the whole space — as a post and an author.

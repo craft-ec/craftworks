@@ -177,11 +177,15 @@ export async function start(ctx) {
   // early epochs (10-07: sealed with epoch 0, a member whose history stopped above it read 0 writers, so no acts and
   // an empty space; one without epoch 0 sealed with its newest and listed itself again on every load). It names
   // devices and branches only. Entries sealed with an epoch (before) are still read by whoever holds that epoch.
+  // OPEN BAGS (the space's own key): its writers list, and each epoch's DOOR (`door-<epoch>`: the group info, in parts,
+  // and the entries of a device entering by itself — FOUNDATION "Members and keys" 4).
   const OPEN = 0xffffffff;
-  const openKey = sp => aes(glue.space_table_key(sp.idBytes, "bag-writers-open"));
+  const isOpen = name => name === "writers" || name.startsWith("door-");
+  const openKeyHex = sp => glue.space_table_key(sp.idBytes, "bag-writers-open");
+  const openKey = sp => aes(openKeyHex(sp));
   async function spacePoint(sp, name, item, { epoch = -1 } = {}) {
     const access = await ctx.require("access");
-    const k = name === "writers" ? { epoch: OPEN, key: glue.space_table_key(sp.idBytes, "bag-writers-open") } : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
+    const k = isOpen(name) ? { epoch: OPEN, key: openKeyHex(sp) } : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
     if (!k.key) throw new Error(`no key of the space here (${k.why})`);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(k.key), enc.encode(JSON.stringify(item))));
@@ -199,7 +203,7 @@ export async function start(ctx) {
     // the same as an empty bag).
     const unread = new Map();
     let raw = 0;
-    for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`, { follow: name === "writers" })) {
+    for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`, { follow: isOpen(name) })) {
       if (p.length < 17) continue;
       raw += 1;
       const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);

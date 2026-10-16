@@ -129,7 +129,7 @@ export async function mount(ctx, el) {
     const mine = (await space.mine()).some(s => s.id === d.id);
     // Join, Requested (while a member lets you in), Open: the one join control.
     // Follow always (its public board in your feed); Join too when joining is open.
-    const join = !mine ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board`, joinable: (await pr.policy("", "join")) === "anyone" }) : null;
+    const join = !mine ? await (await ctx.require("join-button")).control(d, { open: `#/s/${d.id}/board`, policy: await pr.policy("", "join") }) : null;
     // (Its rules read with `await`: the same here and in an app's frame, where they cross the bridge.)
     const pol = {};
     for (const a of ["post", "comment", "vote"]) pol[a] = await pr.policyIn("text", a);

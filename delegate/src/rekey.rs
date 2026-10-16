@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::table::Reading;
 
-pub const TAKEOVER_MS: u64 = 2 * 60 * 1000;
+pub use craftworks_rules::guards::TAKEOVER_MS;
 
 /// A space's SALT (`files`' `salt` row): the secret, how many it has had, the removals it was made after.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,7 +61,7 @@ pub struct Due {
 impl Due {
     /// The wait from `seen` too (when this member first saw it due: a row due since a removal carries an old time).
     pub fn wait_from(&self, seen: u64, now_ms: u64) -> u64 {
-        (self.rank as u64 * TAKEOVER_MS).saturating_sub(now_ms.saturating_sub(self.moved.max(seen)))
+        craftworks_rules::guards::turn_wait(self.rank as u64, self.moved.max(seen), now_ms, TAKEOVER_MS)
     }
 }
 
@@ -121,9 +121,10 @@ pub fn governance(r: &Reading, writers: &[([u8; 32], String)], owner: &str, now_
     craftworks_gov::Gov::replay(&gov_rows, &map, Some(owner), now_ms as f64)
 }
 
-/// This member's place among `dids` for row `id`: 0 does it now (the one ranking: `rules::admission::turn`).
-pub fn rank(id: &str, dids: &[String], me: &str) -> usize {
-    craftworks_rules::admission::turn(id, dids, me).max(0) as usize
+/// This member's place among `dids` for row `id`: 0 does it now (the one ranking: `rules::admission::turn`); None: not
+/// among them — never anyone's first.
+pub fn rank(id: &str, dids: &[String], me: &str) -> Option<usize> {
+    usize::try_from(craftworks_rules::admission::turn(id, dids, me)).ok()
 }
 
 /// THE PLAN for a space now: whether a new salt is due, and the rows due with this member's turn for each.
@@ -131,7 +132,8 @@ pub fn rank(id: &str, dids: &[String], me: &str) -> usize {
 pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, now_ms: u64) -> Plan {
     let files = r.rows("files");
     let st = salt(&files);
-    let removals: Vec<&Value> = g.counted.iter().filter(|a| matches!(a["act"].as_str(), Some("remove" | "ban" | "leave"))).collect();
+    // (Who was put out: the replay's one list — a lapse too.)
+    let removals: Vec<&Value> = g.out_acts();
     let rotate = st.as_ref().and_then(|s| {
         if removals.len() <= s.removals {
             return None;
@@ -155,14 +157,16 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
             continue;
         }
         let public = if n == -2 { public } else { false };
-        let k = rank(&row.id, &ranked, me) as u64;
+        // Not among those who take turns: never this member's row.
+        let Some(k) = rank(&row.id, &ranked, me) else { continue };
+        let k = k as u64;
         let progress = files
             .get(format!("p/{}", row.id).as_bytes())
             .and_then(|p| serde_json::from_slice::<Value>(&p.value).ok())
             .and_then(|v| v["at"].as_u64())
             .unwrap_or(0);
         let moved = row.at().max(progress);
-        let wait = (k * TAKEOVER_MS).saturating_sub(now_ms.saturating_sub(moved));
+        let wait = craftworks_rules::guards::turn_wait(k, moved, now_ms, TAKEOVER_MS);
         due.push(Due { row, public, wait, rank: k as usize, moved });
     }
     Plan { rotate, due }

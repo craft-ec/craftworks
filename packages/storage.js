@@ -114,6 +114,7 @@ export async function start(ctx) {
   // open, another member's feed that fails — what this page reports into the space (`conversation.reportReads`), so any
   // member sees it on Members & roles without asking for a log. Cleared when it reads after all.
   const problems = new Map(); // space id (hex) → Map(what → when)
+  const problemKinds = new Map(); // `${space}|${what}` → its kind
   const spaceKey = x => (!x ? null : typeof x === "string" ? x : [...x].map(b => b.toString(16).padStart(2, "0")).join(""));
   // What settles WHY a read fails (into the report, so it can be resolved from the report alone — never a key, never
   // content): the epoch the failure names; whether this page holds that epoch's key for the table; the group's epoch
@@ -135,10 +136,13 @@ export async function start(ctx) {
     }
     return d;
   }
-  const problem = (sp, what, spObj = null, table = null) => {
+  // `kind`: "key" (this device holds no key for the table at all — its keys UNREADABLE here), "history" (an earlier
+  // epoch's key not given: asked of the members), "sealed", "feed" (another member's feed failing: theirs).
+  const problem = (sp, what, spObj = null, table = null, kind = "sealed") => {
     const k = spaceKey(sp);
     if (!k) return;
     const m = problems.get(k) ?? new Map();
+    problemKinds.set(`${k}|${String(what).slice(0, 160)}`, kind);
     const w = String(what).slice(0, 160);
     // New here: also into the day's public health bag (`index.health`, once a kind per space per hour), with what
     // settles its cause.
@@ -160,7 +164,8 @@ export async function start(ctx) {
       else {
         u.epochs.add(e);
         ctx.log("table sealed", { what: `${app}: no key here for epoch ${e} (${k.why})` });
-        problem(spaceId, `${app}: no key for epoch ${e} (${k.why})`);
+        // (An EPOCH's key not here is its HISTORY — asked of the members below — never this device's keys unreadable.)
+        problem(spaceId, `${app}: no key for epoch ${e} (${k.why})`, null, null, "history");
         // A space's epoch this identity was never given (its history): ASKED of the space's members (`conversation`),
         // then this table read again when the key arrives (`craftworks:keys`).
         if (spaceId) dispatchEvent(new CustomEvent("craftworks:history-gap", { detail: { space: spaceKey(spaceId), below: e } }));
@@ -479,8 +484,9 @@ export async function start(ctx) {
       const k = open ? {} : sealWith ? { key: sealWith } : await access.key(app, { catalog: catalogKey, space: spaceId });
       mark("key");
       t.sealed = !!k.key;
-      if (k.key) core.tail_seal(id, bytes(k.key));
-      else if (!open) (ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` }), problem(spaceId, `${app}: no key (${k.why})`));
+      // (Read now: its "no key" said before is solved.)
+      if (k.key) (solved(spaceId, `${app}: no key (`), core.tail_seal(id, bytes(k.key)));
+      else if (!open) (ctx.log("table sealed", { what: `${app}: no key here (${k.why}): nothing of it reads` }), problem(spaceId, `${app}: no key (${k.why})`, null, null, "key"));
       // WRITES are sealed with the account's newest EPOCH (a node removed from the account then reads nothing written
       // after): the group brought current first. Not a channel (a node reads the MLS channel before it has any epoch),
       // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
@@ -1000,7 +1006,8 @@ export async function start(ctx) {
     const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
     const st = await keys.group(sp).ready.strict();
     const byte = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
-    const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ key: m.key, index: m.index, did: glue.did_of(byte(m.cred).slice(4, 36)), signer: m.cred.slice(72, 136) }));
+    // (Each credential read by the one reader — `identity::read_credential`, its signature checked.)
+    const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ m, c: JSON.parse(glue.credential_parts(byte(m.cred)) ?? "null") })).filter(x => x.c).map(({ m, c }) => ({ key: m.key, index: m.index, did: c.did, signer: c.owner }));
     const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
     for (const [i, m] of all.entries()) if (!real[i]) ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
     const members = all.filter((_, i) => real[i]);
@@ -1061,7 +1068,7 @@ export async function start(ctx) {
           const watched = new Set();
           const each = () => {
             for (const m of members.filter(m => m.cred)) {
-              const d = glue.did_of(new Uint8Array(m.cred.match(/../g).slice(4, 36).map(x => parseInt(x, 16))));
+              const d = glue.credential_did(new Uint8Array(m.cred.match(/../g).map(x => parseInt(x, 16))));
               if (!watched.has(d)) watched.add(d), directory.onDevices(d, fn);
             }
           };
@@ -1181,7 +1188,7 @@ export async function start(ctx) {
           unopened += 1;
           failedOwners.add(owner);
           ctx.failed("feed not read", e, `${name}: ${owner.slice(0, 12)}…: ${e.message}`);
-          problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`, sp, name);
+          problem(sp.id, `${name}: ${owner.slice(0, 8)}…'s feed not read (${e.message})`, sp, name, "feed");
           return null;
         });
       let rows = [];
@@ -1713,5 +1720,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { writersOf, currentWriters, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { writersOf, currentWriters, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

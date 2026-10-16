@@ -24,6 +24,10 @@ export async function start(ctx) {
   // The core: the one ranking (`turn`) and the one row rule of an ordered log (`rules`).
   const { glue } = await ctx.require("node");
 
+  // THE ONE ORDER of a position's entries (`rules::ordering::order`, the node's too): lowest first, each once — entries
+  // gathered from several places (an epoch log and its door) merged here.
+  const order = values => JSON.parse(glue.ordering_entries(JSON.stringify(values)));
+
   const types = {
     // TAIL: rows `<prefix><position, 12 digits>~<tag>` in one of the account's tables — EACH WRITER'S ENTRY UNDER ITS
     // OWN KEY: two writers racing for one position both land (a write refused for racing is written again by
@@ -33,10 +37,12 @@ export async function start(ctx) {
       const t = await (owner ? storage.log(table, owner, { known, sealWith, space }) : storage.table(table));
       // THE ROW RULE is `rules::ordering`'s (through the core — the identity delegate writes and reads by it too).
       const rowsOf = n => glue.ordering_position_prefix(prefix, n);
-      const at = n => {
+      // A position's ENTRIES in the one order (`order`); its entry where nothing is checked: the first.
+      const entriesAt = n => {
         const p = rowsOf(n);
-        return glue.ordering_entry(JSON.stringify(t.rows().filter(r => r.value && r.key.startsWith(p)).map(r => r.value))) ?? undefined;
+        return order(t.rows().filter(r => r.value && r.key.startsWith(p)).map(r => r.value));
       };
+      const at = n => entriesAt(n)[0];
       const tag = () => [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");
       return {
         from(n) {
@@ -59,6 +65,8 @@ export async function start(ctx) {
           await ctx.background("ordering: t.reread", t.reread?.());
           return at(n) === entry ? { ok: true } : { ok: false, taken: true };
         },
+        // Every entry of position n, in the one order (a reader that checks entries takes the first valid one).
+        entries: entriesAt,
         onAppend: f => t.onChange(f),
         // Read again from the network (what another writer appended since).
         reread: () => t.reread?.(),
@@ -73,8 +81,9 @@ export async function start(ctx) {
   }
 
   // TURNS: `rules::admission::turn` through the core — the ONE ranking (the identity delegate runs it too).
-  const TAKEOVER = 2 * 60 * 1000;
+  // The one TAKEOVER (`guards::TAKEOVER_MS`, the node's too).
+  const TAKEOVER = glue.takeover_ms();
   const turn = (id, dids, me) => glue.admission_turn(String(id), JSON.stringify([...dids]), String(me));
 
-  return { open, types: Object.keys(types), turn, TAKEOVER };
+  return { open, types: Object.keys(types), order, turn, TAKEOVER };
 }

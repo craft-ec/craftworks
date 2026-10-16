@@ -29,7 +29,6 @@ export async function start(ctx) {
     if (s < 60) return "just now";
     for (const [n, u] of [[86400, "d"], [3600, "h"], [60, "min"]]) if (s >= n) return `${Math.floor(s / n)} ${u} ago`;
   };
-  const WAITING = "A member who may invite lets you in — it takes a moment, and happens even while their app is closed.";
 
   // FOLLOW a space from outside (the same edge as following a person: their personal space): its public items in the
   // follower's feed, without joining.
@@ -46,34 +45,41 @@ export async function start(ctx) {
       },
     });
   };
-  async function control(d, { open = `#/s/${d.id}`, joinable = true } = {}) {
+  // `policy`: the space's join policy as seen from outside — the open door ("anyone": in at once), a request ("ask"), or
+  // by invite only (a Follow button).
+  async function control(d, { open = `#/s/${d.id}`, policy = "anyone" } = {}) {
+    const joinable = policy === "anyone" ? true : policy === "ask" ? "ask" : false;
     const box = h("div", { className: "cw-join" });
     const draw = async () => {
       if ((await space.mine.strict()).some(s => s.id === d.id)) return box.replaceChildren(h("a", { href: open, textContent: "Open" }));
-      // Asked already: said so, whatever the space lets in now.
+      // ASKED (a request its people decide): said so, with CANCEL (owner 10-17: no request hangs).
       const asked = await conversation.asked(d.id);
       if (!asked && !joinable) return box.replaceChildren(await followButton(d));
       if (asked) {
-        // LET IN already (its public acts admit this person): the welcome is what is awaited — asked for again here.
-        const letIn = (await conversation.waiting()).some(w => w.key === d.id && w.status === "let-in");
-        if (letIn) return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Let in ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `You were let in. Your keys arrive when a member's app is open; this app asks for them again on its own.` }));
-        return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Requested ✓", title: `Asked ${ago(asked.at)}` }), h("p", { textContent: `Asked ${ago(asked.at)}. ${WAITING}` }));
+        const cancel = h("button", {
+          type: "button",
+          className: "cw-flat",
+          textContent: "Cancel request",
+          onclick: async () => ((cancel.disabled = true), await conversation.cancelJoin(d.id).then(draw, err => ((cancel.disabled = false), ctx.failed("join", err, ctx.say(err))))),
+        });
+        return box.replaceChildren(h("button", { type: "button", disabled: true, textContent: "Requested ✓", title: `Asked ${ago(asked.at)}` }), cancel, h("p", { textContent: `Asked ${ago(asked.at)}. A member lets you in or says no.` }));
       }
       const said = h("p", { className: "err", hidden: true });
+      // The OPEN door: in at once, by itself; a space that asks: a request.
       const b = h("button", {
         type: "button",
-        textContent: "Join",
+        textContent: joinable === "ask" ? "Request to join" : "Join",
         onclick: async () => {
           b.disabled = true;
-          b.textContent = "Asking…";
-          await conversation.joinOpen(d).then(draw, err => ((said.textContent = ctx.say(err)), (said.hidden = false), (b.disabled = false), (b.textContent = "Join")));
+          b.textContent = joinable === "ask" ? "Asking…" : "Joining…";
+          await conversation.joinOpen(d).then(draw, err => ((said.textContent = ctx.say(err)), (said.hidden = false), (b.disabled = false), (b.textContent = joinable === "ask" ? "Request to join" : "Join")));
         },
       });
       box.replaceChildren(h("div", { style: "display:flex;gap:8px" }, b, await followButton(d)), said);
     };
     await draw();
     people.onChange(() => box.isConnected && draw());
-    // In at last (the welcome accepted): Open.
+    // In at last: Open.
     // Drawn again when this person's spaces change (a join let in): the one data signal — every table's change, the
     // page's and an app frame's alike.
     const again = () => (box.isConnected ? draw() : removeEventListener("craftworks:data", again));

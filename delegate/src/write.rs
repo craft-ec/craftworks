@@ -163,11 +163,11 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
 }
 
 /// This writer's item in the space's writers bag: `{ w }`, sealed OPEN — the one sealing of the writers list
-/// (`table::seal_writers_item`, as `index.spacePoint` seals it): every member reads it whatever epochs they hold
+/// (`table::seal_open_item`, as `index.spacePoint` seals it): every member reads it whatever epochs they hold
 /// (10-16: sealed here with epoch 0's key, a member without epoch 0 could not read what the node listed).
 fn bag_item(r: &Reading, me: &[u8; 32], nonce: [u8; 12]) -> Result<Io, String> {
     let space = r.space();
-    let item = table::seal_writers_item(&space, &serde_json::json!({ "w": table::hex(me) }), nonce);
+    let item = table::seal_open_item(&space, &serde_json::json!({ "w": table::hex(me) }), nonce);
     let address = table::sealed_bag_address(&space, "writers");
     let state = craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]);
     Ok(Io::Put { code: Code::Bag, params: address.to_vec(), state })

@@ -33,7 +33,7 @@ pub fn app_name(x: &str) -> bool {
 /// The actions a policy names. The last four are SIGNALS' own (`packages/signals.js`: react, save, share, tag) — each,
 /// where nothing is set, as its parent (the page's `roles`: save and share as `read`, react and tag as `vote`).
 pub const ACTIONS: [&str; 11] = ["read", "post", "comment", "vote", "edit", "join", "invite", "react", "save", "share", "tag"];
-pub const WHO: [&str; 9] = ["anyone", "members", "admins", "owner", "nobody", "inherit", "followers", "friends", "author"];
+pub const WHO: [&str; 10] = ["anyone", "members", "admins", "owner", "nobody", "inherit", "followers", "friends", "author", "ask"];
 /// A PERSONAL space's groups (its owner's followers, friends, or the item's author alone): checked by credential
 /// (`roles.mayWrite`), never by a space role — no role passes one.
 pub const PERSONAL_WHO: [&str; 3] = ["followers", "friends", "author"];
@@ -94,6 +94,16 @@ pub fn level_reaches(have: &str, need: &str) -> bool {
     }
 }
 /// A LIST of named people (`list:<id>`): an audience by name, not by role — any member makes one.
+/// AN INVITE CODE's PROOF for one DID (hex): what a self-entry names in the clear — bound to that DID, so whoever reads
+/// it cannot enter with it.
+pub fn join_proof(code: &str, did: &str) -> String {
+    let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-17 join proof");
+    h.update(code.as_bytes());
+    h.update(&[0]);
+    h.update(did.as_bytes());
+    h.finalize().to_hex().to_string()
+}
+
 pub fn list_of(who: &str) -> Option<&str> {
     who.strip_prefix("list:").filter(|id| !id.is_empty() && id.len() <= 40)
 }
@@ -118,7 +128,8 @@ pub fn passes(who: &str, role: Option<&str>) -> bool {
         return false;
     }
     match (who, role) {
-        ("nobody", _) | (_, None) => false,
+        // "ask": a JOIN mode (a request a member decides — `conversation`), never a role that passes.
+        ("nobody" | "ask", _) | (_, None) => false,
         ("owner", r) => r == Some("owner"),
         ("admins", r) => rank(r) >= 2,
         _ => true,
@@ -178,6 +189,11 @@ pub struct Gov {
     pub counted: Vec<Value>,
     /// Node → DID learned from `remove` acts (their nodes' rows stay theirs).
     pub learned: Vec<(String, String)>,
+    /// EVER on the list (the owner, every `added` / `admitted` / `member` / `join` that counted) and EVER put out (every
+    /// counted `remove` / `ban` / `leave` / `lapsed`): what an MLS entry is judged by (`entry_ok`) — acts only grow, so
+    /// a verdict never changes as more are read (I5: every reader alike, whenever it reads).
+    pub ever_listed: BTreeSet<String>,
+    pub ever_out: BTreeSet<String>,
 }
 
 /// JavaScript's `Number(v) || 0` for what acts carry.
@@ -248,7 +264,7 @@ impl Gov {
     }
     /// PUBLIC: joining is open to anyone, or an app reads in public.
     pub fn is_public(&self) -> bool {
-        self.policy_at("", "join", f64::INFINITY) == Some("anyone")
+        matches!(self.policy_at("", "join", f64::INFINITY), Some("anyone" | "ask"))
             || self.paths_with("read").iter().any(|p| self.policy_at(p, "read", f64::INFINITY) == Some("anyone"))
     }
     /// What a person may (their base role's, and every composed role they hold): `role` their base role as known.
@@ -279,6 +295,66 @@ impl Gov {
     }
     fn set_policy(&mut self, path: &str, action: &str, who: Option<String>, at: f64) {
         self.history.entry(format!("{path}|{action}")).or_default().push((at, who));
+    }
+
+    /// WHAT PUT `did` OUT, by the replay: the last counted `remove` / `ban` / `leave` / `lapsed` naming them, with its
+    /// time — only while they are out (`gone`: added back since, none).
+    pub fn out_act(&self, did: &str) -> Option<(&str, f64)> {
+        if !self.gone.contains(did) && !self.bans.contains(did) {
+            return None;
+        }
+        self.out_acts()
+            .into_iter()
+            .filter(|a| s(a, "did").or_else(|| s(a, "by")) == Some(did))
+            .last()
+            .map(|a| (s(a, "act").unwrap_or_default(), a.get("at").and_then(Value::as_f64).unwrap_or(f64::INFINITY)))
+    }
+    /// The counted acts that put someone OUT (`remove`, `ban`, `leave`, `lapsed`), in order — the one list.
+    pub fn out_acts(&self) -> Vec<&Value> {
+        self.counted.iter().filter(|a| matches!(s(a, "act"), Some("remove" | "ban" | "leave" | "lapsed"))).collect()
+    }
+    /// When the list last put anyone out (the newest out-act's time; 0: never).
+    pub fn out_since(&self) -> f64 {
+        self.out_acts().iter().filter_map(|a| a.get("at").and_then(Value::as_f64)).fold(0.0, f64::max)
+    }
+    /// May `did` be put on the list (an `added`)? Never the banned — the replay's own rule for that act.
+    pub fn may_be_added(&self, did: &str) -> bool {
+        !self.bans.contains(did)
+    }
+
+    /// MAY `did` ENTER BY ITSELF with `proof` (FOUNDATION "Members and keys" 2) — the replay's own rule for a `join` act,
+    /// and every reader's for a self-entry's commit (`mls::entry_ok`): never the banned; an invite CODE in force at `at`
+    /// (the proof names it bound to the DID: `join_proof` — seen in the clear, it lets nobody else in); the OPEN door;
+    /// a LEVEL group (the honor system: a member's `lapsed` takes out one whose card falls short).
+    pub fn admits(&self, did: &str, proof: &Value, at: f64) -> Result<(), String> {
+        if self.bans.contains(did) {
+            return Err("banned here".into());
+        }
+        // IN STANDING: one REMOVED comes back only by an invite (an `added`); one who left or lapsed may enter again.
+        if self.out_act(did).is_some_and(|(act, _)| act == "remove") {
+            return Err("removed here: back only by an invite".into());
+        }
+        let join = self.policy_at("", "join", f64::INFINITY);
+        match s(proof, "join") {
+            Some("code") => {
+                let p = some_s(proof, "p").ok_or("no code proof")?;
+                if self.invites.values().any(|i| i.live(at) && join_proof(&i.code, did) == p) {
+                    Ok(())
+                } else {
+                    Err("no invite in force answers that proof".into())
+                }
+            }
+            Some("open") if join == Some("anyone") => Ok(()),
+            Some("level") if join.is_some_and(|w| level_of(w).is_some()) => Ok(()),
+            Some(x) => Err(format!("this space does not let people in by \"{x}\"")),
+            None => Err("no proof".into()),
+        }
+    }
+
+    /// MAY AN ENTRY TAKE `did` OUT (a member's commit): only one the acts ever put out, or never listed (a stray) — no
+    /// member removes a listed account on its own (the list decides).
+    pub fn may_be_taken_out(&self, did: &str) -> bool {
+        self.ever_out.contains(did) || !self.ever_listed.contains(did)
     }
 
     /// THE ONE STAMP of an act to write (the page's `roles.act` and the node's alike): `deps`, the acts it builds on —
@@ -350,6 +426,7 @@ impl Gov {
         if let Some(o) = first {
             g.roles.insert(o.to_string(), Some("owner".into()));
             g.roster.insert(o.to_string());
+            g.ever_listed.insert(o.to_string());
         }
         let mut removed: BTreeSet<String> = BTreeSet::new();
         for a in acts {
@@ -389,6 +466,10 @@ impl Gov {
                 // LEAVING: a member's own act (the owner hands the space on first).
                 "leave" => r.is_some() && r != Some("owner") && did.is_none_or(|d| d == by),
                 "added" | "member" => invite_ok && did.is_some() && !banned_did,
+                // A REQUEST REJECTED (by one who may invite): a record only — the request ended.
+                "reject" => invite_ok && did.is_some(),
+                // ENTERED BY ITSELF (a code, the open door, a level): its own act, by the replay's own rule.
+                "join" => did.is_none_or(|d| d == by) && g.admits(&by, &a, at_or(&a, now)).is_ok(),
                 "hide" => g.may(&by, r, "moderate"),
                 "transfer" => r == Some("owner") && did.is_some_and(|d| d != by && !removed.contains(d)),
                 "invite" => invite_ok && code.is_some() && !inv_exists,
@@ -536,9 +617,32 @@ impl Gov {
                     }
                 }
             }
+            if act == "join" && s(&a, "join") == Some("code") {
+                let p = some_s(&a, "p").unwrap_or_default().to_string();
+                if let Some(inv) = g.invites.values_mut().find(|i| join_proof(&i.code, &by) == p) {
+                    if !inv.admitted.contains(&by) {
+                        inv.admitted.push(by.clone());
+                    }
+                }
+            }
             if matches!(act, "added" | "admitted" | "member") {
                 removed.remove(did.unwrap());
                 g.roster.insert(did.unwrap().into());
+                g.ever_listed.insert(did.unwrap().into());
+            }
+            if act == "join" {
+                removed.remove(&by);
+                g.roster.insert(by.clone());
+                g.ever_listed.insert(by.clone());
+            }
+            if matches!(act, "remove" | "ban" | "lapsed") {
+                g.ever_out.insert(did.unwrap().into());
+            }
+            if act == "leave" {
+                g.ever_out.insert(by.clone());
+            }
+            if act == "transfer" {
+                g.ever_listed.insert(did.unwrap().into());
             }
             g.counted.push(a);
         }

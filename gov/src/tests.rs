@@ -444,3 +444,54 @@ fn stamp_names_the_heads_and_moves_past_the_latest_time() {
     let have: BTreeSet<String> = ["b".to_string(), "c".to_string()].into();
     assert_eq!(g.missing(&have), vec!["a".to_string()]);
 }
+
+#[test]
+fn a_person_enters_by_itself_with_a_proof_the_acts_admit() {
+    let invite = act("i", "no", 1, json!({"act":"invite","code":"abcd-efgh","uses":1}));
+    // A CODE, bound to X's DID: X enters; the same proof names nobody else.
+    let p = join_proof("abcd-efgh", X);
+    let g = gov(&[invite.clone()]);
+    assert!(g.admits(X, &json!({"join":"code","p":p}), 2.0).is_ok());
+    assert!(g.admits(M, &json!({"join":"code","p":p}), 2.0).is_err(), "seen in the clear, it lets nobody else in");
+    assert!(g.admits(X, &json!({"join":"code","p":join_proof("wrong-code", X)}), 2.0).is_err());
+    // X's own `join` act: listed, the code's one use spent — a second person's proof then fails.
+    let joined = gov(&[invite.clone(), act("j", "nx", 2, json!({"act":"join","join":"code","p":p}))]);
+    assert!(joined.roster.contains(X));
+    assert!(joined.admits(M, &json!({"join":"code","p":join_proof("abcd-efgh", M)}), 3.0).is_err(), "uses spent");
+    // Control: the same act with no invite in force counts for nothing.
+    assert!(!gov(&[act("j", "nx", 2, json!({"act":"join","join":"code","p":p}))]).roster.contains(X));
+    // The OPEN door: only once the owner set it.
+    assert!(gov(&[]).admits(X, &json!({"join":"open"}), 2.0).is_err());
+    let open = gov(&[act("p", "no", 1, json!({"act":"policy","path":"","action":"join","who":"anyone"}))]);
+    assert!(open.admits(X, &json!({"join":"open"}), 2.0).is_ok());
+    // Never the banned.
+    let banned = gov(&[
+        act("p", "no", 1, json!({"act":"policy","path":"","action":"join","who":"anyone"})),
+        act("b", "no", 2, json!({"act":"ban","did":X})),
+    ]);
+    assert!(banned.admits(X, &json!({"join":"open"}), 3.0).is_err());
+    // A join act naming SOMEONE ELSE counts for nothing.
+    assert!(!open_with(&[act("j", "nm", 2, json!({"act":"join","did":X,"join":"open"}))]).roster.contains(X));
+}
+
+fn open_with(more: &[Row]) -> Gov {
+    let mut rows = vec![act("p", "no", 1, json!({"act":"policy","path":"","action":"join","who":"anyone"}))];
+    rows.extend_from_slice(more);
+    gov(&rows)
+}
+
+#[test]
+fn an_entry_is_judged_the_same_whenever_it_is_read() {
+    let invite = act("i", "no", 1, json!({"act":"invite","code":"abcd-efgh","uses":1,"expires":50}));
+    let p = json!({"join":"code","p": join_proof("abcd-efgh", X)});
+    // An expired code admits nobody now (one who entered by it is listed by its own `join` act meanwhile).
+    let g = gov(&[invite.clone()]);
+    assert!(g.admits(X, &p, 100.0).is_err() && g.admits(X, &p, 10.0).is_ok());
+    // A REMOVED member: back only by an invite — not by the open door.
+    let removed = open_with(&[act("a", "no", 2, json!({"act":"added","did":X})), act("r", "no", 3, json!({"act":"remove","did":X}))]);
+    assert!(removed.admits(X, &json!({"join":"open"}), 4.0).is_err());
+    assert!(removed.ever_listed.contains(X) && removed.ever_out.contains(X) && removed.may_be_taken_out(X));
+    // A listed member is never taken out by a member's commit; a stray (never listed) is.
+    let listed = gov(&[act("a", "no", 2, json!({"act":"added","did":M}))]);
+    assert!(!listed.may_be_taken_out(M) && listed.may_be_taken_out("did:stray"));
+}

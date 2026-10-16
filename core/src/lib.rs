@@ -62,19 +62,19 @@ pub fn answer_json(a: &Answer) -> Value {
             inbox_len,
             now,
             codes,
-            admitted,
             groups,
             stale,
             said,
             decided,
             round_at,
+            next,
         } => json!({ "upkeep": {
             "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now, "codes": codes.map(|c| hex(&c)),
-            "admitted": admitted.iter().map(|a| json!({ "space": hex(&a.space), "did": a.did, "code": a.code, "at": a.at, "epoch": a.epoch, "kp": hex(&a.kp) })).collect::<Vec<_>>(),
             "groups": groups.iter().map(|(s, e, st)| json!({ "space": hex(s), "epoch": e, "state": hex(st) })).collect::<Vec<_>>(),
             "stale": stale.iter().map(|s| hex(s)).collect::<Vec<_>>(), "said": said,
             "roundAt": round_at,
-            "decided": decided.iter().map(|d| json!({ "space": hex(&d.space), "did": d.did, "q": hex(&d.q), "at": d.at, "step": d.step, "why": d.why })).collect::<Vec<_>>(),
+            "next": next,
+            "decided": decided.iter().map(|d| json!({ "space": hex(&d.space), "did": d.did, "q": hex(&d.q), "at": d.at, "step": d.step, "why": d.why, "seq": d.seq })).collect::<Vec<_>>(),
         } }),
         Answer::HandedSpaces { spaces } => {
             json!({ "handedSpaces": spaces.iter().map(|(id, st, eps)| json!({
@@ -111,7 +111,12 @@ pub fn describe(incoming: Incoming) -> Value {
                 .iter()
                 .map(|m| match decode_answer(m) {
                     Some((id, a)) => json!({ "id": id, "answer": answer_json(&a) }),
-                    None => json!({ "answer": "unreadable", "bytes": m.len() }),
+                    // An answer in ANOTHER build's layout (an earlier build asked to retire: its fields differ): its id
+                    // still read — answered, though not readable here.
+                    None => {
+                        let id = m.strip_prefix(craftworks_identity::MAGIC).and_then(|b| b.get(..4)).map(|b| u32::from_le_bytes(b.try_into().expect("4")));
+                        json!({ "id": id, "answer": "unreadable", "bytes": m.len() })
+                    }
                 })
                 .collect();
             json!({ "kind": "identity", "answers": answers })
@@ -222,7 +227,7 @@ impl Core {
                 | Request::HandoverSpaces { .. }
                 | Request::HandoverWitnessed { .. }
                 | Request::Unlock { .. }
-        ) && !matches!(req, Request::UpkeepMandate { spaces, spent, .. } if spaces.is_empty() && spent.is_empty())
+        ) && !matches!(req, Request::UpkeepMandate { spaces, .. } if spaces.is_empty())
         {
             return Err("an earlier build is asked only to hand a member over or to retire its upkeep".into());
         }
@@ -1194,27 +1199,15 @@ mod js {
                 blake3::hash(devices).as_bytes(),
             ))
         }
-        /// The MANDATE: `me` (the account's DID) and, per space, JSON `{ space, name, kind, owner, nonce, channel, open,
-        /// codes: [[code, expires, left]], bans, members, epoch, state }` (ids and the state in hex).
-        pub fn frames_upkeep_mandate(
-            &mut self,
-            me: &str,
-            spaces: &str,
-            spent: &str,
-        ) -> Result<js_sys::Array, JsValue> {
+        /// The MANDATE: `me` (the account's DID) and, per space, JSON `{ space, name, kind, owner, nonce, channel,
+        /// epoch, state }` (ids and the state in hex).
+        pub fn frames_upkeep_mandate(&mut self, me: &str, spaces: &str) -> Result<js_sys::Array, JsValue> {
             let v: Vec<serde_json::Value> =
                 serde_json::from_str(spaces).map_err(|e| err(e.to_string()))?;
             let spaces = v
                 .iter()
                 .map(|m| -> Option<craftworks_identity::Mandate> {
                     let s = |k: &str| m.get(k).and_then(|x| x.as_str()).map(str::to_string);
-                    let list = |k: &str| {
-                        m.get(k).and_then(|x| x.as_array()).map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str().map(str::to_string))
-                                .collect::<Vec<_>>()
-                        })
-                    };
                     Some(craftworks_identity::Mandate {
                         space: unhex(&s("space")?)?.try_into().ok()?,
                         name: s("name").unwrap_or_default(),
@@ -1222,50 +1215,23 @@ mod js {
                         owner: s("owner")?,
                         nonce: s("nonce"),
                         channel: s("channel")?,
-                        open: m.get("open").and_then(|x| x.as_bool()).unwrap_or(false),
-                        level: s("level").filter(|l| matches!(l.as_str(), "pro" | "vip")),
-                        codes: m
-                            .get("codes")?
-                            .as_array()?
-                            .iter()
-                            .filter_map(|c| {
-                                Some((
-                                    c.get(0)?.as_str()?.to_string(),
-                                    c.get(1)?.as_f64()? as u64,
-                                    c.get(2)?.as_f64()? as u32,
-                                ))
-                            })
-                            .collect(),
-                        bans: list("bans").unwrap_or_default(),
-                        members: list("members")?,
                         epoch: m.get("epoch")?.as_f64()? as u64,
                         state: unhex(&s("state")?)?,
-                        // Who may let in (`craftworks_rules::admission`).
-                        admitters: list("admitters").unwrap_or_default(),
                     })
                 })
                 .collect::<Option<Vec<_>>>()
                 .ok_or_else(|| err("a space of the mandate does not read".into()))?;
-            let spent: Vec<[u8; 16]> = serde_json::from_str::<Vec<String>>(spent)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|t| unhex(t)?.try_into().ok())
-                .collect();
-            self.ask(Request::UpkeepMandate {
-                me: me.to_string(),
-                spaces,
-                spent,
-            })
+            self.ask(Request::UpkeepMandate { me: me.to_string(), spaces, spent: Vec::new() })
         }
-        /// Admissions written as acts (JSON `[[space hex, did]]`): upkeep forgets them.
-        pub fn frames_upkeep_ack(&mut self, admitted: &str) -> Result<js_sys::Array, JsValue> {
-            let v: Vec<(String, String)> =
-                serde_json::from_str(admitted).map_err(|e| err(e.to_string()))?;
-            let admitted = v
-                .into_iter()
-                .filter_map(|(s, d)| Some((unhex(&s)?.try_into().ok()?, d)))
-                .collect();
-            self.ask(Request::UpkeepAck { admitted })
+        /// THE FOLLOWER NOW (FOUNDATION "Members and keys"): the node runs its round at once (someone the list put out,
+        /// its turn come) — the one place the unlisted are taken out; a page never does it itself.
+        pub fn frames_follow_now(&mut self, now_ms: f64) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::FollowNow { now: (now_ms / 1000.0) as u64 })
+        }
+        /// The groups the page loaded (JSON `[space hex]`): no longer reported as moved.
+        pub fn frames_upkeep_ack(&mut self, groups: &str) -> Result<js_sys::Array, JsValue> {
+            let v: Vec<String> = serde_json::from_str(groups).map_err(|e| err(e.to_string()))?;
+            self.ask(Request::UpkeepAck { groups: v.iter().filter_map(|s| unhex(s)?.try_into().ok()).collect() })
         }
         /// Open items sealed to the account's inbox key (the home site only).
         pub fn frames_inbox_open(
@@ -1412,15 +1378,6 @@ mod js {
         /// WHO BELONGS to the account (`account::members`): the node keys (hex) that the gathered credentials (bytes) make
         /// members, less the removals that count (`[[by, node, epoch]]`, each found in its remover's own feed), checked
         /// against the account's (got) key log.
-        /// Whether `cred` (a request's key package's: `Mls.key_package_credential`) is `did`'s MEMBER credential under
-        /// the key its log holds now (`account::space_member`) — the key log read first (`directory`).
-        pub fn space_member_of(&self, idlog_code: &[u8], did: &[u8], cred: &[u8]) -> Result<bool, JsValue> {
-            let did = b32(did)?;
-            let id = account::idlog_put(idlog_code, &did, None).id_bytes;
-            let st = self.0.got(&id).ok_or_else(|| err("the account's key log has not been read".into()))?;
-            let log = craftworks_idlog_contract::read(&did, st).ok_or_else(|| err("the account's key log does not verify".into()))?;
-            Ok(account::space_member(&did, &log, cred))
-        }
         pub fn account_members(
             &self,
             idlog_code: &[u8],
@@ -2287,137 +2244,91 @@ mod js {
         craftworks_rules::admission::turn(id, &dids, me) as i32
     }
 
-    /// THE WELCOME's message (`identity::welcome_message`, the node's too): JSON `{ space, spaceKind, from, owner,
-    /// nonce, name, welcome (hex), kp (tag hex), made, code?, circle?, group?, repair?: { epoch, branch }, history?:
-    /// [[epoch, secret hex]] }` → the message (JSON).
-    #[wasm_bindgen]
-    pub fn welcome_message(input: &str) -> Result<String, JsValue> {
-        let v: serde_json::Value = serde_json::from_str(input).map_err(|e| err(e.to_string()))?;
-        let s = |k: &str| v[k].as_str();
-        let unhex = |t: &str| -> Option<Vec<u8>> { (0..t.len() / 2).map(|i| u8::from_str_radix(t.get(2 * i..2 * i + 2)?, 16).ok()).collect() };
-        let need = |k: &str| s(k).ok_or_else(|| err(format!("a welcome needs {k}")));
-        let space: [u8; 32] = unhex(need("space")?).and_then(|b| b.try_into().ok()).ok_or_else(|| err("space".into()))?;
-        let welcome = unhex(need("welcome")?).ok_or_else(|| err("welcome".into()))?;
-        let kp: [u8; 16] = unhex(need("kp")?).and_then(|b| b.try_into().ok()).ok_or_else(|| err("kp".into()))?;
-        let history: Vec<(u64, [u8; 32])> = v["history"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|x| Some((x[0].as_f64()? as u64, unhex(x[1].as_str()?)?.try_into().ok()?))).collect())
-            .unwrap_or_default();
-        let repair = v["repair"]["branch"].as_str().map(|b| (v["repair"]["epoch"].as_f64().unwrap_or(0.0) as u64, b));
-        Ok(craftworks_identity::welcome_message(&craftworks_identity::Welcome {
-            space,
-            space_kind: need("spaceKind")?,
-            from: need("from")?,
-            owner: need("owner")?,
-            nonce: s("nonce"),
-            name: s("name").unwrap_or_default(),
-            welcome: &welcome,
-            kp,
-            made: v["made"].as_f64().unwrap_or(0.0) as u64,
-            code: s("code"),
-            circle: s("circle"),
-            group: s("group"),
-            repair,
-            history: &history,
-        })
-        .to_string())
-    }
-
     /// AN ORDERED LOG's rows (`rules::ordering`, the identity delegate's too): the rows of position `n` begin with this.
     #[wasm_bindgen]
     pub fn ordering_position_prefix(prefix: &str, n: f64) -> String {
         craftworks_rules::ordering::position_prefix(prefix, n as u64)
     }
 
-    /// …and its entry among those rows' values (JSON `[value…]`): the lowest; null: free.
+    /// …and its ENTRIES among those rows' values (JSON `[value…]`), in the one order every reader takes them
+    /// (`rules::ordering::order`): JSON `[value…]` — a reader takes the first valid for it.
     #[wasm_bindgen]
-    pub fn ordering_entry(values: &str) -> Option<String> {
+    pub fn ordering_entries(values: &str) -> String {
         let vs: Vec<String> = serde_json::from_str(values).unwrap_or_default();
-        vs.into_iter().filter(|v| !v.is_empty()).min()
+        let ordered: Vec<&str> = craftworks_rules::ordering::order(vs.iter().map(|v| v.as_bytes())).into_iter().filter_map(|v| std::str::from_utf8(v).ok()).collect();
+        serde_json::to_string(&ordered).unwrap_or_else(|_| "[]".into())
     }
 
-    /// A key package's tag (hex, 16 bytes): how the shared lists name it.
+    /// ON THE OWNER's BRANCH (`craftworks_rules::guards::on_branch`): `epoch` (none: not held), `owner` JSON
+    /// `[[epoch, fingerprint]]` newest first, `fps` JSON `{ epoch: fingerprint }` (its own, as read) — true, false, or
+    /// `undefined` (not known).
     #[wasm_bindgen]
-    pub fn admission_tag(kp: &str) -> String {
-        hex(&craftworks_rules::admission::tag(kp))
+    pub fn on_branch(epoch: Option<f64>, owner: &str, fps: &str) -> Option<bool> {
+        let owner: Vec<(u64, String)> = serde_json::from_str::<Vec<(f64, String)>>(owner).unwrap_or_default().into_iter().map(|(e, f)| (e as u64, f)).collect();
+        let fps: std::collections::HashMap<String, String> = serde_json::from_str(fps).unwrap_or_default();
+        craftworks_rules::guards::on_branch(epoch.map(|e| e as u64), &owner, &|e| fps.get(&e.to_string()).cloned())
     }
-
-    /// LETTING SOMEONE IN (`rules::admission::decide`, the rule the identity delegate runs): JSON `{ did, kp, at,
-    /// entry: "join" | "again", from }` and `{ me, admitters, spent: [tag hex], welcomed: [[did, tag hex, at]], held,
-    /// epoch, now, takeover }` → `{ admit: { kp, tag } }` or `{ skip: why }`.
+    /// WHERE A DEVICE's KEYS OF A SPACE STAND (`craftworks_rules::guards::group_state`): the `group` lifecycle's event.
     #[wasm_bindgen]
-    pub fn admission_decide(request: &str, view: &str) -> Result<String, JsValue> {
-        use craftworks_rules::admission::{decide, Decision, Entry, Request, View, Welcomed};
-        let q: serde_json::Value = serde_json::from_str(request).map_err(|e| err(e.to_string()))?;
-        let v: serde_json::Value = serde_json::from_str(view).map_err(|e| err(e.to_string()))?;
-        let tag16 = |s: &str| -> Option<[u8; 16]> { (0..16).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok() };
-        let strs = |k: &str| -> Vec<String> { v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
-        let admitters = strs("admitters");
-        let spent: Vec<[u8; 16]> = strs("spent").iter().filter_map(|t| tag16(t)).collect();
-        let welcomed: Vec<Welcomed> = v["welcomed"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|w| Some(Welcomed { did: w[0].as_str()?.into(), kp: tag16(w[1].as_str()?)?, at: w[2].as_f64()? as u64 })).collect())
-            .unwrap_or_default();
-        let me = v["me"].as_str().unwrap_or_default();
-        let entry = match q["entry"].as_str() {
-            Some("again") => Entry::Again { from: q["from"].as_f64().map(|e| e as u64), seen: q["seen"].as_f64().map(|e| e as u64) },
-            _ => Entry::Join,
-        };
-        let request = Request { did: q["did"].as_str().unwrap_or_default(), kp: q["kp"].as_str(), at: q["at"].as_f64().unwrap_or(0.0) as u64, entry };
-        let view = View {
-            me,
-            admitters: &admitters,
-            spent: &spent,
-            welcomed: &welcomed,
-            held: v["held"].as_bool().unwrap_or(false),
-            epoch: v["epoch"].as_f64().unwrap_or(0.0) as u64,
-            now: v["now"].as_f64().unwrap_or(0.0) as u64,
-            takeover_ms: v["takeover"].as_f64().unwrap_or(120_000.0) as u64,
-        };
-        Ok(match decide(&request, &view) {
-            Decision::Admit { kp, tag } => serde_json::json!({ "admit": { "kp": kp, "tag": hex(&tag) } }),
-            Decision::Skip(why) => serde_json::json!({ "skip": why }),
-        }
-        .to_string())
+    pub fn group_state(held: Option<f64>, owner: Option<f64>, on_branch: Option<bool>, unreadable: bool, why: bool) -> String {
+        craftworks_rules::guards::group_state(held.map(|e| e as u64), owner.map(|e| e as u64), on_branch, unreadable, why).into()
     }
-
-    /// THE KEYS FOLLOW THE MEMBER LIST (`craftworks_rules::members::follow`, the delegate's too): `{ me, listed: [did],
-    /// leaves: [[index, did]], keys: [[did, kp hex, at]], welcomed: [[did, tag hex, at]], spent: [tag hex], followers:
-    /// [did], epoch, now, takeover }` → `{ remove: [index], add: [[did, kp hex, tag hex]], skipped: [[did, why]] }`.
+    /// Whether a device in that state enters by itself (`guards::cannot_read`).
     #[wasm_bindgen]
-    pub fn members_follow(view: &str) -> Result<String, JsValue> {
-        use craftworks_rules::admission::Welcomed;
-        use craftworks_rules::members::{follow, Key, Leaf, View};
-        let v: serde_json::Value = serde_json::from_str(view).map_err(|e| err(e.to_string()))?;
-        let tag16 = |s: &str| -> Option<[u8; 16]> { (0..16).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?.try_into().ok() };
-        let strs = |k: &str| -> Vec<String> { v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default() };
-        let listed = strs("listed");
-        let followers = strs("followers");
-        let spent: Vec<[u8; 16]> = strs("spent").iter().filter_map(|t| tag16(t)).collect();
-        let arr = |k: &str| v[k].as_array().cloned().unwrap_or_default();
-        let leaves: Vec<Leaf> = arr("leaves").iter().filter_map(|l| Some(Leaf { index: l[0].as_u64()? as u32, did: l[1].as_str()?.into() })).collect();
-        let keys: Vec<Key> = arr("keys").iter().filter_map(|k| Some(Key { did: k[0].as_str()?.into(), kp: k[1].as_str()?.into(), at: k[2].as_f64()? as u64 })).collect();
-        let welcomed: Vec<Welcomed> = arr("welcomed").iter().filter_map(|w| Some(Welcomed { did: w[0].as_str()?.into(), kp: tag16(w[1].as_str()?)?, at: w[2].as_f64()? as u64 })).collect();
-        let me = v["me"].as_str().unwrap_or_default();
-        let view = View {
-            me,
-            listed: &listed,
-            leaves: &leaves,
-            keys: &keys,
-            welcomed: &welcomed,
-            spent: &spent,
-            followers: &followers,
-            epoch: v["epoch"].as_f64().unwrap_or(0.0) as u64,
-            now: v["now"].as_f64().unwrap_or(0.0) as u64,
-            takeover_ms: v["takeover"].as_f64().unwrap_or(120_000.0) as u64,
-        };
-        let p = follow(&view);
-        Ok(serde_json::json!({
-            "remove": p.remove,
-            "add": p.add.iter().map(|(d, kp, t)| serde_json::json!([d, kp, hex(t)])).collect::<Vec<_>>(),
-            "skipped": p.skipped,
-        })
-        .to_string())
+    pub fn group_cannot_read(state: &str) -> bool {
+        craftworks_rules::guards::cannot_read(state)
+    }
+    /// The one TAKEOVER (ms): how long one in turn has before another takes over (`guards::TAKEOVER_MS`).
+    #[wasm_bindgen]
+    pub fn takeover_ms() -> f64 {
+        craftworks_rules::guards::TAKEOVER_MS as f64
+    }
+    /// THE TURN's WAIT (`guards::turn_wait`): ranked `k`, since `since` — ms left before it acts.
+    #[wasm_bindgen]
+    pub fn turn_wait(k: f64, since: f64, now: f64) -> f64 {
+        craftworks_rules::guards::turn_wait(k.max(0.0) as u64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS) as f64
+    }
+    /// THE GUARD "a lapse's turn" (`guards::lapse_turn`): why not now, or `undefined`.
+    #[wasm_bindgen]
+    pub fn guard_lapse_turn(k: f64, since: f64, now: f64) -> Option<String> {
+        craftworks_rules::guards::lapse_turn(k as i64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS).err()
+    }
+    /// AN MLS MEMBER's CREDENTIAL read (`identity::read_credential`, its signature checked): JSON `{ did, owner, node }`
+    /// (the account, its owner key, the DEVICE's node key — hex), or `undefined`.
+    #[wasm_bindgen]
+    pub fn credential_parts(cred: &[u8]) -> Option<String> {
+        craftworks_identity::read_credential(cred).map(|(did, owner, node, _)| serde_json::json!({ "did": account::did(&did), "owner": hex(&owner), "node": hex(&node) }).to_string())
+    }
+    /// AN INVITE CODE's PROOF for one DID (`gov::join_proof`): what a self-entry names in the clear.
+    #[wasm_bindgen]
+    pub fn join_proof(code: &str, did: &str) -> String {
+        craftworks_gov::join_proof(code, did)
+    }
+    /// WHOSE an MLS member's credential is (`identity::read_credential`): its DID, or `undefined`.
+    #[wasm_bindgen]
+    pub fn credential_did(cred: &[u8]) -> Option<String> {
+        craftworks_identity::read_credential(cred).map(|(did, ..)| account::did(&did))
+    }
+    /// THE GUARD "level reached" (`craftworks_rules::guards::level`): why not, or `undefined`.
+    #[wasm_bindgen]
+    pub fn guard_level(contrib: &str, need: &str, now: f64) -> Option<String> {
+        craftworks_rules::guards::level(Some(contrib), need, now as u64).err()
+    }
+    /// THE GUARD "leads past" (`craftworks_rules::guards::leads_past`): a group its own node moved, at epoch `to`, this
+    /// device holding `held` — why not taken, or `undefined`.
+    #[wasm_bindgen]
+    pub fn guard_leads_past(to: f64, held: Option<f64>) -> Option<String> {
+        craftworks_rules::guards::leads_past(to as u64, held.map(|h| h as u64)).err()
+    }
+    /// A REQUEST BAG's NAME (`craftworks_rules::admission::bag_name`, the node's): `code` a code, or "open".
+    #[wasm_bindgen]
+    pub fn bag_name(code: &str, space: &[u8]) -> Result<String, JsValue> {
+        Ok(craftworks_rules::admission::bag_name(code, &b32(space)?))
+    }
+    /// A LEVEL GROUP's level from its join policy (`craftworks_gov::level_of`: `level:pro` → `pro`), or `undefined`.
+    #[wasm_bindgen]
+    pub fn level_of_policy(policy: &str) -> Option<String> {
+        craftworks_gov::level_of(policy).map(str::to_string)
     }
 
     /// `did:craftec:<base58>` of the owner's public key (the DID the identity delegate answers, as bytes).
@@ -4028,6 +3939,43 @@ mod js {
                 .iter()
                 .map(|a| a.to_string())
                 .collect()
+        }
+        /// The acts that put someone OUT (`Gov::out_acts`), JSON, in order.
+        pub fn out_acts(&self) -> String {
+            serde_json::Value::Array(self.0.out_acts().into_iter().cloned().collect()).to_string()
+        }
+        /// WHO MAY LET PEOPLE IN: the replay's own invite rule (`Gov::may_invite` — what its `admitted` acts are judged by;
+        /// the node's follower ranks admitters by it). `role`: the person's role as known.
+        pub fn may_invite(&self, role: Option<String>, at: f64) -> bool {
+            self.0.may_invite(role.as_deref(), at)
+        }
+        /// THE GUARD "may list" (`craftworks_rules::guards::may_list`): why `did` may not be put on the list, or
+        /// `undefined`.
+        pub fn may_list(&self, did: &str) -> Option<String> {
+            craftworks_rules::guards::may_list(&self.0, did).err()
+        }
+        /// THE LIST an MLS entry is judged by (`mls::List`; the node's `GovList`): EVER on the list and not banned.
+        pub fn entry_listed(&self, did: &str) -> bool {
+            self.0.ever_listed.contains(did) && !self.0.bans.contains(did)
+        }
+        /// …a self-entry's proof (JSON) by the list's rule now (`Gov::admits`).
+        pub fn entry_admits(&self, did: &str, proof: &str, at: f64) -> bool {
+            serde_json::from_str::<serde_json::Value>(proof).is_ok_and(|p| self.0.admits(did, &p, at).is_ok())
+        }
+        /// …and whether a member's commit may take `did` out (`Gov::may_be_taken_out`).
+        pub fn may_be_taken_out(&self, did: &str) -> bool {
+            self.0.may_be_taken_out(did)
+        }
+        /// MAY `did` ENTER BY ITSELF with this proof (JSON: `{ join: "code", p } | { join: "open" } | { join: "level" }`)
+        /// — `Gov::admits`, the replay's and every reader's: why not, or `undefined`.
+        pub fn admits(&self, did: &str, proof: &str, at: f64) -> Option<String> {
+            let v: serde_json::Value = serde_json::from_str(proof).unwrap_or_default();
+            self.0.admits(did, &v, at).err()
+        }
+        /// THE GUARD "in standing" (`craftworks_rules::guards::standing`, the delegate's too): why `did`, asking at `at`,
+        /// is not let in by a request — or `undefined`.
+        pub fn standing(&self, did: &str, at: f64) -> Option<String> {
+            craftworks_rules::guards::standing(&self.0, did, at as u64).err()
         }
         /// THE ONE STAMP of an act to write (`Gov::stamp`): the act (JSON) with its `deps` and `at`.
         pub fn stamp(&self, act: &str, now: f64) -> Result<String, JsValue> {

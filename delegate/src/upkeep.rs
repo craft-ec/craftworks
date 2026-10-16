@@ -1,31 +1,27 @@
-//! THE NODE'S FOLLOWER (FOUNDATION "Members and keys") — the ONE place a space's keys follow its member list. The
-//! account's node runs it on every wake-up (and whenever a page asks it to run now), page open or not: no page gathers,
-//! decides or commits for membership. A round, for one member on this node, space by space:
+//! THE NODE'S FOLLOWER (FOUNDATION "Members and keys", the design of 10-17) — whoever a space's list no longer names is
+//! taken out of its keys HERE, by the account's node, on every wake-up (and whenever a page asks it to run now), page
+//! open or not. Nobody is let IN here: a listed device enters by itself (`mls::enter`). A round, for one member on this
+//! node, space by space (every kind: a server, a conversation, a level group, an audience, a circle):
 //!
-//!   1. READ the space's acts (`table::Reading`, every member's feeds) — the member list (`gov`'s replay): who is listed,
-//!      the codes in force, the open door, a level, the bans, who may let people in.
-//!   2. READ its bags: each code's, the open door's, a level's (people asking to join), the member bag (`key <space>`:
-//!      a listed device's "my key"), and the writers list (the welcomes made: each key answered once).
-//!   3. DECIDE: a join by `rules::admission` (its own key, once, one admitter by turn); then `rules::members::follow`
-//!      over the list, the group's entries and the keys posted — one commit's plan: who out, which keys in.
-//!   4. CHECK each key in: their key log (the key is theirs) and card (the inbox; a level group's level).
-//!   5. WRITE an `admitted` act for each join (`Gov::stamp`, `write::rows`): the list first, then the keys follow it.
-//!   6. ONE COMMIT (`Mls::follow`) into its epoch's log, the next epoch's log made, the one welcome sealed to each new
-//!      entry's inbox, each answered in the writers list.
+//!   1. READ the space's acts (`table::Reading`, every member's feeds) — the list (`gov`'s replay), whole or not.
+//!   2. CATCH UP: each position's entries — its epoch log's and its DOOR's (a device that entered by itself) — in the
+//!      one order (`rules::ordering`); the first MLS applies AND the list allows taken (`mls::entry_ok`, a self-entry's
+//!      proof by `Gov::admits`): the rule every page reads by. Nothing is decided from a short read (I6).
+//!   3. FOLLOW OUT (`rules::members::follow`): every entry of an account the list no longer names — one member at a time
+//!      (`admission::turn`, taken over when away).
+//!   4. ONE COMMIT into its epoch's log; the next epoch's log opened (its way back); its GROUP INFO put in that epoch's
+//!      door and announced in the writers list — what a listed device with no key enters from.
 //!
-//! A read that came back SHORT (a feed silent, an act named and not held) takes nobody out: only a whole read of the
-//! list may say someone left it. Each step is a message out and an answer in; the round lives in the delegate's secrets.
-//! Pure: the whole round runs in tests against a scripted network.
+//! Each step is a message out and an answer in; the round lives in the delegate's secrets. Pure: the whole round runs
+//! in tests against a scripted network.
 
 use craftworks_data as data;
-use craftworks_identity::{self as identity, Admitted, Host, Mandate};
-use craftworks_rules::admission::{decide, Decision, Entry, Request, View, Welcomed};
+use craftworks_identity::{self as identity, Host, Mandate};
 use craftworks_rules::members;
 use serde::{Deserialize, Serialize};
 
 use crate::rekey_round::Held;
 use crate::table::Reading;
-use crate::write::{self, Next};
 
 /// What upkeep asks of the network.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,51 +52,28 @@ pub enum Reply {
     Updated { id: [u8; 32], ok: bool },
 }
 
-/// A key to put in: a listed device's own ("my key": `code` "key"), or a join's (`code`: the code, "open", "level").
+/// THE COMMIT made (`Mls::follow`: entries out), carried until its log and the next epoch's are written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Ask {
-    space: [u8; 32],
-    did: String,
-    did_bytes: [u8; 32],
-    code: String,
-    /// The key package (hex): the one its entry is made with.
-    kp: String,
-}
-
-/// THE COMMIT made (`Mls::follow`), carried until its log, the next epoch's log and the welcomes are sent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct Add {
+struct Moved {
     from_epoch: u64,
     from_secret: [u8; 32],
     commit: Vec<u8>,
-    welcome: Option<Vec<u8>>,
     info: Vec<u8>,
     epoch: u64,
     secret: [u8; 32],
     state: Vec<u8>,
     removed: usize,
-    /// Each new entry: its ask and the inbox key its welcome is sealed to.
-    to: Vec<(Ask, [u8; 32])>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Step {
     /// The space's acts being read.
     Acts,
-    /// Its bags: `(id, code)` not answered yet.
-    Bags { waiting: Vec<([u8; 32], String)> },
-    KeyLog { ask: Ask },
-    /// Their card, at the address their key log's data key gives…
-    Card { ask: Ask, data: [u8; 32] },
-    /// …and its tree BLOCKS: `want` (contract id, block) not answered yet, `got` those that were.
-    CardBlocks { ask: Ask, data: [u8; 32], card: Vec<u8>, want: Vec<([u8; 32], [u8; 32])>, got: Vec<([u8; 32], Vec<u8>)>, depth: u8 },
-    /// `admitted` acts being written into `name`: `rows` still to write after this step, `waiting` its answers.
-    Writing { name: String, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, waiting: Vec<[u8; 32]>, refused: bool, blocks: bool },
-    Log { add: Add },
-    Commit { add: Add },
-    Next { add: Add },
-    /// The welcomes sent: `waiting` the inboxes not answered yet.
-    Welcome { add: Add, waiting: Vec<[u8; 32]>, tries: u8 },
+    /// Position `epoch`'s entries being read: its epoch log's and its door's (`None`: not answered yet).
+    CatchUp { epoch: u64, secret: [u8; 32], log: Option<Option<Vec<u8>>>, door: Option<Option<Vec<u8>>> },
+    Log { m: Moved },
+    Commit { m: Moved },
+    Next { m: Moved },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,18 +85,13 @@ struct Round {
     rest: Vec<[u8; 32]>,
     reading: Reading,
     step: Step,
-    /// The writers list: the welcomes any member made here `(did, kp tag, at)`.
-    heard: Vec<(String, [u8; 16], u64)>,
-    /// The bags' items `(code, text)`, decided once every bag is read.
-    items: Vec<(String, String)>,
-    /// The plan: entries out; keys in still to check; keys checked (with their inbox).
-    remove: Vec<u32>,
-    check: Vec<Ask>,
-    ready: Vec<(Ask, [u8; 32])>,
-    /// A level group's level (its join policy), for a level join's card.
-    level: Option<String>,
-    /// The wake-up count when the round last moved: one stuck for `STUCK` wake-ups is dropped (or, sending welcomes,
-    /// sent again).
+    /// The group as this round holds it (caught up so far).
+    state: Vec<u8>,
+    /// When the round last moved (the node's time, ms): one not moved for `STUCK_MS` is dropped — by TIME, never only by
+    /// wake-ups (which may not come: I2).
+    #[serde(default)]
+    moved_ms: u64,
+    /// The wake-up count when the round last moved.
     moved: u64,
 }
 
@@ -132,18 +100,41 @@ pub const ROUND: &[u8] = b"identity_upkeep/round";
 /// does not: it is the only one).
 pub const PAGE_AWAY: u64 = 2;
 pub const STUCK: u64 = 3;
-/// How long the first in turn has before the next one acts (`rules::admission`, `rules::members`).
-const TAKEOVER_MS: u64 = 120_000;
 /// The member whose round ran last (the next round starts after it: each person in turn).
 const LAST_SERVED: &[u8] = b"identity_upkeep/last-served";
-/// The round's read of a space's writers list (beside its bags).
-const WRITERS: &str = "writers";
-/// The member bag: a listed device's "my key".
-const KEY: &str = "key";
+/// Hex characters of a group info per door item (a bag item holds 16 KiB) — the page's `keys` PART.
+const PART: usize = 12000;
+/// When this node first saw entries due out at an epoch (`member ‖ space` → `(epoch, ms)`): where a takeover counts
+/// from when no act names a time (a stray never put out by one).
+const DUE: &[u8] = b"identity_upkeep/due/";
 
-fn wakeups<H: Host>(h: &H) -> u64 {
-    h.get_secret(identity::UPKEEP_WAKEUPS).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0)
+/// The epoch whose info this node last published (`member ‖ space` → epoch): once an epoch.
+const ANNOUNCED: &[u8] = b"identity_upkeep/announced/";
+
+/// THE OWNER's INFO, once an epoch (FOUNDATION "Members and keys" 4: what a listed device with no key enters from — its
+/// signer proven by the space's id): the owner's node publishes it whenever no commit of its own did.
+fn owner_info<H: Host>(h: &mut H, c: &Held, r: &Round, m: &Mandate, g: &mut craftworks_mls::Account) -> Vec<Io> {
+    let key = [ANNOUNCED, &r.member[..], &r.space[..]].concat();
+    let epoch = g.epoch();
+    if r.me != m.owner || h.get_secret(&key).and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok()).map(u64::from_le_bytes) == Some(epoch) {
+        return Vec::new();
+    }
+    let (Ok(info), Ok(secret)) = (g.group_info(), g.epoch_secret()) else { return Vec::new() };
+    h.set_secret(&key, &epoch.to_le_bytes());
+    door_io(h, c, &r.member, &r.space, epoch, &secret, &info)
 }
+
+/// FROM WHEN a removal is due here: the act's time, or when this node first saw it due at this epoch (kept).
+fn due_since<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], epoch: u64, out_since: u64, now_ms: u64) -> u64 {
+    let key = [DUE, &member[..], &space[..]].concat();
+    let seen = h.get_secret(&key).and_then(|b| bincode::deserialize::<(u64, u64)>(&b).ok()).filter(|(e, _)| *e == epoch).map(|(_, t)| t);
+    let seen = seen.unwrap_or_else(|| {
+        h.set_secret(&key, &bincode::serialize(&(epoch, now_ms)).expect("two numbers"));
+        now_ms
+    });
+    out_since.max(seen)
+}
+
 fn round<H: Host>(h: &H) -> Option<Round> {
     h.get_secret(ROUND).filter(|b| !b.is_empty()).and_then(|b| bincode::deserialize(&b).ok())
 }
@@ -163,10 +154,11 @@ fn mandate<H: Host>(h: &H, r: &Round) -> Option<Mandate> {
     identity::upkeep_mandate(h, &r.member)?.1.into_iter().find(|m| m.space == r.space)
 }
 
-/// A key's step taken here (`identity::Decided`: the `member` lifecycle's move, by the node).
-fn decided<H: Host>(h: &mut H, member: &[u8; 32], ask: &Ask, step: &str, why: &str, now_ms: u64) {
-    let q = craftworks_rules::admission::tag(&ask.kp);
-    identity::upkeep_decide(h, member, identity::Decided { space: ask.space, did: ask.did.clone(), q, at: now_ms, step: step.into(), why: why.into() });
+/// THE ROUND's step over a space (`identity::Decided`: the `group` lifecycle's `follow-<step>` move, by the node — its
+/// plan, its commit, an entry skipped, a stall, each with why). Never free text beside it.
+fn followed<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], step: &str, why: &str) {
+    let at = identity::upkeep_now(h).unwrap_or(0) * 1000;
+    identity::upkeep_decide(h, member, identity::Decided { seq: 0, space: *space, did: String::new(), q: [0; 16], at, step: step.into(), why: why.into() });
 }
 
 /// Whether a contract this delegate CREATES reaches the network. Not on freenet ≤ 0.2.141 (measured 10-05 on a test
@@ -192,9 +184,17 @@ pub fn id_of(code_hash: &[u8; 32], params: &[u8]) -> [u8; 32] {
     contract_keys::instance(code_hash, params)
 }
 
-/// The group's ENTRIES `(index, did)` (each credential's DID).
-fn leaves(g: &craftworks_mls::Account) -> Vec<members::Leaf> {
-    g.members().into_iter().filter_map(|(index, _, cred)| Some(members::Leaf { index, did: craftworks_account::did(&identity::read_credential(&cred)?.0) })).collect()
+/// The group's ENTRIES — each one's DID, and whether the proof in its leaf is one `gov` admits now (none given: not
+/// judged — the round begins before the acts are read).
+fn leaves(g: &craftworks_mls::Account, gov: Option<&craftworks_gov::Gov>, now_ms: u64) -> Vec<members::Leaf> {
+    g.entries()
+        .into_iter()
+        .map(|(index, did, proof)| {
+            // (Never one the acts put out — removed, banned, left, lapsed — whatever its leaf says: the list decides.)
+            let admitted = gov.is_some_and(|gov| !gov.gone.contains(&did) && !gov.bans.contains(&did) && serde_json::from_slice::<serde_json::Value>(&proof).is_ok_and(|p| gov.admits(&did, &p, now_ms as f64).is_ok()));
+            members::Leaf { index, did, admitted }
+        })
+        .collect()
 }
 
 /// A space's round begun: its acts read, by its members' devices (the group's entries and its owner).
@@ -203,18 +203,18 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
         let space = rest.remove(0);
         let Some(m) = identity::upkeep_mandate(h, &member).and_then(|(_, ms)| ms.into_iter().find(|m| m.space == space)) else { continue };
         let Some((_, epochs)) = crate::rekey_round::space_of(h, &member, &m) else {
-            identity::upkeep_say(h, &member, &format!("{}: its group does not load here: not followed", m.name));
+            followed(h, &member, &space, "unloadable", &format!("{}: its group does not load here: not followed", m.name));
             continue;
         };
         let Ok(g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(space), &m.state) else { continue };
-        let mut dids: Vec<[u8; 32]> = leaves(&g).iter().filter_map(|l| craftworks_account::did_bytes(&l.did)).collect();
+        let mut dids: Vec<[u8; 32]> = leaves(&g, None, 0).iter().filter_map(|l| craftworks_account::did_bytes(&l.did)).collect();
         if let Some(o) = craftworks_account::did_bytes(&m.owner) {
             if !dids.contains(&o) {
                 dids.push(o);
             }
         }
         let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts"]);
-        let r = Round { member, me, space, rest, reading, step: Step::Acts, heard: Vec::new(), items: Vec::new(), remove: Vec::new(), check: Vec::new(), ready: Vec::new(), level: None, moved: wakeups(h) };
+        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now(h).unwrap_or(0) * 1000, moved: identity::upkeep_wakeups(h) };
         keep(h, Some(&r));
         return io;
     }
@@ -231,58 +231,75 @@ fn governance<H: Host>(h: &H, r: &Round, now_ms: u64) -> Option<craftworks_gov::
     Some(crate::rekey::governance(&r.reading, &r.reading.writer_dids, &m.owner, now_ms))
 }
 
-/// A WAKE-UP: a stuck round's welcomes sent again (or the round dropped); else, none running, the next member's round
-/// begun (each person in turn). The GETs to send.
+/// The list read WHOLE (the guard): no feed silent, no act named and not held.
+fn whole(r: &Round, gov: &craftworks_gov::Gov) -> Result<(), String> {
+    let have: std::collections::BTreeSet<String> = r.reading.rows("acts").keys().chain(r.reading.rows("pub-acts").keys()).map(|k| String::from_utf8_lossy(k).into_owned()).collect();
+    craftworks_rules::guards::whole(&r.reading.notes, gov.missing(&have).len())
+}
+
+/// A WAKE-UP: a stuck round dropped (said why); else, none running, the next member's round begun (each in turn).
 pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
     let _ = now_ms;
-    let w = wakeups(h);
-    if let Some(mut r) = round(h) {
-        if w.saturating_sub(r.moved) < STUCK {
+    if let Some(r) = round(h) {
+        if running(h) {
             return Vec::new();
-        }
-        // Stuck. Welcomes not taken are sent again (the entries are in the group already: they must hear of it).
-        if let Step::Welcome { add, waiting, tries } = r.step.clone() {
-            if tries < 5 {
-                let to: Vec<(Ask, [u8; 32])> = add.to.iter().filter(|(a, _)| waiting.contains(&inbox_id(h, a))).cloned().collect();
-                let io: Vec<Io> = to.iter().flat_map(|(a, inbox)| welcome_io(h, &r.member, &r.me, a, *inbox, &add)).collect();
-                r.step = Step::Welcome { add, waiting, tries: tries + 1 };
-                r.moved = w;
-                keep(h, Some(&r));
-                return io;
-            }
         }
         let at = match &r.step {
             Step::Acts => "the space's acts never answered whole".to_string(),
-            Step::Bags { waiting } => format!("{} bag(s) never answered", waiting.len()),
-            Step::KeyLog { .. } => "a key log never answered".into(),
-            Step::Card { .. } | Step::CardBlocks { .. } => "a card never answered".into(),
-            Step::Writing { .. } => "the admitted acts were never answered".into(),
+            Step::CatchUp { epoch, .. } => format!("epoch {epoch}'s entries never answered"),
             Step::Log { .. } => "the epoch's log never answered".into(),
             Step::Commit { .. } => "the commit was never answered".into(),
             Step::Next { .. } => "the next epoch's log never answered".into(),
-            Step::Welcome { .. } => "the welcomes were not taken in 5 tries".into(),
         };
-        identity::upkeep_say(h, &r.member, &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
+        followed(h, &r.member, &r.space, "stalled", &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
         keep(h, None);
     }
     start(h)
 }
 
-/// The next member's round (each person in turn), over their spaces whose list is the acts (a server's).
+/// A PAGE ASKED (`Request::FollowNow`): a round begun now when none is running (a running one sees the change itself).
+pub fn now<H: Host>(h: &mut H, member: [u8; 32], now_ms: u64) -> Vec<Io> {
+    let _ = now_ms;
+    // ITS OWN round running: left to go on. ANOTHER member's: set aside — a page asking is this person waiting on
+    // their own space now (a household's node, fx 10-17: one slow member's rounds kept another's removal out for
+    // minutes); the other's round begins again at a later wake-up.
+    if running(h) && round(h).is_some_and(|r| r.member == member) {
+        return Vec::new();
+    }
+    keep(h, None);
+    // THIS member's round (the one whose page asked) — never the next in turn.
+    let Some(c) = Held::of(h) else { return Vec::new() };
+    let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else { return Vec::new() };
+    let all: Vec<[u8; 32]> = spaces.iter().map(|m| m.space).collect();
+    let w = identity::upkeep_wakeups(h);
+    identity::upkeep_set_round_at(h, &member, w);
+    identity::upkeep_set_next(h, &member, 0);
+    begin(h, &c, member, me, all)
+}
+/// A round RUNNING (moved within `STUCK` wake-ups and `STUCK_MS`): left to go on.
+fn running<H: Host>(h: &H) -> bool {
+    let now = identity::upkeep_now(h).unwrap_or(0) * 1000;
+    round(h).is_some_and(|r| identity::upkeep_wakeups(h).saturating_sub(r.moved) < STUCK && now.saturating_sub(r.moved_ms) < STUCK_MS)
+}
+/// A round not moved for this long (the node's time) is stalled.
+const STUCK_MS: u64 = 3 * 60 * 1000;
+
+/// The next member's round (each person in turn), over every space of theirs.
 fn start<H: Host>(h: &mut H) -> Vec<Io> {
     let Some(c) = Held::of(h) else { return Vec::new() };
-    let w = wakeups(h);
+    let w = identity::upkeep_wakeups(h);
     let members = identity::upkeep_members(h);
     let last = h.get_secret(LAST_SERVED).and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
     let from = last.and_then(|l| members.iter().position(|m| *m == l)).map_or(0, |i| i + 1);
     for member in members.iter().cycle().skip(from).take(members.len()).copied() {
         let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else { continue };
-        let all: Vec<[u8; 32]> = spaces.iter().filter(|m| m.kind == "server").map(|m| m.space).collect();
+        let all: Vec<[u8; 32]> = spaces.iter().map(|m| m.space).collect();
         if all.is_empty() {
             continue;
         }
         h.set_secret(LAST_SERVED, &member);
         identity::upkeep_set_round_at(h, &member, w);
+        identity::upkeep_set_next(h, &member, 0);
         let io = begin(h, &c, member, me, all);
         if !io.is_empty() {
             return io;
@@ -291,15 +308,29 @@ fn start<H: Host>(h: &mut H) -> Vec<Io> {
     Vec::new()
 }
 
-/// The contract a step waits on (the reading's and the bags' matched there).
+/// A position's DOOR (its bag, by the space's id and the epoch).
+fn door_id(c: &Held, space: &[u8; 32], epoch: u64) -> [u8; 32] {
+    id_of(&c.bag, &crate::table::sealed_bag_address(space, &format!("door-{epoch}")))
+}
+
+/// The contract a step waits on (`CatchUp` matches its two itself).
 fn waits_for(r: &Round, c: &Held, channel: Option<&str>) -> Option<[u8; 32]> {
     match &r.step {
-        Step::Acts | Step::Bags { .. } | Step::CardBlocks { .. } | Step::Writing { .. } | Step::Welcome { .. } => None,
-        Step::KeyLog { ask } => Some(id_of(&c.idlog, &ask.did_bytes)),
-        Step::Card { data, .. } => Some(data::Open::new(&c.tail, data, "card").id_bytes()),
-        Step::Log { add } | Step::Commit { add } => Some(epoch_log(&c.tail, channel?, &add.from_secret).id_bytes()),
-        Step::Next { add } => Some(epoch_log(&c.tail, channel?, &add.secret).id_bytes()),
+        Step::Acts | Step::CatchUp { .. } => None,
+        Step::Log { m } | Step::Commit { m } => Some(epoch_log(&c.tail, channel?, &m.from_secret).id_bytes()),
+        Step::Next { m } => Some(epoch_log(&c.tail, channel?, &m.secret).id_bytes()),
     }
+}
+
+/// CATCH UP from the group this round holds: position `epoch`'s log and door asked.
+fn catch_up<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate) -> Vec<Io> {
+    let Ok(g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(r.space), &r.state) else { return next_space(h, c, r) };
+    let (epoch, Ok(secret)) = (g.epoch(), g.epoch_secret()) else { return next_space(h, c, r) };
+    let log = epoch_log(&c.tail, &m.channel, &secret);
+    let io = vec![Io::Get { id: log.id_bytes(), subscribe: false }, Io::Get { id: door_id(c, &r.space, epoch), subscribe: false }];
+    r.step = Step::CatchUp { epoch, secret, log: None, door: None };
+    keep(h, Some(&r));
+    io
 }
 
 /// An ANSWER from the network: the round moved on. What to send next.
@@ -321,7 +352,8 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
     if waits_for(&r, &c, Some(&m.channel)).is_some_and(|w| w != id) {
         return Vec::new();
     }
-    r.moved = wakeups(h);
+    r.moved = identity::upkeep_wakeups(h);
+    r.moved_ms = now_ms;
     let member = r.member;
     match (r.step.clone(), reply) {
         (Step::Acts, Reply::Got { id, state }) => {
@@ -333,175 +365,73 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 keep(h, Some(&r));
                 return io;
             }
-            bags(h, &c, r, now_ms)
+            catch_up(h, &c, r, &m)
         }
-        (Step::Bags { mut waiting }, Reply::Got { id, state }) => {
-            let Some(i) = waiting.iter().position(|(w, _)| *w == id) else { return Vec::new() };
-            let (_, code) = waiting.remove(i);
-            if let Some(st) = state {
-                if code == WRITERS {
-                    let address = crate::table::sealed_bag_address(&r.space, "writers");
-                    for p in craftworks_bag_contract::read(&address, &st).unwrap_or_default() {
-                        let Some(v) = crate::table::open_bag_item(&r.space, &Default::default(), "writers", craftworks_bag_contract::payload(&p)) else { continue };
-                        let (Some(did), Some(kp)) = (v["welcomed"].as_str(), v["kp"].as_str().and_then(unhex).and_then(|t| <[u8; 16]>::try_from(t).ok())) else { continue };
-                        r.heard.push((did.to_string(), kp, v["at"].as_u64().unwrap_or(0)));
-                    }
-                } else {
-                    for p in craftworks_bag_contract::read(&identity::invite_address(&bag_name(&code, &r.space)), &st).unwrap_or_default() {
-                        r.items.push((code.clone(), String::from_utf8_lossy(craftworks_bag_contract::payload(&p)).into_owned()));
-                    }
-                }
-            } else if code == WRITERS {
-                // Without the writers list a key could be answered twice: this space waits for the next round.
-                identity::upkeep_say(h, &member, &format!("{}: its writers list did not answer: not followed this round", m.name));
-                return next_space(h, &c, r);
-            }
-            if !waiting.is_empty() {
-                r.step = Step::Bags { waiting };
-                keep(h, Some(&r));
+        (Step::CatchUp { epoch, secret, mut log, mut door }, Reply::Got { id, state }) => {
+            if id == epoch_log(&c.tail, &m.channel, &secret).id_bytes() && log.is_none() {
+                log = Some(state);
+            } else if id == door_id(&c, &r.space, epoch) && door.is_none() {
+                door = Some(state);
+            } else {
                 return Vec::new();
             }
-            plan(h, &c, r, &m, now_ms)
-        }
-        (Step::KeyLog { ask }, Reply::Got { state, .. }) => {
-            let size = state.as_ref().map(Vec::len);
-            let Some(log) = state.and_then(|st| craftworks_idlog_contract::read(&ask.did_bytes, &st)) else {
-                let why = size.map_or("the network answered none".to_string(), |n| format!("its state ({n} bytes) did not read"));
-                decided(h, &member, &ask, "fail", &format!("no key log — {why}"), now_ms);
-                return next_check(h, &c, r, now_ms);
+            let (Some(log), Some(door)) = (log.clone(), door.clone()) else {
+                r.step = Step::CatchUp { epoch, secret, log, door };
+                keep(h, Some(&r));
+                return Vec::new();
             };
-            // THE KEY IS THEIRS: its credential names this DID under the key its log holds now (a bag item is an
-            // unsigned drop: a key made by anyone else would let that one in under their name).
-            let theirs = unhex(&ask.kp).and_then(|kp| craftworks_mls::key_package_credential(&kp).ok()).is_some_and(|cred| craftworks_account::space_member(&ask.did_bytes, &log, &cred));
-            if !theirs {
-                decided(h, &member, &ask, "skip", "the key is not theirs (another account's, or one their log moved past)", now_ms);
-                return next_check(h, &c, r, now_ms);
-            }
-            let data = log.head().data;
-            let card = data::Open::new(&c.tail, &data, "card");
-            r.step = Step::Card { ask, data };
-            keep(h, Some(&r));
-            vec![Io::Get { id: card.id_bytes(), subscribe: false }]
+            entries(h, &c, r, &m, epoch, &secret, log, door, now_ms)
         }
-        (Step::Card { ask, data }, Reply::Got { state, .. }) => {
-            let Some(card) = state else {
-                decided(h, &member, &ask, "fail", "they have no card (the network answered none)", now_ms);
-                return next_check(h, &c, r, now_ms);
-            };
-            card_read(h, &c, r, ask, data, card, Vec::new(), 0, now_ms)
-        }
-        (Step::CardBlocks { ask, data, card, mut want, mut got, depth }, Reply::Got { id, state }) => {
-            let Some(i) = want.iter().position(|(w, _)| *w == id) else { return Vec::new() };
-            let (_, cid) = want.remove(i);
-            got.push((cid, state.unwrap_or_default()));
-            if !want.is_empty() {
-                r.step = Step::CardBlocks { ask, data, card, want, got, depth };
-                keep(h, Some(&r));
-                return Vec::new();
-            }
-            card_read(h, &c, r, ask, data, card, got, depth + 1, now_ms)
-        }
-        (Step::Writing { name, rows, mut waiting, refused, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
-            waiting.retain(|w| *w != id);
-            let refused = refused || !ok;
-            if !waiting.is_empty() {
-                r.step = Step::Writing { name, rows, waiting, refused, blocks };
-                keep(h, Some(&r));
-                return Vec::new();
-            }
-            if refused {
-                // The list was not written: no key of theirs goes in (the keys follow the list, never ahead of it).
-                identity::upkeep_say(h, &member, &format!("{}: the admitted act(s) were refused (the network holds more): the next round reads again", m.name));
-                return next_space(h, &c, r);
-            }
-            if !rows.is_empty() {
-                return write_step(h, &c, r, &name, rows, blocks, now_ms);
-            }
-            commit(h, &c, r, &m, now_ms)
-        }
-        (Step::Log { add }, Reply::Got { state, .. }) => {
-            let mut log = epoch_log(&c.tail, &m.channel, &add.from_secret);
+        (Step::Log { m: mv }, Reply::Got { state, .. }) => {
+            let mut log = epoch_log(&c.tail, &m.channel, &mv.from_secret);
             if let Some(st) = &state {
                 log.absorb(st);
             }
             // THE LOG's ONE ROW RULE (`rules::ordering`, the pages' too): taken if any writer's row holds the position.
             use craftworks_rules::ordering;
-            let taken = matches!(log.opened(), Ok(data::Step::Ready(rows)) if ordering::entry_at(rows.iter().map(|(k, v)| (k.as_slice(), v.as_slice())), "c/", add.from_epoch).is_some());
+            let taken = matches!(log.opened(), Ok(data::Step::Ready(rows)) if ordering::entry_at(rows.iter().map(|(k, v)| (k.as_slice(), v.as_slice())), "c/", mv.from_epoch).is_some());
             if taken {
-                // Another member moved the group from this epoch first: this node's group is behind — a page brings it
-                // forward (`moved` by the page's mandate); nothing is sent.
-                for (a, _) in &add.to {
-                    decided(h, &member, a, "fail", &format!("the group moved from epoch {} meanwhile", add.from_epoch), now_ms);
-                }
-                identity::upkeep_say(h, &member, &format!("{}: the group moved from epoch {} meanwhile: this node's group is behind", m.name, add.from_epoch));
+                followed(h, &member, &r.space, "behind", &format!("{}: the group moved from epoch {} meanwhile: caught up next round", m.name, mv.from_epoch));
                 return next_space(h, &c, r);
             }
-            let at = ordering::row_key("c/", add.from_epoch, &hex(&member[..6]));
+            let at = ordering::row_key("c/", mv.from_epoch, &hex(&member[..6]));
             // Its PROVENANCE as a page's rows carry it (`keys.provOf`): who moved the group, why, when.
-            let why = format!("follow (node): {} in, {} out", add.to.len(), add.removed);
-            let entry = serde_json::json!({ "commit": hex(&add.commit), "info": hex(&add.info), "by": hex(&member[..8]), "why": why, "at": now_ms, "v": "node" }).to_string();
-            let key = identity::epoch_log_key(&add.from_secret);
+            let why = format!("follow (node): {} out", mv.removed);
+            let entry = serde_json::json!({ "commit": hex(&mv.commit), "info": hex(&mv.info), "by": hex(&member[..8]), "why": why, "at": now_ms, "v": "node" }).to_string();
+            let key = identity::epoch_log_key(&mv.from_secret);
             let Some(send) = signed(&mut log, &key, at.as_bytes(), entry.as_bytes()) else {
-                identity::upkeep_say(h, &member, &format!("{}: the epoch's log would not take the commit", m.name));
+                followed(h, &member, &r.space, "log-refused", &format!("{}: the epoch's log would not take the commit", m.name));
                 return next_space(h, &c, r);
             };
             let io = send_io(&log, send, Code::Tail);
-            r.step = Step::Commit { add };
+            r.step = Step::Commit { m: mv };
             keep(h, Some(&r));
             vec![io]
         }
-        (Step::Commit { add }, Reply::Updated { ok, .. } | Reply::Put { ok, .. }) => {
+        (Step::Commit { m: mv }, Reply::Updated { ok, .. } | Reply::Put { ok, .. }) => {
             if !ok {
-                identity::upkeep_say(h, &member, &format!("{}: the commit was refused: the group moved meanwhile", m.name));
+                followed(h, &member, &r.space, "commit-refused", &format!("{}: the commit was refused: the group moved meanwhile", m.name));
                 return next_space(h, &c, r);
             }
             // The group moved: held here now (its secret kept, the mandate's group this one).
-            moved(h, &member, &r.space, &add);
-            let mut next = epoch_log(&c.tail, &m.channel, &add.secret);
-            let open = serde_json::json!({ "info": hex(&add.info), "prev": hex(&add.from_secret) }).to_string();
-            let key = identity::epoch_log_key(&add.secret);
+            held(h, &member, &r.space, mv.epoch, &mv.secret, &mv.state);
+            let mut next = epoch_log(&c.tail, &m.channel, &mv.secret);
+            let open = serde_json::json!({ "info": hex(&mv.info), "prev": hex(&mv.from_secret) }).to_string();
+            let key = identity::epoch_log_key(&mv.secret);
             let Some(send) = signed(&mut next, &key, b"open", open.as_bytes()) else {
-                identity::upkeep_say(h, &member, &format!("{}: the next epoch's log would not take its first row", m.name));
+                followed(h, &member, &r.space, "next-refused", &format!("{}: the next epoch's log would not take its first row", m.name));
                 return next_space(h, &c, r);
             };
             let io = send_io(&next, send, Code::Tail);
-            r.step = Step::Next { add };
+            r.step = Step::Next { m: mv };
             keep(h, Some(&r));
             vec![io]
         }
-        (Step::Next { add }, Reply::Put { .. } | Reply::Updated { .. }) => {
-            // Made or not (a node that fetched it first: the same row), the welcomes go: they are in the group.
-            if add.to.is_empty() {
-                identity::upkeep_say(h, &member, &format!("{}: {} entr(ies) out, epoch {}", m.name, add.removed, add.epoch));
-                return next_space(h, &c, r);
-            }
-            let me = r.me.clone();
-            let io: Vec<Io> = add.to.iter().flat_map(|(a, inbox)| welcome_io(h, &member, &me, a, *inbox, &add)).collect();
-            let waiting = add.to.iter().map(|(a, _)| inbox_id(h, a)).collect();
-            r.step = Step::Welcome { add, waiting, tries: 0 };
-            keep(h, Some(&r));
-            io
-        }
-        (Step::Welcome { add, mut waiting, tries }, Reply::Put { id, ok }) if waiting.contains(&id) => {
-            if ok {
-                waiting.retain(|w| *w != id);
-            }
-            if !waiting.is_empty() {
-                // (Not taken: sent again at a later wake-up.)
-                r.step = Step::Welcome { add, waiting, tries };
-                keep(h, Some(&r));
-                return Vec::new();
-            }
-            let mut all = identity::upkeep_admitted(h, &member);
-            let mut io = Vec::new();
-            for (a, _) in &add.to {
-                all.push(Admitted { space: a.space, did: a.did.clone(), code: a.code.clone(), at: now_ms, epoch: add.epoch, kp: craftworks_rules::admission::tag(&a.kp) });
-                decided(h, &member, a, "welcomed", &format!("epoch {}", add.epoch), now_ms);
-                // THE GROUP'S SHARED LIST of welcomes made: every member's node reads it — this key answered.
-                io.extend(answered_io(h, &member, a, now_ms));
-            }
-            identity::upkeep_set_admitted(h, &member, &all);
-            identity::upkeep_say(h, &member, &format!("{}: {} in, {} out, epoch {}", m.name, add.to.len(), add.removed, add.epoch));
+        (Step::Next { m: mv }, Reply::Put { .. } | Reply::Updated { .. }) => {
+            followed(h, &member, &r.space, "commit", &format!("{}: {} entr(ies) out, epoch {}", m.name, mv.removed, mv.epoch));
+            // ITS GROUP INFO in the new epoch's door, announced: what a listed device with no key enters from.
+            h.set_secret(&[ANNOUNCED, &member[..], &r.space[..]].concat(), &mv.epoch.to_le_bytes());
+            let mut io = door_io(h, &c, &member, &r.space, mv.epoch, &mv.secret, &mv.info);
             io.extend(next_space(h, &c, r));
             io
         }
@@ -510,250 +440,131 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
     }
 }
 
-/// THE BAGS: each code in force, the open door, a level's, the member bag, the writers list.
-fn bags<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
-    let Some(g) = governance(h, &r, now_ms) else { return next_space(h, c, r) };
-    let mut codes: Vec<String> = g.live_invites(now_ms as f64).iter().map(|i| i.code.clone()).collect();
-    let join = g.policy_at("", "join", f64::INFINITY).map(str::to_string);
-    if join.as_deref() == Some("anyone") {
-        codes.push("open".into());
+/// POSITION `epoch`'s ENTRIES — the epoch log's and the door's, in the one order (`rules::ordering::order`): the first
+/// MLS applies AND the list allows (`mls::entry_ok`) taken, then the next position; none: caught up — follow out.
+#[allow(clippy::too_many_arguments)]
+fn entries<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, epoch: u64, secret: &[u8; 32], log: Option<Vec<u8>>, door: Option<Vec<u8>>, now_ms: u64) -> Vec<Io> {
+    use craftworks_rules::ordering;
+    let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, c, r) };
+    // NOTHING DECIDED FROM A SHORT READ (I6): no entry judged, nobody taken out.
+    if let Err(why) = whole(&r, &gov) {
+        followed(h, &r.member, &r.space, "short", &format!("{}: {why} — nothing decided this round", m.name));
+        return next_space(h, c, r);
     }
-    r.level = join.as_deref().and_then(craftworks_gov::level_of).map(str::to_string);
-    if r.level.is_some() {
-        codes.push("level".into());
+    let mut o = epoch_log(&c.tail, &m.channel, secret);
+    if let Some(st) = &log {
+        o.absorb(st);
     }
-    codes.push(KEY.into());
-    let mut waiting: Vec<([u8; 32], String)> = codes.into_iter().map(|code| (id_of(&c.bag, &identity::invite_address(&bag_name(&code, &r.space))), code)).collect();
-    waiting.push((id_of(&c.bag, &crate::table::sealed_bag_address(&r.space, "writers")), WRITERS.into()));
-    let io = waiting.iter().map(|(id, _)| Io::Get { id: *id, subscribe: true }).collect();
-    r.step = Step::Bags { waiting };
-    keep(h, Some(&r));
-    io
+    let mut all: Vec<Vec<u8>> = match o.opened() {
+        Ok(data::Step::Ready(rows)) => ordering::entries_at(rows.iter().map(|(k, v)| (k.as_slice(), v.as_slice())), "c/", epoch).into_iter().map(<[u8]>::to_vec).collect(),
+        _ => Vec::new(),
+    };
+    let name = format!("door-{epoch}");
+    let address = crate::table::sealed_bag_address(&r.space, &name);
+    for p in door.as_deref().and_then(|st| craftworks_bag_contract::read(&address, st)).unwrap_or_default() {
+        let Some(v) = crate::table::open_bag_item(&r.space, &Default::default(), &name, craftworks_bag_contract::payload(&p)) else { continue };
+        if v["k"] == "enter" && v["e"].as_u64() == Some(epoch) {
+            if let Some(e) = v["entry"].as_str() {
+                all.push(e.as_bytes().to_vec());
+            }
+        }
+    }
+    let Ok(mut g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(r.space), &r.state) else { return next_space(h, c, r) };
+    let list = GovList(&gov, now_ms);
+    for entry in ordering::order(all.iter().map(Vec::as_slice)) {
+        let Some(commit) = serde_json::from_slice::<serde_json::Value>(entry).ok().and_then(|v| v["commit"].as_str().and_then(unhex)) else { continue };
+        match g.apply_checked(&commit, &list) {
+            Ok(craftworks_mls::Applied::Applied(_)) => {
+                let (Ok(s), Ok(state)) = (g.epoch_secret(), g.save()) else { return next_space(h, c, r) };
+                held(h, &r.member, &r.space, g.epoch(), &s, &state);
+                r.state = state;
+                return catch_up(h, c, r, m);
+            }
+            Ok(craftworks_mls::Applied::Skipped(why)) => followed(h, &r.member, &r.space, "entry-skipped", &format!("{}: epoch {epoch}: {why}", m.name)),
+            Err(_) => {}
+        }
+    }
+    follow_out(h, c, r, m, &gov, g, now_ms)
 }
 
-/// THE PLAN: joins decided (`rules::admission`), then the keys follow the list (`rules::members::follow`).
-fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, now_ms: u64) -> Vec<Io> {
-    let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, c, r) };
-    let Ok(group) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(r.space), &m.state) else { return next_space(h, c, r) };
-    let entries = leaves(&group);
-    let holds = |d: &str| entries.iter().any(|l| l.did == d);
-    let listed: Vec<String> = gov.roster.iter().filter(|d| !gov.bans.contains(*d)).cloned().collect();
-    let admitters: Vec<String> = listed.iter().filter(|d| gov.may(d, gov.role(d, true).as_deref(), "invite")).cloned().collect();
-    let mut welcomed: Vec<Welcomed> = r.heard.iter().map(|(d, kp, at)| Welcomed { did: d.clone(), kp: *kp, at: *at }).collect();
-    welcomed.extend(identity::upkeep_admitted(h, &r.member).into_iter().filter(|a| a.space == r.space).map(|a| Welcomed { did: a.did, kp: a.kp, at: a.at }));
-    let spent = identity::upkeep_spent(h, &r.member);
-    let mut keys: Vec<members::Key> = Vec::new();
-    let mut joins: Vec<(String, String)> = Vec::new(); // (did, code)
-    for (code, text) in std::mem::take(&mut r.items) {
-        let Ok(q) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
-        let (Some(did), Some(kp)) = (q["did"].as_str(), q["kp"].as_str()) else { continue };
-        let at = q["at"].as_u64().unwrap_or(0);
-        if did == r.me || gov.bans.contains(did) {
-            continue;
-        }
-        if code == KEY {
-            // "MY KEY": a listed device's own (one not listed is a join's to ask).
-            if listed.iter().any(|x| x == did) {
-                keys.push(members::Key { did: did.into(), kp: kp.into(), at });
-            }
-            continue;
-        }
-        if listed.iter().any(|x| x == did) || joins.iter().any(|(d, _)| d == did) {
-            continue;
-        }
-        // A JOIN: THE ONE RULE (`rules::admission`): its own key, once, one admitter by turn.
-        let request = Request { did, kp: Some(kp), at, entry: Entry::Join };
-        let view = View { me: &r.me, admitters: &admitters, spent: &spent, welcomed: &welcomed, held: holds(did), epoch: m.epoch, now: now_ms, takeover_ms: TAKEOVER_MS };
-        match decide(&request, &view) {
-            Decision::Admit { kp, .. } => {
-                keys.push(members::Key { did: did.into(), kp, at });
-                joins.push((did.into(), code));
-            }
-            Decision::Skip(why) => {
-                identity::upkeep_decide(h, &r.member, identity::Decided { space: r.space, did: did.into(), q: craftworks_rules::admission::tag(kp), at: now_ms, step: "skip".into(), why });
-            }
-        }
+/// THE LIST an entry is judged by (`mls::List`): EVER listed (`Gov::ever_listed`), a self-entry's proof by the list's
+/// rule now (`Gov::admits`: uses, expiry, standing — one entering is listed by its own `join` act soon after), who may be
+/// taken out (`may_be_taken_out`) — the page's the same (`keys`).
+struct GovList<'a>(&'a craftworks_gov::Gov, u64);
+impl craftworks_mls::List for GovList<'_> {
+    fn listed(&self, did: &str) -> bool {
+        self.0.ever_listed.contains(did) && !self.0.bans.contains(did)
     }
-    // A SHORT READ takes nobody out: every entry the group holds counts as listed until the whole list is read.
-    let have: std::collections::BTreeSet<String> = r.reading.rows("acts").keys().chain(r.reading.rows("pub-acts").keys()).map(|k| String::from_utf8_lossy(k).into_owned()).collect();
-    let whole = r.reading.notes.is_empty() && gov.missing(&have).is_empty();
-    let mut list: Vec<String> = listed.clone();
-    list.extend(joins.iter().map(|(d, _)| d.clone()));
-    if !whole {
-        list.extend(entries.iter().map(|l| l.did.clone()));
+    fn admits(&self, did: &str, proof: &[u8]) -> bool {
+        serde_json::from_slice::<serde_json::Value>(proof).is_ok_and(|p| self.0.admits(did, &p, self.1 as f64).is_ok())
     }
-    let followers: Vec<String> = listed.iter().filter(|d| holds(d)).cloned().collect();
+    fn may_take_out(&self, did: &str) -> bool {
+        self.0.may_be_taken_out(did)
+    }
+}
+
+/// FOLLOW OUT (`rules::members::follow`): every entry of an account not listed — ONE commit, by ONE member at a time.
+fn follow_out<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, gov: &craftworks_gov::Gov, mut g: craftworks_mls::Account, now_ms: u64) -> Vec<Io> {
+    let entries = leaves(&g, Some(gov), now_ms);
+    let listed: Vec<String> = gov.roster.iter().cloned().collect();
+    let followers: Vec<String> = listed.iter().filter(|d| entries.iter().any(|l| l.did == **d)).cloned().collect();
+    let (from_epoch, Ok(from_secret)) = (g.epoch(), g.epoch_secret()) else { return next_space(h, c, r) };
     let p = members::follow(&members::View {
         me: &r.me,
-        listed: &list,
+        listed: &listed,
+        whole: true,
         leaves: &entries,
-        keys: &keys,
-        welcomed: &welcomed,
-        spent: &spent,
         followers: &followers,
-        epoch: m.epoch,
+        epoch: from_epoch,
+        out_since: due_since(h, &r.member, &r.space, from_epoch, gov.out_since() as u64, now_ms),
         now: now_ms,
-        takeover_ms: TAKEOVER_MS,
+        takeover_ms: craftworks_rules::guards::TAKEOVER_MS,
     });
-    // WHAT IT FOUND, SAID — always (a round that does nothing is otherwise silent).
-    identity::upkeep_say(
-        h,
-        &r.member,
-        &format!(
-            "{}: {} listed, {} entr(ies), {} key(s) posted, {} join(s) let in; plan {} in, {} out{}{}",
-            m.name,
-            listed.len(),
-            entries.len(),
-            keys.len() - joins.len(),
-            joins.len(),
-            p.add.len(),
-            p.remove.len(),
-            if whole { String::new() } else { format!(" (the list read SHORT: nobody out — {})", r.reading.notes.join("; ")) },
-            if p.skipped.is_empty() { String::new() } else { format!("; skipped: {}", p.skipped.iter().map(|(d, w)| format!("{}… {w}", &d[d.len().saturating_sub(6)..])).collect::<Vec<_>>().join(", ")) }
-        ),
-    );
     if p.is_empty() {
+        if let Some(why) = &p.not_my_turn {
+            followed(h, &r.member, &r.space, "plan", &format!("{}: {} out by the list — {why}", m.name, entries.iter().filter(|l| !gov.roster.contains(&l.did) && !l.admitted).count()));
+        }
+        // NOT ITS TURN YET: when it is (the page asks the node then: its wake-ups may not come).
+        if let Some(w) = p.wait {
+            identity::upkeep_set_next(h, &r.member, now_ms + w);
+        }
+        let mut io = owner_info(h, c, &r, m, &mut g);
+        io.extend(next_space(h, c, r));
+        return io;
+    }
+    let whom: Vec<String> = entries.iter().filter(|l| p.remove.contains(&l.index)).map(|l| format!("{}…", l.did.get(12..20).unwrap_or(&l.did))).collect();
+    followed(h, &r.member, &r.space, "plan", &format!("{}: {} out ({})", m.name, p.remove.len(), whom.join(", ")));
+    // (A delegate has no randomness of its own: upkeep's pool ARMS a stream before MLS draws — `crate::arm_random`.)
+    let Some(seed) = identity::upkeep_random(h) else {
+        followed(h, &r.member, &r.space, "no-commit", &format!("{}: no randomness yet (a page stirs the pool): the removal waits", m.name));
         return next_space(h, c, r);
-    }
-    r.remove = p.remove;
-    r.check = p
-        .add
-        .into_iter()
-        .filter_map(|(did, kp, _)| {
-            let code = joins.iter().find(|(d, _)| *d == did).map(|(_, c)| c.clone()).unwrap_or_else(|| KEY.into());
-            Some(Ask { space: r.space, did_bytes: craftworks_account::did_bytes(&did)?, did, code, kp })
-        })
-        .collect();
-    r.ready = Vec::new();
-    next_check(h, c, r, now_ms)
-}
-
-/// The next key to check (their key log first); all checked: the joins' acts written, then the commit.
-fn next_check<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
-    if r.check.is_empty() {
-        return admit(h, c, r, now_ms);
-    }
-    let ask = r.check.remove(0);
-    let id = id_of(&c.idlog, &ask.did_bytes);
-    r.step = Step::KeyLog { ask };
-    keep(h, Some(&r));
-    vec![Io::Get { id, subscribe: false }]
-}
-
-/// THE LIST FIRST: an `admitted` act for each join checked (`Gov::stamp`), into the acts a reader of the space reads.
-fn admit<H: Host>(h: &mut H, c: &Held, r: Round, now_ms: u64) -> Vec<Io> {
-    let Some(m) = mandate(h, &r) else { return next_space(h, c, r) };
-    let joins: Vec<&Ask> = r.ready.iter().map(|(a, _)| a).filter(|a| a.code != KEY).collect();
-    if joins.is_empty() {
-        return commit(h, c, r, &m, now_ms);
-    }
-    let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, c, r) };
-    let mut rows = Vec::new();
-    for a in joins {
-        let Some(id) = identity::upkeep_random(h) else { return next_space(h, c, r) };
-        let act = gov.stamp(serde_json::json!({ "act": "admitted", "did": a.did, "code": a.code }), now_ms as f64);
-        rows.push((hex(&id[..8]).into_bytes(), Some(act.to_string().into_bytes())));
-    }
-    // A public space's acts are public (readers outside must know them); a private one's sealed.
-    let name = if gov.is_public() { "pub-acts" } else { "acts" };
-    write_step(h, c, r, name, rows, false, now_ms)
-}
-
-/// One step of a write (listing first when the feed is new, a flush when due: then the rows again once answered).
-fn write_step<H: Host>(h: &mut H, c: &Held, mut r: Round, name: &str, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, blocks_put: bool, _now_ms: u64) -> Vec<Io> {
-    let nonce: [u8; 12] = identity::upkeep_random(h).map(|b| b[..12].try_into().expect("12")).unwrap_or([0; 12]);
-    match write::rows(h, &r.member, &c.codes(), &mut r.reading, name, &rows, nonce, blocks_put, creates()) {
-        Ok(Next::Done(sent)) => {
-            r.step = Step::Writing { name: name.into(), rows: Vec::new(), waiting: sent.confirm, refused: false, blocks: false };
-            keep(h, Some(&r));
-            sent.io
-        }
-        Ok(Next::More(sent)) => {
-            r.step = Step::Writing { name: name.into(), rows, waiting: sent.confirm, refused: false, blocks: sent.blocks };
-            keep(h, Some(&r));
-            sent.io
-        }
-        Err(why) => {
-            identity::upkeep_say(h, &r.member, &format!("the admitted act(s) not written: {why}"));
-            next_space(h, c, r)
-        }
-    }
-}
-
-/// ONE COMMIT (`Mls::follow`): the plan's entries out and every checked key in; its epoch's log read first.
-fn commit<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, now_ms: u64) -> Vec<Io> {
-    let _ = now_ms;
-    if r.ready.is_empty() && r.remove.is_empty() {
-        return next_space(h, c, r);
-    }
-    let made = (|| -> Result<Add, String> {
-        let from_secret = identity::epoch_secret(h, &r.member, m.space, m.epoch).ok_or(format!("no secret of epoch {} here", m.epoch))?;
-        crate::arm_random(identity::upkeep_random(h).ok_or("no randomness yet")?);
-        let mut g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state)?;
-        if g.epoch() != m.epoch {
-            return Err(format!("the mandate's group is at epoch {}, not {}", g.epoch(), m.epoch));
-        }
-        let kps: Vec<Vec<u8>> = r.ready.iter().map(|(a, _)| unhex(&a.kp).ok_or("a key is not hex")).collect::<Result<_, _>>()?;
-        let (commit, welcome) = g.follow(&r.remove, &kps)?;
-        Ok(Add { from_epoch: m.epoch, from_secret, commit, welcome, info: g.group_info()?, epoch: g.epoch(), secret: g.epoch_secret()?, state: g.save()?, removed: r.remove.len(), to: r.ready.clone() })
-    })();
-    match made {
-        Ok(add) => {
-            let log = epoch_log(&c.tail, &m.channel, &add.from_secret);
-            r.step = Step::Log { add };
-            keep(h, Some(&r));
-            vec![Io::Get { id: log.id_bytes(), subscribe: false }]
-        }
-        Err(why) => {
-            identity::upkeep_say(h, &r.member, &format!("{}: no commit — {why}", m.name));
-            next_space(h, c, r)
-        }
-    }
-}
-
-/// THEIR CARD read as far as it goes (its blocks fetched, at most 4 times deeper): the key checked, or the blocks asked
-/// for, or why not.
-#[allow(clippy::too_many_arguments)]
-fn card_read<H: Host>(h: &mut H, c: &Held, mut r: Round, ask: Ask, data: [u8; 32], card: Vec<u8>, got: Vec<([u8; 32], Vec<u8>)>, depth: u8, now_ms: u64) -> Vec<Io> {
-    let read = match read_card(&c.tail, &c.block, &data, &card, &got) {
-        Ok(CardNext::Need(want)) if depth < 4 => {
-            let io = want.iter().map(|(id, _)| Io::Get { id: *id, subscribe: false }).collect();
-            r.step = Step::CardBlocks { ask, data, card, want, got, depth };
-            keep(h, Some(&r));
-            return io;
-        }
-        Ok(CardNext::Need(want)) => Err(format!("their card still names {} block(s) after {depth} reads", want.len())),
-        Ok(CardNext::Read(read)) => Ok(read),
-        Err(why) => Err(why),
     };
-    // A LEVEL GROUP's join: only while their card's contributions reach its level (the one rule, gov's).
-    let read = read.and_then(|(inbox, contrib)| {
-        if ask.code == "level" {
-            let need = r.level.clone().ok_or("not a level group")?;
-            let (have, _) = craftworks_gov::level_from(contrib.as_deref().unwrap_or("[]"), now_ms as f64);
-            if !craftworks_gov::level_reaches(have, &need) {
-                return Err(format!("their card shows {have}, not {need}"));
-            }
+    crate::arm_random(seed);
+    let commit = match g.remove(&p.remove) {
+        Ok(c) => c,
+        Err(why) => {
+            followed(h, &r.member, &r.space, "no-commit", &format!("{}: the removal of {} would not build — {why}", m.name, whom.join(", ")));
+            return next_space(h, c, r);
         }
-        Ok(inbox)
-    });
-    match read {
-        Ok(inbox) => r.ready.push((ask, inbox)),
-        Err(why) => decided(h, &r.member, &ask, "fail", &why, now_ms),
-    }
-    next_check(h, c, r, now_ms)
+    };
+    let (Ok(info), Ok(secret), Ok(state)) = (g.group_info(), g.epoch_secret(), g.save()) else { return next_space(h, c, r) };
+    let mv = Moved { from_epoch, from_secret, commit, info, epoch: g.epoch(), secret, state, removed: p.remove.len() };
+    let log = epoch_log(&c.tail, &m.channel, &mv.from_secret);
+    r.step = Step::Log { m: mv };
+    keep(h, Some(&r));
+    vec![Io::Get { id: log.id_bytes(), subscribe: false }]
 }
 
-/// The GROUP moved to `add`'s epoch: its secret kept for the member, the mandate's group this one; a page loads it.
-fn moved<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], add: &Add) {
-    identity::keep_epoch(h, member, Some(*space), add.epoch, &add.secret);
+/// THE GROUP HELD AT `epoch`: its secret kept for the member, the mandate's group this one; a page loads it.
+fn held<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], epoch: u64, secret: &[u8; 32], state: &[u8]) {
+    identity::keep_epoch(h, member, Some(*space), epoch, secret);
     let Some((me, spaces)) = identity::upkeep_mandate(h, member) else { return };
     let spaces: Vec<Mandate> = spaces
         .into_iter()
         .map(|mut m| {
             if m.space == *space {
-                m.epoch = add.epoch;
-                m.state = add.state.clone();
+                m.epoch = epoch;
+                m.state = state.to_vec();
             }
             m
         })
@@ -762,53 +573,32 @@ fn moved<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], add: &Add) {
     identity::upkeep_set_moved(h, member, space, true);
 }
 
-/// The inbox a welcome to `a` is dropped in (its contract id).
-fn inbox_id<H: Host>(h: &H, a: &Ask) -> [u8; 32] {
-    let bag = Held::of(h).map(|c| c.bag).unwrap_or_default();
-    id_of(&bag, &identity::inbox_address(&a.did_bytes))
-}
-
-/// THE WELCOME, sealed to the new entry's inbox key, dropped in their inbox (a PUT the hosts merge).
-fn welcome_io<H: Host>(h: &mut H, member: &[u8; 32], me: &str, a: &Ask, inbox: [u8; 32], add: &Add) -> Vec<Io> {
-    let Some(welcome) = &add.welcome else { return Vec::new() };
-    let Some((_, spaces)) = identity::upkeep_mandate(h, member) else { return Vec::new() };
-    let Some(m) = spaces.iter().find(|m| m.space == a.space) else { return Vec::new() };
-    let Some(eph) = identity::upkeep_random(h) else { return Vec::new() };
-    // THE ONE WELCOME (`identity::welcome_message`, the page's too): with the key it was made for, when, and the
-    // space's history below the epoch it opens at (the secrets this member holds).
-    let history = identity::epochs_below(h, member, m.space, add.from_epoch + 1);
-    let item = identity::welcome_message(&identity::Welcome {
-        space: m.space,
-        space_kind: &m.kind,
-        from: me,
-        owner: &m.owner,
-        nonce: m.nonce.as_deref(),
-        name: &m.name,
-        welcome,
-        kp: craftworks_rules::admission::tag(&a.kp),
-        made: identity::upkeep_now(h).unwrap_or(0) * 1000,
-        code: (a.code != KEY).then_some(a.code.as_str()),
-        circle: None,
-        group: None,
-        repair: None,
-        history: &history,
-    })
-    .to_string();
-    let sealed = identity::seal_to(&inbox, item.as_bytes(), eph);
-    let address = identity::inbox_address(&a.did_bytes);
-    let state = craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &sealed)]);
-    vec![Io::Put { code: Code::Bag, params: address.to_vec(), state }]
-}
-
-/// `{ w, welcomed, kp, at }` into the space's writers list (`table::seal_writers_item`): this key answered.
-fn answered_io<H: Host>(h: &mut H, member: &[u8; 32], a: &Ask, now_ms: u64) -> Vec<Io> {
-    let Some(r) = identity::upkeep_random(h) else { return Vec::new() };
-    let nonce: [u8; 12] = r[..12].try_into().expect("12 of 32");
-    let value = serde_json::json!({ "w": hex(member), "welcomed": a.did, "kp": hex(&craftworks_rules::admission::tag(&a.kp)), "at": now_ms, "by": "node" });
-    let address = crate::table::sealed_bag_address(&a.space, "writers");
-    let item = crate::table::seal_writers_item(&a.space, &value, nonce);
-    let state = craftworks_bag_contract::encode(&address, &[craftworks_bag_contract::grind(&address, &item)]);
-    vec![Io::Put { code: Code::Bag, params: address.to_vec(), state }]
+/// EPOCH `epoch`'s GROUP INFO into its door, in parts (`{ k: "info", e, d, i, n, x }`, the page's `keys.publishInfo`),
+/// and announced in the writers list (`{ w, epoch, branch, ih }`): sealed with the space's open key.
+fn door_io<H: Host>(h: &mut H, c: &Held, member: &[u8; 32], space: &[u8; 32], epoch: u64, secret: &[u8; 32], info: &[u8]) -> Vec<Io> {
+    use sha2::Digest;
+    let ih = hex(&sha2::Sha256::digest(info));
+    let x = hex(info);
+    let n = x.len().div_ceil(PART);
+    let name = format!("door-{epoch}");
+    let address = crate::table::sealed_bag_address(space, &name);
+    let mut items = Vec::new();
+    for i in 0..n {
+        let Some(r) = identity::upkeep_random(h) else { return Vec::new() };
+        let part = &x[i * PART..((i + 1) * PART).min(x.len())];
+        let item = crate::table::seal_open_item(space, &serde_json::json!({ "k": "info", "e": epoch, "d": ih, "i": i, "n": n, "x": part }), r[..12].try_into().expect("12 of 32"));
+        items.push(craftworks_bag_contract::grind(&address, &item));
+    }
+    let mut io = vec![Io::Put { code: Code::Bag, params: address.to_vec(), state: craftworks_bag_contract::encode(&address, &items) }];
+    let _ = c;
+    if let Some(r) = identity::upkeep_random(h) {
+        let branch = hex(&identity::epoch_log_key(secret).verifying_key().to_bytes());
+        let writers = crate::table::sealed_bag_address(space, "writers");
+        let at = identity::upkeep_now(h).unwrap_or(0) * 1000;
+        let item = crate::table::seal_open_item(space, &serde_json::json!({ "w": hex(member), "epoch": epoch, "branch": branch, "ih": ih, "at": at, "by": "node" }), r[..12].try_into().expect("12 of 32"));
+        io.push(Io::Put { code: Code::Bag, params: writers.to_vec(), state: craftworks_bag_contract::encode(&writers, &[craftworks_bag_contract::grind(&writers, &item)]) });
+    }
+    io
 }
 
 /// An epoch's LOG: a tail under the key its secret gives, named by the space's channel, sealed with the table key its
@@ -832,50 +622,5 @@ fn send_io(o: &data::Open, send: data::Send, code: Code) -> Io {
         data::Send::Put(state) => Io::Put { code, params: o.params.clone(), state },
         data::Send::Update(delta) => Io::Update { id: o.id_bytes(), delta },
     }
-}
-
-/// A bag's NAME: a code's own; the open door `open <space>`; a level group's `level <space>`; the member bag `key <space>`.
-pub fn bag_name(code: &str, space: &[u8; 32]) -> String {
-    match code {
-        "open" | "level" | "key" => format!("{code} {}", hex(space)),
-        _ => code.to_string(),
-    }
-}
-
-/// A card's inbox key (hex at `inbox`) and running contributions (JSON at `contrib`). Its key packages are not read:
-/// a welcome is made with the request's own key.
-/// Not read: WHICH way (a report must carry what settles its cause) — or the tree BLOCKS to fetch first (`Need`).
-type CardRead = ([u8; 32], Option<String>);
-enum CardNext {
-    Read(CardRead),
-    Need(Vec<([u8; 32], [u8; 32])>),
-}
-fn read_card(tail: &[u8], block_hash: &[u8; 32], data: &[u8; 32], state: &[u8], blocks: &[([u8; 32], Vec<u8>)]) -> Result<CardNext, String> {
-    // A PUBLIC tail under their data key: the state verifies against the params that key gives, or is not taken.
-    let mut o = data::Open::new(tail, data, "card");
-    o.public = true;
-    if !o.absorb(state) {
-        return Err(format!("their card's state ({} bytes) does not verify under their data key", state.len()));
-    }
-    for (cid, st) in blocks {
-        o.absorb_block(cid, st);
-    }
-    let rows = match o.opened() {
-        Ok(data::Step::Ready(rows)) => rows,
-        Ok(data::Step::Need(cids)) => {
-            let want: Vec<([u8; 32], [u8; 32])> = cids.iter().filter_map(|cid| Some((crate::table::block_id(&o, cid, &[0; 32], block_hash)?, *cid))).collect();
-            if want.is_empty() {
-                return Err(format!("their card names {} tree block(s) it cannot place", cids.len()));
-            }
-            return Ok(CardNext::Need(want));
-        }
-        Ok(data::Step::Keys(es)) => return Err(format!("their card asks for the keys of {} epoch(s)", es.len())),
-        Err(why) => return Err(format!("their card does not open: {why}")),
-    };
-    let names = || rows.keys().map(|k| String::from_utf8_lossy(k).into_owned()).collect::<Vec<_>>().join(", ");
-    let text = rows.get(b"inbox".as_slice()).ok_or_else(|| format!("their card has no inbox row ({} row(s): {})", rows.len(), names()))?;
-    let inbox: [u8; 32] = std::str::from_utf8(text).ok().and_then(unhex).and_then(|b| b.try_into().ok()).ok_or_else(|| format!("their card's inbox row is not a key ({} bytes)", text.len()))?;
-    let contrib = rows.get(b"contrib".as_slice()).and_then(|v| String::from_utf8(v.clone()).ok());
-    Ok(CardNext::Read((inbox, contrib)))
 }
 

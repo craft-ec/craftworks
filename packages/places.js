@@ -188,7 +188,7 @@ export async function start(ctx) {
             if (!d) return null;
             const pr = await (await ctx.require("roles")).ofPublic(d);
             await pr.settled;
-            const ctl = await (await ctx.require("join-button")).control(d, { open: `#/spaces/${d.id}`, joinable: pr.policy("", "join") === "anyone" });
+            const ctl = await (await ctx.require("join-button")).control(d, { open: `#/spaces/${d.id}`, policy: pr.policy("", "join") });
             return h("section", { ariaLabel: "This space" }, h("h4", { textContent: d.name ?? "This space" }), ctl);
           })(), null);
           if (join) sections.push(join);

@@ -17,6 +17,10 @@ craftworks-bag-contract = { path = "../contracts-src/bag", default-features = fa
 craftworks-idlog-contract = { path = "../contracts-src/idlog", default-features = false }
 craftworks-reputation = { path = "../reputation" }
 craftworks-identity = { path = "../identity" }
+# THE GUARDS (`guards`): a key's credential against its owner's log (`account`), standing and levels by the acts (`gov`).
+craftworks-account = { path = "../account", default-features = false }
+craftworks-gov = { path = "../gov" }
+serde_json = "1"
 blake3 = { version = "1", default-features = false }
 ed25519-dalek = { version = "=2.2.0", default-features = false }
 

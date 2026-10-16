@@ -28,25 +28,14 @@ use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
 pub const SUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
+/// A SELF-ENTRY's PROOF in the entrant's own leaf (a private-use leaf extension; FOUNDATION "Members and keys" 2): what
+/// every reader — and the node's follower, until their own `join` act is written — judges their entry by
+/// (`gov::Gov::admits`). Signed with the leaf, by the entrant.
+pub const PROOF: u16 = 0xF0A1;
 const TABLE_KEYS: &[u8] = b"craftworks table keys";
 
 // A member's credential (its format and check) is the ACCOUNT's: one source, shared with `membership` in the page.
 pub use craftworks_account::{credential, read_credential};
-
-/// WHOSE KEY PACKAGE (a request carries one: `rules::admission`): its credential, only where the credential's owner
-/// signature holds and names the key package's own signing key — the caller checks the credential against the
-/// requester's key log (`craftworks_account::member_node`), so a request names nobody's DID but its maker's.
-pub fn key_package_credential(key_package: &[u8]) -> Result<Vec<u8>, String> {
-    let m = MlsMessage::from_bytes(key_package).map_err(e)?;
-    let kp = m.as_key_package().ok_or("not a key package")?;
-    let id = kp.signing_identity();
-    let basic = id.credential.as_basic().ok_or("not a basic credential")?;
-    let (_, _, _, sp) = read_credential(&basic.identifier).ok_or("the owner's signature does not hold")?;
-    if sp != id.signature_key.as_bytes() {
-        return Err("the credential names another signing key".into());
-    }
-    Ok(basic.identifier.clone())
-}
 
 /// THE ACCOUNT'S RULE for who is a member: a credential of THIS account, signed by one of its owner keys, whose
 /// signing key is the one the member uses.
@@ -283,6 +272,120 @@ type Config = WithIdentityProvider<
     >,
 >;
 
+/// A COMMIT's CHANGE as the list check reads it (`Account::apply_checked`: the group before and after compared).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Change {
+    /// An external commit (a device entering by itself).
+    pub external: bool,
+    /// Whose commit (its credential's DID).
+    pub committer: String,
+    /// Accounts with a new entry.
+    pub added: Vec<String>,
+    /// Accounts whose entry went.
+    pub removed: Vec<String>,
+    /// What the commit names in the clear (an entry's proof: `gov::Gov::admits`).
+    pub aad: Vec<u8>,
+}
+
+/// THE LIST an entry is judged by — `gov::Gov`'s answers that never change as more acts are read (acts only grow: I5,
+/// every reader alike whenever it reads): EVER on the list (and not banned); a self-entry's proof (`entry_admits`);
+/// whether an account may be taken out by a member's commit (ever put out, or never listed — `may_be_taken_out`).
+pub trait List {
+    fn listed(&self, did: &str) -> bool;
+    fn admits(&self, did: &str, proof: &[u8]) -> bool;
+    fn may_take_out(&self, did: &str) -> bool;
+}
+/// Every credential its MLS rule accepts (the account's own group: its owner's signature IS its list).
+pub struct Anyone;
+impl List for Anyone {
+    fn listed(&self, _: &str) -> bool {
+        true
+    }
+    fn admits(&self, _: &str, _: &[u8]) -> bool {
+        false
+    }
+    fn may_take_out(&self, _: &str) -> bool {
+        true
+    }
+}
+
+/// THE ENTRY CHECK (FOUNDATION "Members and keys", 5) — the one rule every reader (page, node) applies to every commit
+/// before taking it: `Err(why)` and the commit is skipped. The committer listed (or entering by itself with a proof the
+/// acts admit); everyone added listed; an entry takes out only its committer's own; a member's commit takes out only
+/// accounts the acts put out or never listed (no member removes a listed account on its own).
+pub fn entry_ok(c: &Change, l: &impl List) -> Result<(), String> {
+    let short = |d: &str| d.get(..d.len().min(20)).unwrap_or(d).to_string();
+    let entering = c.external && !l.listed(&c.committer) && l.admits(&c.committer, &c.aad);
+    let listed = |d: &str| l.listed(d) || (entering && d == c.committer);
+    if !listed(&c.committer) {
+        return Err(format!("{} committed but is not on the list", short(&c.committer)));
+    }
+    if let Some(d) = c.added.iter().find(|d| !listed(d)) {
+        return Err(format!("{} added but not on the list", short(d)));
+    }
+    if let Some(d) = c.removed.iter().find(|d| **d != c.committer && (c.external || !l.may_take_out(d))) {
+        return Err(if c.external { format!("{} entering took out {} — an entry takes out only its own", short(&c.committer), short(d)) } else { format!("{} took out {} — on the list: only the list puts someone out", short(&c.committer), short(d)) });
+    }
+    Ok(())
+}
+
+/// What a commit did to a group: `Applied`, or `Skipped` by the entry check (the group as it was before).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Applied {
+    Applied(Change),
+    Skipped(String),
+}
+
+/// WHAT A GROUP INFO SAYS (read before entering from it): its epoch, the DID of the member who signed it, and every
+/// entry — `(index, its signing key, its DID)`.
+#[derive(Debug)]
+pub struct InfoFacts {
+    pub epoch: u64,
+    pub signer: String,
+    pub members: Vec<(u32, Vec<u8>, String)>,
+}
+
+fn did_of(id: &SigningIdentity) -> Option<String> {
+    let basic = id.credential.as_basic()?;
+    read_credential(&basic.identifier).map(|(did, ..)| craftworks_account::did(&did))
+}
+
+/// A group info's facts (its tree travels in it: `group_info_message_allowing_ext_commit(true)`).
+pub fn info_facts(group_info: &[u8]) -> Result<InfoFacts, String> {
+    let m = MlsMessage::from_bytes(group_info).map_err(e)?;
+    let info = m.as_group_info().ok_or("not a group info")?;
+    let tree = info.extensions().get_as::<mls_rs::extension::built_in::RatchetTreeExt>().map_err(e)?.ok_or("the group info carries no tree")?;
+    let roster = tree.tree_data.roster();
+    let members: Vec<(u32, Vec<u8>, String)> =
+        roster.members().into_iter().filter_map(|x| Some((x.index, x.signing_identity.signature_key.as_bytes().to_vec(), did_of(&x.signing_identity)?))).collect();
+    let signer = members.iter().find(|x| x.0 == info.sender()).map(|x| x.2.clone()).ok_or("the group info's signer is not in its tree")?;
+    Ok(InfoFacts { epoch: info.group_context().epoch, signer, members })
+}
+
+/// ENTER a group BY ITSELF (RFC 9420 external commit) — the ONE way in, for every kind: the account's node with the words
+/// (`Account::join`), a listed account's member of a space (`SpaceMember::enter`). Its own old entry (the same signing
+/// key: a space's member is the account's, shared by its devices) out in the same commit. `aad`: what the commit names
+/// in the clear (its provenance). The member and the commit (the caller publishes it at the info's epoch).
+fn enter_with(ident: Rule, signer: (Vec<u8>, Vec<u8>), cred: Vec<u8>, group_info: &[u8], aad: &[u8]) -> Result<(Account, Vec<u8>), String> {
+    let facts = info_facts(group_info)?;
+    let store = Store::default();
+    let kps = KeyPackages::default();
+    let c = client(&ident, &store, &kps, &signer, &cred);
+    let mut b = c.external_commit_builder().map_err(e)?.with_authenticated_data(aad.to_vec());
+    // Its PROOF in its own leaf too (the tree carries it to every reader, after this commit as well).
+    if !aad.is_empty() {
+        let mut exts = ExtensionList::default();
+        exts.set(mls_rs_core::extension::Extension::new(mls_rs::extension::ExtensionType::new(PROOF), aad.to_vec()));
+        b = b.with_leaf_node_extensions(exts);
+    }
+    if let Some(old) = facts.members.iter().find(|x| x.1 == signer.1).map(|x| x.0) {
+        b = b.with_removal(old);
+    }
+    let (mut group, commit) = b.build(MlsMessage::from_bytes(group_info).map_err(e)?).map_err(e)?;
+    group.write_to_storage().map_err(e)?;
+    Ok((Account { group, removed: false, store, signer, ident, cred, kps }, commit.to_bytes().map_err(e)?))
+}
+
 /// This node, as a member of a group: the account's, or a space's.
 pub struct Account {
     pub group: Group<Config>,
@@ -306,6 +409,7 @@ fn client(ident: &Rule, store: &Store, kps: &KeyPackages, signer: &(Vec<u8>, Vec
         .crypto_provider(RustCryptoProvider::default())
         .identity_provider(ident.clone())
         .signing_identity(id, SignatureSecretKey::new(signer.0.clone()), SUITE)
+        .extension_type(mls_rs::extension::ExtensionType::new(PROOF))
         .build()
 }
 
@@ -342,14 +446,7 @@ impl Account {
     pub fn join(ident: AccountIdentity, owner_seed: &[u8; 32], node: &[u8; 32], group_info: &[u8]) -> Result<(Account, Vec<u8>), String> {
         let signer = new_signer()?;
         let cred = credential(&ident.did, node, &signer.1, owner_seed);
-        let ident = Rule::Account(ident);
-        let store = Store::default();
-        let kps = KeyPackages::default();
-        let c = client(&ident, &store, &kps, &signer, &cred);
-        let info = MlsMessage::from_bytes(group_info).map_err(e)?;
-        let (mut group, commit) = c.external_commit_builder().map_err(e)?.build(info).map_err(e)?;
-        group.write_to_storage().map_err(e)?;
-        Ok((Account { group, removed: false, store, signer, ident, cred, kps }, commit.to_bytes().map_err(e)?))
+        enter_with(Rule::Account(ident), signer, cred, group_info, &[])
     }
 
     /// The group info that lets a node holding the words join (published beside the commits).
@@ -358,21 +455,53 @@ impl Account {
     }
 
     /// A commit from another member (a join, a removal): applied, moving the epoch. One that removes THIS member marks it
-    /// removed (nothing after it applies).
+    /// removed (nothing after it applies). (Unchecked: the account's group — its MLS rule is its list.)
     pub fn process(&mut self, commit: &[u8]) -> Result<(), String> {
+        match self.apply_checked(commit, &Anyone)? {
+            Applied::Applied(_) => Ok(()),
+            Applied::Skipped(why) => Err(why),
+        }
+    }
+
+    /// A commit APPLIED ONLY IF THE LIST ALLOWS IT (`entry_ok`): tried, the group before and after compared — skipped, the
+    /// group stays as it was. `Err`: MLS would not apply it (not this group's next commit, a bad signature).
+    pub fn apply_checked(&mut self, commit: &[u8], list: &impl List) -> Result<Applied, String> {
         if self.removed {
-            return Err("this node was removed from the account".into());
+            return Err("this node was removed from the group".into());
         }
+        let before = self.save()?;
+        let was: BTreeMap<u32, String> = self.group.roster().members().iter().filter_map(|m| Some((m.index, did_of(&m.signing_identity)?))).collect();
+        let me = was.get(&self.group.current_member_index()).cloned().unwrap_or_default();
         let m = MlsMessage::from_bytes(commit).map_err(e)?;
-        match self.group.process_incoming_message(m).map_err(e)? {
-            ReceivedMessage::Commit(d) => {
-                if matches!(d.effect, mls_rs::group::CommitEffect::Removed { .. }) {
-                    self.removed = true;
-                }
-            }
+        let d = match self.group.process_incoming_message(m).map_err(e)? {
+            ReceivedMessage::Commit(d) => d,
             other => return Err(format!("not a commit: {other:?}")),
+        };
+        let gone_me = matches!(d.effect, mls_rs::group::CommitEffect::Removed { .. });
+        let now: BTreeMap<u32, String> = if gone_me {
+            BTreeMap::new()
+        } else {
+            self.group.roster().members().iter().filter_map(|m| Some((m.index, did_of(&m.signing_identity)?))).collect()
+        };
+        // (Taken out by it: the new tree is not seen here — an ENTRY that takes this one out is its own account's, a
+        // member's commit's committer is in the old tree.)
+        let committer = if gone_me && d.is_external { me.clone() } else if gone_me { was.get(&d.committer).cloned().unwrap_or_default() } else { now.get(&d.committer).cloned().unwrap_or_default() };
+        let change = Change {
+            external: d.is_external,
+            committer,
+            added: now.iter().filter(|(i, x)| was.get(i) != Some(x)).map(|(_, x)| x.clone()).collect(),
+            removed: if gone_me { vec![me] } else { was.iter().filter(|(i, x)| now.get(i) != Some(x)).map(|(_, x)| x.clone()).collect() },
+            aad: d.authenticated_data.clone(),
+        };
+        if let Err(why) = entry_ok(&change, list) {
+            *self = Account::load(self.ident.clone(), &before)?;
+            return Ok(Applied::Skipped(why));
         }
-        self.group.write_to_storage().map_err(e)
+        if gone_me {
+            self.removed = true;
+        }
+        self.group.write_to_storage().map_err(e)?;
+        Ok(Applied::Applied(change))
     }
 
     /// UPDATE this member's own keys (a commit with no proposals: MLS gives it a fresh path — new leaf keys): what anyone
@@ -384,58 +513,17 @@ impl Account {
         out.commit_message.to_bytes().map_err(e)
     }
 
-    /// Remove the member at `index` (a lost or stolen node): the commit to publish; this member's epoch moves now.
-    pub fn remove(&mut self, index: u32) -> Result<Vec<u8>, String> {
-        let out = self.group.commit_builder().remove_member(index).map_err(e)?.build().map_err(e)?;
-        self.group.apply_pending_commit().map_err(e)?;
-        self.group.write_to_storage().map_err(e)?;
-        out.commit_message.to_bytes().map_err(e)
-    }
-
-    /// ADD a node (by its published key package) to this group: `(commit, welcome)` — the commit for the group's log,
-    /// the welcome for the new node (delivered to it: its inbox). This member's epoch moves now.
-    pub fn add(&mut self, key_package: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-        let kp = MlsMessage::from_bytes(key_package).map_err(e)?;
-        let out = self.group.commit_builder().add_member(kp).map_err(e)?.build().map_err(e)?;
-        self.group.apply_pending_commit().map_err(e)?;
-        self.group.write_to_storage().map_err(e)?;
-        let welcome = out.welcome_messages.first().ok_or("no welcome for the new member")?.to_bytes().map_err(e)?;
-        Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
-    }
-
-    /// ADD AGAIN a member whose entries the group still holds (a device stuck behind its own commit, never saved
-    /// there): those entries out and the new key package in, ONE commit — `(commit, welcome)`.
-    pub fn readd(&mut self, stale: &[u32], key_package: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
-        let kp = MlsMessage::from_bytes(key_package).map_err(e)?;
+    /// TAKE OUT the members at `indexes` (a lost or stolen node; whoever the list no longer names — `rules::members::
+    /// follow`): ONE commit to publish; this member's epoch moves now.
+    pub fn remove(&mut self, indexes: &[u32]) -> Result<Vec<u8>, String> {
         let mut b = self.group.commit_builder();
-        for i in stale {
+        for i in indexes {
             b = b.remove_member(*i).map_err(e)?;
-        }
-        let out = b.add_member(kp).map_err(e)?.build().map_err(e)?;
-        self.group.apply_pending_commit().map_err(e)?;
-        self.group.write_to_storage().map_err(e)?;
-        let welcome = out.welcome_messages.first().ok_or("no welcome for the member")?.to_bytes().map_err(e)?;
-        Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
-    }
-
-    /// THE KEYS FOLLOW THE MEMBER LIST (`rules::members::follow`'s plan): `remove` entries out and every key package in
-    /// `adds` in — ONE commit; `(commit, welcome)` — the welcome every new entry opens (none when nothing is added).
-    pub fn follow(&mut self, remove: &[u32], adds: &[Vec<u8>]) -> Result<(Vec<u8>, Option<Vec<u8>>), String> {
-        let mut b = self.group.commit_builder();
-        for i in remove {
-            b = b.remove_member(*i).map_err(e)?;
-        }
-        for kp in adds {
-            b = b.add_member(MlsMessage::from_bytes(kp).map_err(e)?).map_err(e)?;
         }
         let out = b.build().map_err(e)?;
         self.group.apply_pending_commit().map_err(e)?;
         self.group.write_to_storage().map_err(e)?;
-        let welcome = match out.welcome_messages.first() {
-            Some(w) => Some(w.to_bytes().map_err(e)?),
-            None => None,
-        };
-        Ok((out.commit_message.to_bytes().map_err(e)?, welcome))
+        out.commit_message.to_bytes().map_err(e)
     }
 
     pub fn epoch(&self) -> u64 {
@@ -452,6 +540,20 @@ impl Account {
                 let basic = m.signing_identity.credential.as_basic()?;
                 let (_, _, node, _) = read_credential(&basic.identifier)?;
                 Some((m.index, node.to_vec(), basic.identifier.clone()))
+            })
+            .collect()
+    }
+
+    /// EACH ENTRY with whose it is and the proof in its leaf (empty: none) — `(index, did, proof)`: what the follower
+    /// judges (`rules::members::Leaf`).
+    pub fn entries(&self) -> Vec<(u32, String, Vec<u8>)> {
+        self.group
+            .roster()
+            .members()
+            .into_iter()
+            .filter_map(|m| {
+                let proof = m.extensions.get(mls_rs::extension::ExtensionType::new(PROOF)).map(|x| x.extension_data).unwrap_or_default();
+                Some((m.index, did_of(&m.signing_identity)?, proof))
             })
             .collect()
     }
@@ -508,37 +610,22 @@ impl Account {
 }
 
 /// A DID's MEMBER in spaces (ARCHITECTURE: a DID is the member, a device only signs in): its MLS signing key (from a
-/// seed the identity derives from the account's data seed — the same on every device), its credential (signed by the
-/// account's data key), and its KEY PACKAGES' secrets, which the account's devices share (`packages`, kept in the
-/// account's storage): a welcome answering one may reach any of them. It makes and joins spaces' groups.
+/// seed the identity derives from the account's data seed — the same on every device) and its credential (signed by
+/// the account's data key). It makes a space's group, or ENTERS one by itself (FOUNDATION "Members and keys").
 pub struct SpaceMember {
     signer: (Vec<u8>, Vec<u8>),
     cred: Vec<u8>,
-    kps: KeyPackages,
 }
 
 impl SpaceMember {
-    /// From the identity's seed and credential, with the key packages kept so far (empty: none).
-    pub fn new(seed: &[u8; 32], cred: Vec<u8>, packages: &[u8]) -> Result<SpaceMember, String> {
+    /// From the identity's seed and credential.
+    pub fn new(seed: &[u8; 32], cred: Vec<u8>) -> Result<SpaceMember, String> {
         let k = ed25519_dalek::SigningKey::from_bytes(seed);
         let (_, _, _, sp) = read_credential(&cred).ok_or("the member's credential does not hold")?;
         if sp != k.verifying_key().to_bytes() {
             return Err("the credential names another signing key".into());
         }
-        let kps = if packages.is_empty() { KeyPackages::default() } else { KeyPackages::decode(packages).ok_or("the key packages do not read")? };
-        Ok(SpaceMember { signer: (k.to_keypair_bytes().to_vec(), k.verifying_key().to_bytes().to_vec()), cred, kps })
-    }
-
-    /// The key packages' secrets, to keep (after making one, and after joining: a used one is gone).
-    pub fn packages(&self) -> Vec<u8> {
-        self.kps.encode()
-    }
-
-    /// A KEY PACKAGE to publish (on the person's card): anyone adds this DID to a space with it, while it is away.
-    pub fn key_package(&self) -> Result<Vec<u8>, String> {
-        let (store, ident) = (Store::default(), Rule::Space([0; 32]));
-        let c = client(&ident, &store, &self.kps, &self.signer, &self.cred);
-        c.generate_key_package_message(ExtensionList::default(), ExtensionList::default(), None).map_err(e)?.to_bytes().map_err(e)
+        Ok(SpaceMember { signer: (k.to_keypair_bytes().to_vec(), k.verifying_key().to_bytes().to_vec()), cred })
     }
 
     /// A SPACE's group, made by this DID (its first member).
@@ -546,19 +633,10 @@ impl SpaceMember {
         Account::create_with(Rule::Space(space), self.signer.clone(), self.cred.clone())
     }
 
-    /// JOIN a space's group from a WELCOME (a member added this DID by one of its key packages).
-    pub fn join_space(&self, space: [u8; 32], welcome: &[u8]) -> Result<Account, String> {
-        let ident = Rule::Space(space);
-        let store = Store::default();
-        let c = client(&ident, &store, &self.kps, &self.signer, &self.cred);
-        let msg = MlsMessage::from_bytes(welcome).map_err(e)?;
-        // Which group, BEFORE joining: a welcome to another space must not use up a key package.
-        if c.examine_welcome_message(&msg).map_err(e)?.group_context().group_id() != ident.group_id() {
-            return Err("that welcome is to another space".into());
-        }
-        let (mut group, _) = c.join_group(None, &msg, None).map_err(e)?;
-        group.write_to_storage().map_err(e)?;
-        Ok(Account { group, removed: false, store, signer: self.signer.clone(), ident, cred: self.cred.clone(), kps: KeyPackages::default() })
+    /// ENTER a space's group by itself (`enter_with`): a listed account's member, from the group info published at its
+    /// newest epoch — its own old entry out in the same commit. The member and the commit.
+    pub fn enter(&self, space: [u8; 32], group_info: &[u8], aad: &[u8]) -> Result<(Account, Vec<u8>), String> {
+        enter_with(Rule::Space(space), self.signer.clone(), self.cred.clone(), group_info, aad)
     }
 }
 
@@ -575,67 +653,88 @@ mod tests {
     }
 
     /// A DID's member for spaces, as its account's devices each make it (the identity's seed and credential).
-    fn member(did: [u8; 32], data: [u8; 32], packages: &[u8]) -> SpaceMember {
+    fn member(did: [u8; 32], data: [u8; 32]) -> SpaceMember {
         let seed = craftworks_identity::space_member_seed(&data);
         let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
-        SpaceMember::new(&seed, craftworks_identity::space_member_credential(&did, &data, &public), packages).unwrap()
+        SpaceMember::new(&seed, craftworks_identity::space_member_credential(&did, &data, &public)).unwrap()
     }
     fn writer(data: [u8; 32]) -> Vec<u8> {
         craftworks_identity::space_writer(&data).verifying_key().to_bytes().to_vec()
     }
 
-    /// ADD a DID by its KEY PACKAGE: Bob's member publishes one from one device; Alice adds Bob to her space; Bob's
-    /// OTHER device (the same member, the key packages the account keeps) joins from the welcome — one member per DID,
-    /// the same group, the same keys.
+    /// ENTERING BY ITSELF (FOUNDATION "Members and keys" 1, 5): a listed account's member enters a space from its group
+    /// info — nobody answers; every reader checks the entry against the list; an outsider's is skipped; a member that
+    /// lost its state enters again, its old entry out in the same commit (one entry per account, always).
     #[test]
-    fn a_did_is_added_by_its_key_package_and_any_of_its_devices_joins() {
-        let (alice, bob_phone) = (member([0xA; 32], [0xAA; 32], &[]), member([0xB; 32], [0xBB; 32], &[]));
-        let kp = bob_phone.key_package().unwrap();
-        let bob_laptop = member([0xB; 32], [0xBB; 32], &bob_phone.packages());
-        let space = [0x5A; 32];
-        let mut dm = alice.create_space(space).unwrap();
-        let (commit, welcome) = dm.add(&kp).unwrap();
-        assert!(!commit.is_empty());
-        // A wrong space first: refused before the key package is used — the right one still joins after.
-        assert_eq!(bob_laptop.join_space([0x5B; 32], &welcome).err().as_deref(), Some("that welcome is to another space"));
-        let joined = bob_laptop.join_space(space, &welcome).unwrap();
-        assert_eq!(joined.epoch(), dm.epoch());
-        assert_eq!(joined.epoch_secret().unwrap(), dm.epoch_secret().unwrap(), "one group, one key");
-        let writers: Vec<Vec<u8>> = joined.members().into_iter().map(|(_, w, _)| w).collect();
-        assert_eq!(writers, vec![writer([0xAA; 32]), writer([0xBB; 32])], "one member per DID, named by its writer");
-        // Control: a device without the account's key packages cannot answer the welcome.
-        assert!(member([0xB; 32], [0xBB; 32], &[]).join_space(space, &welcome).is_err());
-    }
-
-    /// THE KEYS FOLLOW THE LIST (`follow`): Bob and Carol, listed, in with ONE commit — each opens the one welcome and
-    /// holds the group's key; then Bob, no longer listed, out — Carol follows the commit, Bob's copy is left behind.
-    #[test]
-    fn the_keys_follow_the_list_several_in_and_out_in_one_commit() {
-        let (alice, bob, carol) = (member([0xA; 32], [0xAA; 32], &[]), member([0xB; 32], [0xBB; 32], &[]), member([0xC; 32], [0xCC; 32], &[]));
-        let space = [0x5A; 32];
+    fn a_listed_member_enters_by_itself_an_outsider_is_skipped_and_reentry_replaces_the_old_entry() {
+        let space = [0x5C; 32];
+        let (alice, bob, eve) = (member([0xA; 32], [0xAA; 32]), member([0xB; 32], [0xBB; 32]), member([0xE; 32], [0xEE; 32]));
+        let (a, b, x) = (craftworks_account::did(&[0xA; 32]), craftworks_account::did(&[0xB; 32]), craftworks_account::did(&[0xE; 32]));
         let mut g = alice.create_space(space).unwrap();
-        let e0 = g.epoch();
-        let (_, welcome) = g.follow(&[], &[bob.key_package().unwrap(), carol.key_package().unwrap()]).unwrap();
-        assert_eq!(g.epoch(), e0 + 1, "one commit for both");
-        let welcome = welcome.expect("a welcome for the new entries");
-        let b = bob.join_space(space, &welcome).unwrap();
-        let mut c = carol.join_space(space, &welcome).unwrap();
-        assert_eq!(b.epoch_secret().unwrap(), g.epoch_secret().unwrap());
-        assert_eq!(c.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "both from the one welcome, one key");
-        let bob_index = g.members().into_iter().find(|(_, w, _)| *w == writer([0xBB; 32])).unwrap().0;
-        let (commit, none) = g.follow(&[bob_index], &[]).unwrap();
-        assert!(none.is_none(), "nobody added: no welcome");
-        c.process(&commit).unwrap();
-        assert_eq!(c.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "Carol follows");
-        assert!(!g.members().iter().any(|(_, w, _)| *w == writer([0xBB; 32])), "Bob is out");
-        assert_ne!(b.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "Bob's copy is left behind");
+        let facts = info_facts(&g.group_info().unwrap()).unwrap();
+        assert_eq!((facts.epoch, facts.signer.clone(), facts.members.len()), (0, a.clone(), 1), "the info says its epoch and who signed it");
+        // THE LIST as a reader holds it: who is listed; whose proof the acts admit (`proof`: the aad that admits them).
+        struct L(Vec<String>, Option<(String, Vec<u8>)>);
+        impl List for L {
+            fn listed(&self, d: &str) -> bool {
+                self.0.iter().any(|x| x == d)
+            }
+            fn admits(&self, d: &str, aad: &[u8]) -> bool {
+                self.1.as_ref().is_some_and(|(x, p)| x == d && p == aad)
+            }
+            fn may_take_out(&self, d: &str) -> bool {
+                !self.listed(d)
+            }
+        }
+        let listed = |l: &[&String]| L(l.iter().map(|s| s.to_string()).collect(), None);
+        // Bob, listed, enters by itself.
+        let (mut bob1, commit) = bob.enter(space, &g.group_info().unwrap(), b"enter").unwrap();
+        // Control: a reader whose list does not name Bob skips the very same commit, its group as it was.
+        let mut copy = Account::load(Rule::Space(space), &g.save().unwrap()).unwrap();
+        assert!(matches!(copy.apply_checked(&commit, &listed(&[&a])).unwrap(), Applied::Skipped(_)));
+        assert_eq!(copy.epoch(), 0, "skipped: nothing moved");
+        let Applied::Applied(c) = g.apply_checked(&commit, &listed(&[&a, &b])).unwrap() else { panic!("listed: taken") };
+        assert_eq!((c.external, c.committer.clone(), c.added.clone(), c.removed.clone()), (true, b.clone(), vec![b.clone()], vec![]));
+        assert_eq!((g.epoch(), g.epoch_secret().unwrap()), (bob1.epoch(), bob1.epoch_secret().unwrap()), "one group, one key");
+        // Eve, NOT listed, enters the same way: every reader skips it (it never holds the position).
+        let (_, evil) = eve.enter(space, &g.group_info().unwrap(), b"").unwrap();
+        assert!(matches!(g.apply_checked(&evil, &listed(&[&a, &b])).unwrap(), Applied::Skipped(_)));
+        // Control: with Eve on the list the same commit is taken.
+        let mut copy = Account::load(Rule::Space(space), &g.save().unwrap()).unwrap();
+        assert!(matches!(copy.apply_checked(&evil, &listed(&[&a, &b, &x])).unwrap(), Applied::Applied(_)));
+        // Bob's device LOSES its state; Bob enters again: his old entry out in the same commit — still one entry.
+        let (mut bob2, again) = bob.enter(space, &g.group_info().unwrap(), b"again").unwrap();
+        let Applied::Applied(c) = g.apply_checked(&again, &listed(&[&a, &b])).unwrap() else { panic!("taken") };
+        assert_eq!((c.committer.clone(), c.added.clone(), c.removed.clone()), (b.clone(), vec![], vec![]), "his entry replaced in place: the same account, nobody else touched");
+        assert_eq!(g.members().len(), 2);
+        assert_eq!(g.epoch_secret().unwrap(), bob2.epoch_secret().unwrap());
+        // The old copy of Bob reads that commit as its own removal (it never reads past it).
+        bob1.process(&again).unwrap();
+        assert!(bob1.removed);
+        // An entry taking out ANOTHER account: refused by the check (built by hand: `enter` only ever takes out its own).
+        let c = Change { external: true, committer: b.clone(), added: vec![b.clone()], removed: vec![a.clone()], aad: vec![] };
+        assert!(entry_ok(&c, &Anyone).is_err());
+        // A MEMBER's commit taking out a LISTED account: skipped (only the list puts someone out); a stray: taken.
+        let c = Change { external: false, committer: b.clone(), added: vec![], removed: vec![a.clone()], aad: vec![] };
+        assert!(entry_ok(&c, &listed(&[&a, &b])).is_err());
+        assert!(entry_ok(&Change { removed: vec!["did:stray".into()], ..c }, &listed(&[&a, &b])).is_ok());
+        // A device NOT listed entering WITH A PROOF the acts admit (a code, the open door): taken; the same without it: not.
+        let (_, door) = eve.enter(space, &g.group_info().unwrap(), b"proof").unwrap();
+        let mut copy = Account::load(Rule::Space(space), &g.save().unwrap()).unwrap();
+        assert!(matches!(copy.apply_checked(&door, &L(vec![a.clone(), b.clone()], Some((x.clone(), b"proof".to_vec())))).unwrap(), Applied::Applied(_)));
+        // Its PROOF stays in its leaf, for every reader after (the follower judges it there).
+        assert!(copy.entries().iter().any(|(_, d, p)| *d == x && p == b"proof"), "the proof in Eve's leaf");
+        assert!(copy.entries().iter().filter(|(_, d, _)| *d != x).all(|(_, _, p)| p != b"proof"), "each leaf carries its own entry's words only");
+        let mut copy = Account::load(Rule::Space(space), &g.save().unwrap()).unwrap();
+        assert!(matches!(copy.apply_checked(&door, &L(vec![a.clone(), b.clone()], Some((x.clone(), b"other".to_vec())))).unwrap(), Applied::Skipped(_)));
+        let _ = &mut bob2;
     }
 
     /// A SPACE's group, made by a DID's member: its own epoch secret, kept and loaded again by its space id; a member
     /// whose credential names another key is refused.
     #[test]
     fn a_did_makes_a_spaces_group_and_its_credential_must_be_its_own() {
-        let a = member([0xA; 32], [0xAA; 32], &[]);
+        let a = member([0xA; 32], [0xAA; 32]);
         let space = [0x5A; 32];
         let mut g = a.create_space(space).unwrap();
         assert_eq!(g.members().len(), 1);
@@ -648,7 +747,31 @@ mod tests {
         // Another account's credential with this seed: refused.
         let seed = craftworks_identity::space_member_seed(&[0xAA; 32]);
         let other = craftworks_identity::space_member_credential(&[0xB; 32], &[0xBB; 32], &SigningKey::from_bytes(&[3; 32]).verifying_key().to_bytes());
-        assert!(SpaceMember::new(&seed, other, &[]).is_err());
+        assert!(SpaceMember::new(&seed, other).is_err());
+    }
+
+    /// THE KEYS FOLLOW THE LIST OUT: Bob and Carol entered by themselves; Bob, no longer listed, out in ONE commit
+    /// (`remove`) — Carol follows it, Bob's copy is left behind.
+    #[test]
+    fn the_unlisted_out_in_one_commit_the_rest_follow() {
+        let (alice, bob, carol) = (member([0xA; 32], [0xAA; 32]), member([0xB; 32], [0xBB; 32]), member([0xC; 32], [0xCC; 32]));
+        let space = [0x5A; 32];
+        let mut g = alice.create_space(space).unwrap();
+        let (mut b, cb) = bob.enter(space, &g.group_info().unwrap(), b"").unwrap();
+        g.process(&cb).unwrap();
+        let (mut c, cc) = carol.enter(space, &g.group_info().unwrap(), b"").unwrap();
+        g.process(&cc).unwrap();
+        b.process(&cc).unwrap();
+        assert_eq!(c.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "one group, one key");
+        let bob_index = g.members().into_iter().find(|(_, w, _)| *w == writer([0xBB; 32])).unwrap().0;
+        let e = g.epoch();
+        let commit = g.remove(&[bob_index]).unwrap();
+        assert_eq!(g.epoch(), e + 1, "one commit");
+        c.process(&commit).unwrap();
+        assert_eq!(c.epoch_secret().unwrap(), g.epoch_secret().unwrap(), "Carol follows");
+        assert!(!g.members().iter().any(|(_, w, _)| *w == writer([0xBB; 32])), "Bob is out");
+        b.process(&commit).unwrap();
+        assert!(b.removed, "Bob's copy learns it is out, and reads nothing after");
     }
 
     /// UPDATE: a DID's member refreshes its keys (a device of the account was removed). The other member follows; a
@@ -656,27 +779,29 @@ mod tests {
     /// control: without the update, that copy follows it.
     #[test]
     fn a_members_update_leaves_a_stale_copy_behind() {
-        let (alice, bob) = (member([0xA; 32], [0xAA; 32], &[]), member([0xB; 32], [0xBB; 32], &[]));
-        let (carol, dave) = (member([0xC; 32], [0xCC; 32], &[]), member([0xD; 32], [0xDD; 32], &[]));
+        let (alice, bob) = (member([0xA; 32], [0xAA; 32]), member([0xB; 32], [0xBB; 32]));
+        let (carol, dave) = (member([0xC; 32], [0xCC; 32]), member([0xD; 32], [0xDD; 32]));
         let space = [0x5A; 32];
         let mut a = alice.create_space(space).unwrap();
-        let (_, welcome) = a.add(&bob.key_package().unwrap()).unwrap();
-        let mut b = bob.join_space(space, &welcome).unwrap();
+        let (mut b, cb) = bob.enter(space, &a.group_info().unwrap(), b"").unwrap();
+        a.process(&cb).unwrap();
         let copy_of = |b: &mut Account| Account::load(Rule::Space(space), &b.save().unwrap()).unwrap();
-        // Control: a copy of Bob, keys current — follows Alice adding Carol.
+        // Control: a copy of Bob, keys current — follows Carol entering.
         let mut copy = copy_of(&mut b);
-        let (add_carol, _) = a.add(&carol.key_package().unwrap()).unwrap();
-        assert!(copy.process(&add_carol).is_ok(), "control: a copy follows while its keys are current");
-        b.process(&add_carol).unwrap();
+        let (_, carol_in) = carol.enter(space, &a.group_info().unwrap(), b"").unwrap();
+        a.process(&carol_in).unwrap();
+        assert!(copy.process(&carol_in).is_ok(), "control: a copy follows while its keys are current");
+        b.process(&carol_in).unwrap();
         // Bob refreshes his keys; Alice follows; the copy from before cannot follow what comes next.
         let mut copy = copy_of(&mut b);
         let up = b.update().unwrap();
         a.process(&up).unwrap();
         assert_eq!(a.epoch_secret().unwrap(), b.epoch_secret().unwrap(), "Alice follows Bob's update");
-        let (add_dave, _) = a.add(&dave.key_package().unwrap()).unwrap();
-        b.process(&add_dave).unwrap();
+        let (_, dave_in) = dave.enter(space, &a.group_info().unwrap(), b"").unwrap();
+        a.process(&dave_in).unwrap();
+        b.process(&dave_in).unwrap();
         assert!(copy.process(&up).is_err(), "the member's own update is not the copy's to follow");
-        assert!(copy.process(&add_dave).is_err(), "and what follows it is out of the copy's reach");
+        assert!(copy.process(&dave_in).is_err(), "and what follows it is out of the copy's reach");
     }
 
     #[test]
@@ -695,7 +820,7 @@ mod tests {
         a.process(&commit).unwrap();
         b.process(&commit).unwrap();
         let c_secret = c.epoch_secret().unwrap();
-        let removal = a.remove(c.my_index()).unwrap();
+        let removal = a.remove(&[c.my_index()]).unwrap();
         b.process(&removal).unwrap();
         assert_eq!(a.epoch_secret().unwrap(), b.epoch_secret().unwrap());
         assert_ne!(a.epoch_secret().unwrap(), c_secret, "the removed node's secret opens nothing written now");
@@ -736,6 +861,7 @@ mod tests {
 mod js {
     use super::*;
     use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
 
     fn err(e: impl std::fmt::Display) -> JsValue {
         JsValue::from_str(&e.to_string())
@@ -801,36 +927,60 @@ mod js {
             self.member()?.process(commit).map_err(err)
         }
 
+        /// A commit APPLIED ONLY IF THE LIST ALLOWS IT (`Account::apply_checked`, `entry_ok`): `listed` — JSON `[did…]`.
+        /// `{ applied: true, external, committer, added, removed }`, or `{ applied: false, why }` (skipped: the group as
+        /// it was). Throws where MLS would not apply it at all.
+        /// THE LIST (`gov`'s, through the core): `listed(did)`, `admits(did, aadHex)`, `mayTakeOut(did)` — each a function.
+        pub fn apply_checked(&mut self, commit: &[u8], list: &js_sys::Object) -> Result<JsValue, JsValue> {
+            struct Js<'a>(&'a js_sys::Object);
+            impl Js<'_> {
+                fn call(&self, f: &str, args: &[JsValue]) -> bool {
+                    let Ok(f) = js_sys::Reflect::get(self.0, &f.into()).and_then(|f| f.dyn_into::<js_sys::Function>()) else { return false };
+                    let r = match args { [a] => f.call1(self.0, a), [a, b] => f.call2(self.0, a, b), _ => return false };
+                    r.ok().and_then(|v| v.as_bool()).unwrap_or(false)
+                }
+            }
+            impl List for Js<'_> {
+                fn listed(&self, did: &str) -> bool {
+                    self.call("listed", &[did.into()])
+                }
+                fn admits(&self, did: &str, proof: &[u8]) -> bool {
+                    self.call("admits", &[did.into(), proof.iter().map(|x| format!("{x:02x}")).collect::<String>().into()])
+                }
+                fn may_take_out(&self, did: &str) -> bool {
+                    self.call("mayTakeOut", &[did.into()])
+                }
+            }
+            let out = match self.member()?.apply_checked(commit, &Js(list)).map_err(err)? {
+                Applied::Applied(c) => format!(
+                    "{{\"applied\":true,\"external\":{},\"committer\":{:?},\"added\":{:?},\"removed\":{:?}}}",
+                    c.external, c.committer, c.added, c.removed
+                ),
+                Applied::Skipped(why) => format!("{{\"applied\":false,\"why\":{why:?}}}"),
+            };
+            js_sys::JSON::parse(&out)
+        }
+
+        /// WHAT A GROUP INFO SAYS (`info_facts`): `{ epoch, signer, members: [[index, did]…] }`.
+        pub fn info_facts(group_info: &[u8]) -> Result<JsValue, JsValue> {
+            let f = super::info_facts(group_info).map_err(err)?;
+            let members: Vec<String> = f.members.iter().map(|(i, _, d)| format!("[{i},{d:?}]")).collect();
+            js_sys::JSON::parse(&format!("{{\"epoch\":{},\"signer\":{:?},\"members\":[{}]}}", f.epoch, f.signer, members.join(",")))
+        }
+
+        /// This group's info now (what a listed device enters from), its tree in it.
+        pub fn group_info(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.member()?.group_info().map_err(err)?[..]))
+        }
+
         /// UPDATE this member's own keys: the commit to publish (a removed device's copy follows nothing after it).
         pub fn update(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
             Ok(js_sys::Uint8Array::from(&self.member()?.update().map_err(err)?[..]))
         }
 
-        /// Remove the member at `index`: the commit to publish.
-        pub fn remove(&mut self, index: u32) -> Result<js_sys::Uint8Array, JsValue> {
-            Ok(js_sys::Uint8Array::from(&self.member()?.remove(index).map_err(err)?[..]))
-        }
-
-        /// ADD a member (a DID) by its key package: `[commit, welcome]` (the commit for the log, the welcome for it).
-        pub fn add(&mut self, key_package: &[u8]) -> Result<js_sys::Array, JsValue> {
-            let (c, w) = self.member()?.add(key_package).map_err(err)?;
-            Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())
-        }
-
-        /// WELCOME AGAIN in ONE commit: the member's `stale` entries out and its fresh key package in — `[commit, welcome]`
-        /// (a remove then an add cost two epochs, and every epoch leaves whoever is behind further behind).
-        /// The keys follow the member list: `[commit, welcome | undefined]` (`follow`).
-        pub fn follow(&mut self, remove: &[u32], adds: js_sys::Array) -> Result<js_sys::Array, JsValue> {
-            let adds: Vec<Vec<u8>> = adds.iter().map(|x| js_sys::Uint8Array::new(&x).to_vec()).collect();
-            let (c, w) = self.member()?.follow(remove, &adds).map_err(err)?;
-            let out = js_sys::Array::new();
-            out.push(&js_sys::Uint8Array::from(&c[..]).into());
-            out.push(&w.map(|w| js_sys::Uint8Array::from(&w[..]).into()).unwrap_or(JsValue::UNDEFINED));
-            Ok(out)
-        }
-        pub fn readd(&mut self, stale: &[u32], key_package: &[u8]) -> Result<js_sys::Array, JsValue> {
-            let (c, w) = self.member()?.readd(stale, key_package).map_err(err)?;
-            Ok([js_sys::Uint8Array::from(&c[..]), js_sys::Uint8Array::from(&w[..])].into_iter().map(JsValue::from).collect())
+        /// TAKE OUT the members at `indexes` (`Account::remove`): the commit to publish.
+        pub fn remove(&mut self, indexes: &[u32]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.member()?.remove(indexes).map_err(err)?[..]))
         }
 
         /// A space's group, as the identity delegate kept it.
@@ -851,11 +1001,6 @@ mod js {
         pub fn escrow_to(&mut self, entropy: &[u8]) -> Result<(), JsValue> {
             self.1 = craftworks_account::enc_public_at(entropy, 0).ok_or_else(|| err("recovery entropy: 16 or 32 bytes"))?;
             Ok(())
-        }
-
-        /// A key package's credential (`key_package_credential`): whose it is, checked against their key log after.
-        pub fn key_package_credential(key_package: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
-            Ok(js_sys::Uint8Array::from(&super::key_package_credential(key_package).map_err(err)?[..]))
         }
 
         /// An epoch's secret out of its escrow, with the words (a node joining with them recovers the epochs before).
@@ -901,26 +1046,15 @@ mod js {
         }
     }
 
-    /// A DID's member for spaces (the page's side of `SpaceMember`): from the identity's seed and credential and the key
-    /// packages the account keeps.
+    /// A DID's member for spaces (the page's side of `SpaceMember`): from the identity's seed and credential.
     #[wasm_bindgen(js_name = SpaceMember)]
     pub struct JsSpaceMember(super::SpaceMember);
 
     #[wasm_bindgen(js_class = SpaceMember)]
     impl JsSpaceMember {
         #[wasm_bindgen(constructor)]
-        pub fn new(seed: &[u8], credential: &[u8], packages: &[u8]) -> Result<JsSpaceMember, JsValue> {
-            Ok(JsSpaceMember(super::SpaceMember::new(&did32(seed)?, credential.to_vec(), packages).map_err(err)?))
-        }
-
-        /// The key packages' secrets, to keep in the account's storage.
-        pub fn packages(&self) -> js_sys::Uint8Array {
-            js_sys::Uint8Array::from(&self.0.packages()[..])
-        }
-
-        /// A key package to publish on the card (keep `packages()` after).
-        pub fn key_package(&self) -> Result<js_sys::Uint8Array, JsValue> {
-            Ok(js_sys::Uint8Array::from(&self.0.key_package().map_err(err)?[..]))
+        pub fn new(seed: &[u8], credential: &[u8]) -> Result<JsSpaceMember, JsValue> {
+            Ok(JsSpaceMember(super::SpaceMember::new(&did32(seed)?, credential.to_vec()).map_err(err)?))
         }
 
         /// A space's group, made by this DID: a new `Mls`.
@@ -928,9 +1062,11 @@ mod js {
             Ok(Mls(Some(self.0.create_space(did32(space)?).map_err(err)?), [0; 32]))
         }
 
-        /// JOIN a space's group from a welcome: a new `Mls` (keep `packages()` after: the one it answered is used up).
-        pub fn join_space(&self, space: &[u8], welcome: &[u8]) -> Result<Mls, JsValue> {
-            Ok(Mls(Some(self.0.join_space(did32(space)?, welcome).map_err(err)?), [0; 32]))
+        /// ENTER a space's group by itself (`SpaceMember::enter`): `[Mls, commit]` — the commit published at the info's
+        /// epoch (its door), the member kept once it is taken.
+        pub fn enter(&self, space: &[u8], group_info: &[u8], aad: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let (a, c) = self.0.enter(did32(space)?, group_info, aad).map_err(err)?;
+            Ok([JsValue::from(Mls(Some(a), [0; 32])), js_sys::Uint8Array::from(&c[..]).into()].into_iter().collect())
         }
     }
 

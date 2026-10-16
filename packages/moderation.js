@@ -6,7 +6,7 @@
 //   const m = await moderation.of(sp)
 //   m.hidden(table)          // the Set of keys hidden in that table
 //   await m.hide(table, key) // hidden for everyone (a moderator's act)
-//   await m.remove(did)      // that person out of the space's group (a new epoch they cannot read); back by an invite
+//   await m.remove(did)      // that person off the list (their keys follow: a new epoch they cannot read); back by an invite
 //   await m.ban(did)         // the same, and never back (no invite or code lets them in) until `unban`
 //   m.onChange(fn)
 //
@@ -20,7 +20,7 @@
 //   await lists.hide({ by, id } | { person } | { space }, on)   // hidden for this person only (an edge of theirs)
 //   await lists.flag(kind, ref, reason)   await lists.unflag(kind, ref)   lists.mine()  lists.followed()  lists.onChange(fn)
 export async function start(ctx) {
-  const [roles, keys, directory, storage, space] = await Promise.all(["roles", "keys", "directory", "storage", "space"].map(n => ctx.require(n)));
+  const [roles, directory, storage, space] = await Promise.all(["roles", "directory", "storage", "space"].map(n => ctx.require(n)));
 
   // DEPARTED — the one record of a writer that stopped being a member's: a member put out (before the commit takes
   // their nodes out), OR a device dropped from its account (`nodes`: those; owner 10-16). Where each of its feeds stands
@@ -44,17 +44,31 @@ export async function start(ctx) {
     return n;
   }
 
+  // Whether where `did`'s feeds stood is recorded in the space already (`departed`).
+  async function recorded(sp, did) {
+    const t = await storage.table(space.tableOf(sp, "departed"), sp);
+    await t.settled;
+    return t.rows().some(x => {
+      try {
+        return x.value && JSON.parse(x.value)?.did === did;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   async function of(sp) {
     const r = await roles.of.strict(sp);
-    // OUT: the act first — naming their devices, so what they wrote stays theirs after they leave — then their member
-    // out of the group. A ban of someone already out is the act alone.
+    // OUT: the act — naming their devices, so what they wrote stays theirs after they leave — and where their feeds
+    // stand recorded; the KEYS FOLLOW the list (FOUNDATION "Members and keys": the node's follower takes their entries
+    // out — asked to run now). A ban of someone already out is the act alone.
     async function out(did, act) {
       await r.refresh();
-      const nodes = r.nodesOf(did);
-      if (!nodes.length && act !== "ban") throw new Error("they are not in this space");
+      // ON THE LIST (the replay's roster) — whether or not they hold keys yet.
+      if (!r.roster().includes(did) && act !== "ban") throw new Error("they are not in this space");
       await r.act({ act, did, nodes: await directory.devices.strict(did) });
-      if (nodes.length) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
-      if (nodes.length) await keys.group(r.space).remove(nodes.map(n => n.index));
+      if (r.nodesOf(did).length) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
+      await ctx.background("moderation: followNow", (await ctx.require("auth")).identity.followNow());
       await r.refresh();
     }
     return {
@@ -63,18 +77,15 @@ export async function start(ctx) {
       remove: did => out(did, "remove"),
       ban: did => out(did, "ban"),
       unban: did => r.act({ act: "unban", did }),
-      // A BAN HOLDS in the group too: anyone banned still in the space's group (let in after the ban by someone who did
-      // not know of it yet — the identity delegate, by a page's older mandate) taken out of it. How many.
+      // Anyone the acts put out (banned, removed, left) still in the group: where their feeds stand recorded (what they
+      // wrote stays theirs); their entries are the node's follower's to take out. How many.
       enforce: async () => {
         await r.refresh();
-        // The banned, and anyone the acts put out (removed, or left: a leaver cannot commit their own removal).
         const out = [...new Set([...r.bannedList(), ...r.goneList()])].filter(did => r.nodesOf(did).length);
-        const nodes = out.flatMap(did => r.nodesOf(did));
-        if (!nodes.length) return 0;
-        for (const did of out) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
-        await keys.group(r.space).remove(nodes.map(n => n.index));
-        await r.refresh();
-        return nodes.length;
+        // ONCE per member (where their feeds stood when they went out — a later pass would move it on, counting what
+        // they wrote after as theirs).
+        for (const did of out) if (!(await recorded(r.space, did))) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
+        return out.length;
       },
       onChange: f => r.onChange(f),
       settled: r.settled,

@@ -355,7 +355,7 @@ fn the_rank_is_the_pages_rank() {
     // Computed by the page's own `rankFor` (file-keys.js) for these DIDs: each member's place per row.
     let dids: Vec<String> = ["did:craftec:aaa", "did:craftec:bbb", "did:craftec:ccc", "did:craftec:ddd"].iter().map(|s| s.to_string()).collect();
     for (id, want) in [("f1", [0, 3, 1, 2]), ("f2", [3, 1, 2, 0]), ("3f2a9c", [3, 1, 2, 0]), ("zz", [3, 0, 2, 1])] {
-        let got: Vec<usize> = dids.iter().map(|d| rekey::rank(id, &dids, d)).collect();
+        let got: Vec<usize> = dids.iter().map(|d| rekey::rank(id, &dids, d).unwrap()).collect();
         assert_eq!(got, want, "row {id}");
     }
 }
@@ -414,7 +414,7 @@ fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
     let held = [owner_did.clone(), gone_did.clone()];
     let p2 = rekey::plan(&r, &g, &held, &owner_did, 100);
     assert!(p2.due.iter().all(|d| d.rank == 0), "the removed take no turn");
-    let control: Vec<usize> = ["adopted", "public", "under0", "a", "b", "c", "d"].iter().map(|id| rekey::rank(id, &held, &owner_did)).collect();
+    let control: Vec<usize> = ["adopted", "public", "under0", "a", "b", "c", "d"].iter().map(|id| rekey::rank(id, &held, &owner_did).unwrap()).collect();
     assert!(control.contains(&1), "control: with them counted, the owner is second for some row: {control:?}");
     // The rotation's rows: the old salt kept, the new one, and `salt` naming it.
     let was = rekey::salt(&r.rows("files")).unwrap();
@@ -629,15 +629,13 @@ fn round_after_a_removal(creates: bool) -> AfterRound {
     let member = SigningKey::from_bytes(&SEED).verifying_key().to_bytes();
     let mls_seed = identity::space_member_seed(&data_seed);
     let mls_pub = SigningKey::from_bytes(&mls_seed).verifying_key().to_bytes();
-    let sm = craftworks_mls::SpaceMember::new(&mls_seed, identity::space_member_credential(&did, &data_seed, &mls_pub), &[]).unwrap();
+    let sm = craftworks_mls::SpaceMember::new(&mls_seed, identity::space_member_credential(&did, &data_seed, &mls_pub)).unwrap();
     let mut g = sm.create_space(SPACE).unwrap();
     let s0 = g.epoch_secret().unwrap();
     let epoch = g.epoch();
     assert!(identity::keep_epoch(&mut h, &member, Some(SPACE), epoch, &s0));
     let m = Mandate {
-        space: SPACE, name: "Makers".into(), kind: "server".into(), owner: me_did.clone(), nonce: None, channel: "ch".into(),
-        open: false, codes: vec![], level: None, bans: vec![], members: vec![me_did.clone()], epoch, state: g.save().unwrap(),
-        admitters: vec![],
+        space: SPACE, name: "Makers".into(), kind: "server".into(), owner: me_did.clone(), nonce: None, channel: "ch".into(), epoch, state: g.save().unwrap(),
     };
     identity::upkeep_set_mandate(&mut h, &member, &me_did, &[m]);
     identity::upkeep_set_tick(&mut h, &member);

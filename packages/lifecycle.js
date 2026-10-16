@@ -70,8 +70,8 @@ export async function start(ctx) {
     },
     // A GROUP (a space's, on this device — FOUNDATION §3 `group`): where its keys stand as upkeep finds it each round —
     // HELD (current, on the owner's branch), BEHIND, OFF_BRANCH, NOT_HELD, UNREADABLE, STUCK (behind its own commit),
-    // REMOVED — and every STEP its keys take (a commit and why, a join, a log written or mended, history handed), each
-    // kept and reported: what moved an epoch is never unknown (10-14: an epoch moved twice and nothing said by what).
+    // REMOVED — and every STEP its keys take (an entry by itself, a commit and why, one skipped by the list check, a
+    // log written or mended, history handed), each kept and reported: what moved an epoch is never unknown.
     group: {
       initial: "UNKNOWN",
       journal: true,
@@ -79,6 +79,8 @@ export async function start(ctx) {
       quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed"],
       events: {
         held: { from: "*", to: "HELD" },
+        // Ahead of the owner's announcement (it reads: HELD).
+        ahead: { from: "*", to: "HELD" },
         behind: { from: "*", to: "BEHIND" },
         "off-branch": { from: "*", to: "OFF_BRANCH" },
         "not-held": { from: "*", to: "NOT_HELD" },
@@ -88,11 +90,19 @@ export async function start(ctx) {
         commit: { from: "*" },
         applied: { from: "*" },
         "apply-failed": { from: "*" },
-        join: { from: "*" },
-        "join-failed": { from: "*" },
+        // ENTERED BY ITSELF (FOUNDATION "Members and keys" 1): an external commit put in its epoch's door — or no group
+        // info a listed member published to enter from yet.
+        enter: { from: "*" },
+        "enter-no-info": { from: "*" },
+        "enter-not-listed": { from: "*" },
+        // Its epoch and group info NOT announced (what a device with no key enters from): why.
+        "announce-failed": { from: "*" },
+        // An entry SKIPPED by the list check (`mls::entry_ok`: every reader skips it), and a catch-up DEFERRED until
+        // the list is read whole (I6).
+        "entry-skipped": { from: "*" },
+        "catch-up-deferred": { from: "*" },
         "adopt-delegate": { from: "*" },
         "pending-published": { from: "*" },
-        repaired: { from: "*" },
         "log-open-written": { from: "*" },
         "log-open-left": { from: "*" },
         "log-back-added": { from: "*" },
@@ -100,36 +110,32 @@ export async function start(ctx) {
         "log-mend-cannot": { from: "*" },
         "history-received": { from: "*" },
         "history-handed": { from: "*" },
+        // THE NODE's FOLLOWER over this space (`by: node`: removals only), each step its own event with its why: its
+        // plan; its commit; and why a round did not finish.
+        "follow-plan": { from: "*" },
+        "follow-commit": { from: "*" },
+        "follow-stalled": { from: "*" },
+        "follow-short": { from: "*" },
+        "follow-entry-skipped": { from: "*" },
+        "follow-unloadable": { from: "*" },
+        "follow-behind": { from: "*" },
+        "follow-log-refused": { from: "*" },
+        "follow-commit-refused": { from: "*" },
+        "follow-next-refused": { from: "*" },
+        "follow-no-commit": { from: "*" },
       },
     },
-    // LETTING SOMEONE INTO A GROUP (FOUNDATION §3, "Members and keys"), keyed by the REQUEST — `q:<its key's tag>`, the same on
-    // every side — so one request's whole story is one key in the health reports: the asker's `join`, the deciders'
-    // `member` (a page's, or the node's: `by`). Every move reported (owner 10-14: what another user faces is read here).
+    // A REQUEST TO JOIN (owner 10-17: "requests are not hanging"), keyed by the space: asked; then CANCELLED by the asker,
+    // REJECTED by one who may invite, or MEMBER — let in, or in by a code, the open door or a level, entered by itself.
+    // Every move reported.
     join: {
       initial: "NONE",
       journal: true,
-      // (No progress line: WAITING to be let in is someone else's to answer — it may take days, and this device does
-      // nothing meanwhile (10-15: three "Asking to join …" lines never went away). The Spaces app says "Requested".)
-      ended: { FAILED: { text: "Joining stopped (the trace says why) — it asks again with a new key", ms: 15000 } },
       events: {
-        ask: { from: "*", to: "ASKED" },
-        wait: { from: "*", to: "WAITING" }, // (an ask made on an earlier page is NONE in this one)
+        ask: { from: "*", to: "REQUESTED" },
+        cancelled: { from: "*", to: "CANCELLED" },
+        rejected: { from: "*", to: "REJECTED" },
         joined: { from: "*", to: "MEMBER" },
-        fail: { from: "*", to: "FAILED" },
-      },
-    },
-    // (A decider's states live in its page: a welcome KEPT unsent is sent — or given up — by a later page: `*`.)
-    member: {
-      initial: "NONE",
-      journal: true,
-      events: {
-        skip: { from: "*", to: "SKIPPED" },
-        // LISTED: the list entry written (the decision — the keys follow it: the follower's commit is WELCOMED).
-        listed: { from: "*", to: "LISTED" },
-        admit: { from: ["NONE", "SKIPPED", "FAILED"], to: "ADMITTING" },
-        kept: { from: ["ADMITTING"], to: "KEPT" },
-        welcomed: { from: "*", to: "WELCOMED" },
-        fail: { from: "*", to: "FAILED" },
       },
     },
     // AN OPEN APP (a body component): opening → open → closed, or failed (reported; the rest are quiet — they ride in
@@ -213,9 +219,8 @@ export async function start(ctx) {
     const batch = pending.splice(0);
     if (!batch.length) return;
     try {
-      const auth = await ctx.require("auth");
       // (`device`: which of the account's devices made the move — never a move's own fields, e.g. a decider's `by`.)
-      const device = String((await auth.check())?.member ?? "").slice(0, 16);
+      const device = await thisDevice();
       const t = await (await ctx.require("storage")).table("journal");
       for (const e of batch) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }));
       const rows = t.rows().filter(r => r.value).map(r => r.key).sort();
@@ -225,9 +230,11 @@ export async function start(ctx) {
     }
   }
   // The journal's moves (`machine`; `key`: one process's), oldest first.
-  async function journal(machine = null, key = null) {
+  // `fresh`: the table read again from the network first (a guard deciding by it — never a short read).
+  async function journal(machine = null, key = null, { fresh = false } = {}) {
     const t = await (await ctx.require("storage")).table("journal");
     await t.settled;
+    if (fresh) await t.reread?.();
     return t
       .rows()
       .filter(r => r.value)
@@ -238,8 +245,18 @@ export async function start(ctx) {
           return null;
         }
       })
+      // …and the moves not written yet (they are flushed a few seconds after): this device's own, as it made them.
+      .concat(await pendingMoves())
       .filter(e => e && (!machine || e.m === machine) && (!key || e.key === key))
       .sort((a, b) => a.at - b.at);
+  }
+  // THIS DEVICE (its member key, the first 16 hex): what a journal row names as the one that made a move.
+  async function thisDevice() {
+    return String((await ctx.optional("lifecycle: auth.check", (await ctx.require("auth")).check(), () => null))?.member ?? "").slice(0, 16);
+  }
+  async function pendingMoves() {
+    const device = await thisDevice();
+    return pending.map(e => ({ ...e, device }));
   }
 
   const states = new Map(); // `${machine}|${key}` → { s, since, event, detail }

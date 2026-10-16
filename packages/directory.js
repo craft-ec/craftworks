@@ -7,8 +7,8 @@
 // readers learn it is that DID's).
 //
 //   const directory = await ctx.require("directory");
-//   await directory.card(did)                 // { did, handle, inbox, … }, or null (no key packages: a request carries its own)
-//   await directory.publish({ handle })       // this person's handle, and their key packages
+//   await directory.card(did)                 // { did, handle, inbox, … }, or null
+//   await directory.publish({ handle })       // this person's handle
 //   await directory.setContributions(list)    // this person's contributions, PUBLIC on their card (rewards §5a)
 //   await directory.setPay({ scan, spend })   // this person's wallet pay keys on their card (TOKEN §7f); card(did).pay
 //   await directory.levelOf(did)              // their level now, from their card: { id, name } ("free"|"pro"|"vip")
@@ -58,15 +58,7 @@ export async function start(ctx) {
     return core.idlog_keys(idlogCode, b);
   }
 
-  // A REQUEST'S KEY IS THEIRS (`account::space_member`, the delegate's check too): the key package's credential names
-  // `did` under the data key their key log holds now. A request is an unsigned drop in a bag: without this, one naming
-  // someone carrying another's key would let that other in under their name. Why not, or null.
-  async function keyNotTheirs(did, kpHex) {
-    if (!(await keysOf(did))) return "their key log not read";
-    const cred = await (await ctx.require("keys")).kpCredential(kpHex);
-    if (!cred) return "the request's key does not read as a key package";
-    return core.space_member_of(idlogCode, didBytes(did), cred) ? null : "the request's key is not theirs (another account's, or a key their log moved past)";
-  }
+
 
   const read = t => {
     const rows = t.rows();
@@ -129,7 +121,7 @@ export async function start(ctx) {
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
   }
 
-  // THIS person's card: its handle, and this node's key package (made by `keys`, its secrets kept with this node).
+  // THIS person's card: its handle, its inbox, its devices.
   async function publish({ handle } = {}) {
     await (await ctx.require("keys")).mustWrite("the card");
     const sp = await space.account.strict();
@@ -292,5 +284,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, keyNotTheirs, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, devicesEver: ctx.total("directory.devicesEver", () => [], devicesEver), handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
+  return { credTable, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, devicesEver: ctx.total("directory.devicesEver", () => [], devicesEver), handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
 }

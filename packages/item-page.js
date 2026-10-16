@@ -87,10 +87,13 @@ export async function start(ctx) {
       const name = it.meta.level === "vip" ? "VIP" : "PRO and VIP";
       const about = h("div", { className: "about" });
       if (await usage.reaches(mine.id, it.meta.level)) {
+        // AT THE LEVEL: in by itself (its level the proof — `conversation.joinLevel`), then the item opens.
         const conversation = await ctx.require("conversation");
-        const asked = (await conversation.askedCodes()).some(a => a.key === `code:${conversation.levelCode(gate.space)}`);
-        if (!asked) await conversation.joinLevel(gate.space, gate.name ?? null).catch(e => ctx.failed("item", e, `asking into ${gate.space.slice(0, 8)}: ${e.message}`));
-        about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · asked, waiting` }));
+        if (gate.owner && gate.nonce) {
+          const inNow = await conversation.joinLevel(gate).then(() => true, e => (ctx.failed("item", e, `entering ${gate.name ?? gate.space.slice(0, 8)}: ${e.message}`), false));
+          if (inNow) return show(gate.ref, { app, back, discover });
+        }
+        about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name} · ${gate.owner ? "could not enter yet — try again shortly" : "made before levels could be entered: ask its author"}` }));
       } else about.append(h("p", { textContent: `🔒 ${name} · you: ${mine.name}` }), h("a", { href: "#/wallet/contribute", textContent: "Contribute (Wallet)" }));
       return h("div", { className: "cw-page" }, h("h1", { textContent: it.title || "" }), about);
     }

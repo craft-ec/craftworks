@@ -192,8 +192,11 @@ export async function start(ctx) {
     upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox, crypto.getRandomValues(new Uint8Array(32)), Date.now()), "handing upkeep the inbox"),
     upkeepStatus: () => call(core.frames_upkeep_status(), "upkeep's status"),
     upkeepCodes: (bag, tail, idlog, sealed, piece, block, devices) => call(core.frames_upkeep_codes(bag, tail, idlog, sealed, piece, block, devices), "handing upkeep the contracts"),
-    upkeepMandate: (me, spaces, spent = []) => call(core.frames_upkeep_mandate(me, JSON.stringify(spaces), JSON.stringify(spent)), "handing upkeep the mandate"),
-    upkeepAck: admitted => call(core.frames_upkeep_ack(JSON.stringify(admitted)), "telling upkeep what was written"),
+    upkeepMandate: (me, spaces) => call(core.frames_upkeep_mandate(me, JSON.stringify(spaces)), "handing upkeep the mandate"),
+    // The groups this page loaded (space ids, hex): no longer reported as moved.
+    upkeepAck: groups => call(core.frames_upkeep_ack(JSON.stringify(groups)), "telling upkeep what was loaded"),
+    // THE FOLLOWER NOW: the node runs its round at once (the one place a space's keys follow its member list).
+    followNow: () => call(core.frames_follow_now(Date.now()), "asking the node to follow now"),
     inboxOpen: items => call(core.frames_inbox_open(items), "opening the inbox"),
     publicOf: seed => glue.CraftworksCore.public_of(seed),
     // HANDOVER: ask an earlier build (`<key>:<code hash>`) for the member `pin` opens there. `{ handed }` with its keys,
@@ -226,7 +229,9 @@ export async function start(ctx) {
       const u = await askPrior(prior, core.frames_unlock_from(prior, pin), "a session");
       if (!u?.unlocked) return { silent: !!u?.silent || !u, said: u?.silent || !u ? "no answer" : u?.wrongPin ? "not a member there" : JSON.stringify(u) };
       const m = await askPrior(prior, core.frames_retire_upkeep_from(prior), "retiring its upkeep");
-      if (!m?.upkeep) return { said: m?.silent ? "no answer" : JSON.stringify(m) };
+      // TAKEN: its upkeep answer — or one in its own build's layout (an earlier build's fields differ: answered, not
+      // refused). A refusal or no answer: not retired.
+      if (!m?.upkeep && m !== "unreadable") return { said: m?.silent ? "no answer" : JSON.stringify(m) };
       // Its WITNESSED PLACES carried here (after it is retired: it signs nothing more), so this build never signs another
       // entry where it did — one key, two builds (a build from before answers nothing it can read: none carried).
       const w = (await askPrior(prior, core.frames_handover_witnessed_from(prior, pin), "the places it witnessed"))?.handedWitnessed ?? [];

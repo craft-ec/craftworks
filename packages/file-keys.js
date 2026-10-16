@@ -23,7 +23,7 @@ export async function start(ctx) {
   let triggers = 0;
   // This person's place among the members for a row: 0 does it; k takes over after k × TAKEOVER of no movement
   // (`ordering`'s turns: one ranking, the delegate's too).
-  const { TAKEOVER } = ordering;
+  const { glue } = await ctx.require("node");
   const rankFor = ordering.turn;
   const later = new Map(); // row → its takeover timer
   const seen = new Map(); // row → when this page first saw it due
@@ -45,7 +45,8 @@ export async function start(ctx) {
 
   // A REMOVAL is in: the removed out of the group, this table writing with the newest epoch — then a new salt.
   async function rotateIfRemoved(sp, r) {
-    const acts = r.acts().filter(a => a.act === "remove" || a.act === "ban" || a.act === "leave");
+    // (Who was put out: the replay's one list — a lapse too.)
+    const acts = r.outActs();
     const st = await files.salt(sp);
     if (acts.length <= st.removals) return;
     const gone = new Set(acts.slice(st.removals).map(a => a.did ?? a.by));
@@ -82,12 +83,15 @@ export async function start(ctx) {
     for (const { row, pub } of await due(sp, r)) {
       const k = `${sp?.id ?? ""}/${row.id}`;
       if (failed.get(k) === triggers) continue;
-      const rank = Math.max(0, rankFor(row.id, dids, me));
+      // Not among those who take turns: never this page's row.
+      const rank = rankFor(row.id, dids, me);
+      if (rank < 0) continue;
       if (rank > 0) {
         // From when it last moved: its progress, or when this page first saw it due (a row due since a removal
         // carries an old time of its own).
         if (!seen.has(k)) seen.set(k, Date.now());
-        const wait = rank * TAKEOVER - (Date.now() - Math.max(seen.get(k), await files.lastMoved(sp, row)));
+        // (The one turn wait: `guards::turn_wait`.)
+        const wait = glue.turn_wait(rank, Math.max(seen.get(k), await files.lastMoved(sp, row)), Date.now());
         if (wait > 0) {
           if (!later.has(k)) later.set(k, setTimeout(() => (later.delete(k), kick()), wait + 1000));
           continue;

@@ -92,11 +92,20 @@ export async function start(ctx) {
   function logsOf(g) {
     const open = async (e, secret, known = null) =>
       ordering.open({ type: "tail", table: g.channel, prefix: "c/", owner: glue.epoch_log_public(secret), known, sealWith: await g.seal(e), space: g.space });
-    // The commit that moved the group FROM epoch e (`fresh`: the log read again from the network, not as last seen).
+    // The commit that moved the group FROM epoch e (`fresh`: the log read again from the network, not as last seen) —
+    // its epoch log's first entry (members' commits; where no entry is checked: the account's).
     async function commitFrom(e, secret, fresh = false) {
       const log = await open(e, secret);
       if (fresh) await ctx.background("keys: log.reread", log.reread?.());
       return log.from(e)[0]?.entry ?? null;
+    }
+    // EVERY ENTRY of position e, in THE ONE ORDER (`rules::ordering::order`): the epoch log's ∪ its DOOR's (a device
+    // that entered by itself: `g.door`, a space's) — a reader takes the first that applies and the list allows.
+    async function candidates(e, secret, fresh = false) {
+      const log = await open(e, secret);
+      if (fresh) await ctx.background("keys: log.reread", log.reread?.());
+      const door = g.door ? await ctx.optional("keys: g.door", g.door(e, fresh), () => []) : [];
+      return ordering.order([...log.entries(e), ...door]);
     }
     // COMMIT from epoch e: into e's log, with the group info after it (and, for the account, the next secret in escrow).
     // (Its entry made from the group AFTER the commit applied here — and published apart, so a space can keep it first.)
@@ -222,7 +231,8 @@ export async function start(ctx) {
     async function heal() {
       if (!g.snaps) return false;
       for (const s of await g.snaps()) {
-        const won = await ctx.optional("keys: commitFrom", commitFrom(s.epoch, bytes(s.secret), true), () => null);
+        // The position's WINNER: the first entry that applies to the group as it was (a space's: by the list check too).
+        const won = g.winner ? await ctx.optional("keys: g.winner", g.winner(s), () => null) : await ctx.optional("keys: commitFrom", commitFrom(s.epoch, bytes(s.secret), true), () => null);
         if (!won || won === s.entry) continue;
         ctx.log(g.label, { what: `epoch ${s.epoch}: this node's commit lost the race for it — the winner's applied, the change made again where it still applies` });
         await g.keepLost(await ctx.optional("keys: branch", branch(g.mls().status(), s.epoch + 1), () => [{ epoch: g.mls().status().epoch, secret: hexOf(g.mls().status().secret) }]));
@@ -231,6 +241,10 @@ export async function start(ctx) {
       }
       return false;
     }
+    // ONE ENTRY TRIED (`g.apply`: a space's — the list check, `mls::entry_ok`; the account's group: MLS's own rule).
+    // `{ applied }`, `{ skipped: why }` (every reader skips it), `{ defer: why }` (the list not read whole: nothing
+    // decided from a short read — I6); throws where MLS would not apply it at all.
+    const tryEntry = (m, commit) => (g.apply ? g.apply(m, commit) : (m.process(commit), { applied: true }));
     async function catchUp(reload, fresh = false) {
       const healed = fresh ? await heal() : false;
       const m = g.mls();
@@ -238,18 +252,41 @@ export async function start(ctx) {
       let n = 0;
       for (;;) {
         const st = m.status();
-        const entry = await commitFrom(st.epoch, st.secret, fresh);
-        if (!entry) break;
+        const cands = await candidates(st.epoch, st.secret, fresh);
+        if (!cands.length) break;
         if (!n && reload) await reload(st);
         // ANOTHER's commit applied — a STEP of the group (10-14: a member stayed an epoch behind another's commit and
         // nothing said whether it read it): who wrote it and why (its row's provenance), or why it would not apply.
-        const row = parse(entry);
         const space = g.space ? hexOf(g.space) : undefined;
-        try {
-          m.process(bytes(row.commit));
-        } catch (e) {
-          keyEvent("apply-failed", { space, epoch: st.epoch, writer: String(row.by ?? "").slice(0, 16), why: String(e?.message ?? e).slice(0, 160) });
-          throw e;
+        let row = null;
+        let failed = null;
+        let deferred = null;
+        for (const entry of cands) {
+          const c = parse(entry);
+          if (!c?.commit) continue;
+          try {
+            const r = tryEntry(m, bytes(c.commit));
+            if (r.applied) {
+              row = c;
+              break;
+            }
+            if (r.defer) {
+              deferred = r.defer;
+              break;
+            }
+            keyEvent("entry-skipped", { space, epoch: st.epoch, writer: String(c.by ?? "").slice(0, 16), why: String(r.skipped ?? "").slice(0, 160) });
+          } catch (e) {
+            failed ??= e;
+            keyEvent("apply-failed", { space, epoch: st.epoch, writer: String(c.by ?? "").slice(0, 16), why: String(e?.message ?? e).slice(0, 160) });
+          }
+        }
+        if (deferred) {
+          keyEvent("catch-up-deferred", { space, epoch: st.epoch, why: deferred });
+          break;
+        }
+        if (!row) {
+          if (failed) throw failed;
+          break;
         }
         keyEvent("applied", { space, from: st.epoch, to: m.status().epoch, writer: String(row.by ?? "").slice(0, 16), cause: row.why ?? null });
         n += 1;
@@ -264,7 +301,7 @@ export async function start(ctx) {
       // Gone back (a lost commit undone) counts as a change: the group as it is now is saved.
       return n || (healed ? 1 : 0);
     }
-    return { commitFrom, commitAt, entryOf, publish, ensure, catchUp, history, heal, branch, backFor };
+    return { commitFrom, candidates, commitAt, entryOf, publish, ensure, catchUp, history, heal, branch, backFor };
   }
 
   // THE ACCOUNT's group.
@@ -397,8 +434,8 @@ export async function start(ctx) {
         ctx.log("account keys", { what: "recovered: every table that did not read here opens again with this node's keys in place" });
         dispatchEvent(new CustomEvent("craftworks:keys"));
       }
-      // Every account has a CARD from the start (its inbox, this node's key packages): nobody who wants to write to it
-      // ever waits on one that does not exist. After this turn of the queue (the card asks for key packages).
+      // Every account has a CARD from the start (its inbox, its devices): nobody who wants to write to it ever waits on
+      // one that does not exist. After this turn of the queue.
       setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`)));
       return;
     }
@@ -424,7 +461,7 @@ export async function start(ctx) {
     const st = mls.status();
     say(`this login's group: epoch ${st.epoch}, ${st.members.length} node(s); ${list.filter(s => s.kind === "server").length} space(s) read here`);
     // Every node of this group keeps its feeds listed (a node's key is in its credential: did ‖ owner ‖ node).
-    const nodes = st.members.map(m => (m.cred ? String(m.cred).slice(136, 200) : null)).filter(k => /^[0-9a-f]{64}$/.test(k ?? ""));
+    const nodes = st.members.map(m => (m.cred ? JSON.parse(glue.credential_parts(bytes(m.cred)) ?? "null")?.node : null)).filter(Boolean);
     // THE DIRECTORY: made again only where it does not read here (sealed over by the other group); where it reads, kept,
     // and every node of this group listed in it.
     const dir = await storage.directoryState();
@@ -515,7 +552,7 @@ export async function start(ctx) {
     return p;
   }
 
-  // WRITES FOR THE ACCOUNT — its card, key packages, requests, asks to welcome again — only from a device whose
+  // WRITES FOR THE ACCOUNT — its card, its acts, its entries into spaces — only from a device whose
   // session is OPEN and whose account group is a MEMBER (FOUNDATION.md §3: a KEYLESS session writes none of them; on
   // 10-12 one re-put the card's key packages and asked members to welcome it again, which dropped the original devices).
   // `writable()`: true, or why not.
@@ -562,7 +599,7 @@ export async function start(ctx) {
       if (!status) throw new Error("the account's keys are not held on this site");
       const channel = await storage.table(CHANNEL);
       const from = mls.status();
-      const commit = mls.remove(index);
+      const commit = mls.remove(Uint32Array.from([index]));
       const r = await commitAt(from.epoch, from.secret, commit, "remove (device)");
       if (!r.ok) {
         const kept = await auth.identity.mlsLoad();
@@ -592,8 +629,8 @@ export async function start(ctx) {
   }
 
   // THE DID's MEMBER in spaces (ARCHITECTURE: a DID is the member, a device only signs in): its keys from the identity
-  // (the same on every device of the account), its key packages' secrets in the account's table `spacekeys` — one
-  // row per batch (`packages/<id>`), so two devices making key packages never write over each other's.
+  // (the same on every device of the account); each space's group state in the account's table `spacekeys` (`s/<space>`,
+  // the newest any device saved).
   const SPACEKEYS = "spacekeys";
   const newId = () => hexOf(crypto.getRandomValues(new Uint8Array(8)));
   let memberKeys = null;
@@ -608,7 +645,7 @@ export async function start(ctx) {
   // THE TABLE IN USE: `spacekeys`, or the one the account's catalog NAMES (`upkeep` mark `spacekeys`) — set by hand
   // only, never by a reading; `spacekeys-2` … `-9` (the site declares them all: a move needs no site change) (owner
   // 10-07: the owner's `spacekeys` lost a tree block; a fresh table for that account,
-  // filled again by a member's welcome and the card's renewal). Read once per page.
+  // filled again as its devices enter each space again). Read once per page.
   let keysName = null;
   const spacekeys = async () => {
     keysName ??= ctx.optional("keys: storage.upkeepMark", storage.upkeepMark("spacekeys").then(n => (typeof n === "string" && /^spacekeys(-[2-9])?$/.test(n) ? n : SPACEKEYS)), () => SPACEKEYS);
@@ -616,84 +653,27 @@ export async function start(ctx) {
     await t.settled;
     return t;
   };
-  // READ, never changed here (the MLS code is the identity's: one byte of it forks every account): the references a
-  // batch of key packages holds (its encoding: u32 count, then each id and data as u32 length ‖ bytes) and those a
-  // WELCOME is made for (RFC 9420: version, wire format 3, cipher suite, then secrets<V> of { new_member<V>,
-  // kem_output<V>, ciphertext<V> } — V a variable-length size).
-  const hexb = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  function batchRefs(b) {
-    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
-    let at = 0;
-    const n = dv.getUint32(at, true);
-    at += 4;
-    const out = [];
-    for (let i = 0; i < n; i++) {
-      const kl = dv.getUint32(at, true);
-      out.push(hexb(b.subarray(at + 4, at + 4 + kl)));
-      at += 4 + kl;
-      at += 4 + dv.getUint32(at, true);
-    }
-    return out;
-  }
-  function welcomeRefs(b) {
-    let at = 6; // version, wire format, cipher suite
-    const v = () => {
-      const f = b[at] >> 6;
-      const len = f === 0 ? b[at] & 0x3f : f === 1 ? ((b[at] & 0x3f) << 8) | b[at + 1] : ((b[at] & 0x3f) << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
-      at += f === 0 ? 1 : f === 1 ? 2 : 4;
-      const s = b.subarray(at, at + len);
-      at += len;
-      return s;
-    };
-    const secrets = v();
-    const outer = at;
-    at = 0;
-    const bb = b;
-    b = secrets;
-    const out = [];
-    while (at < secrets.length) {
-      out.push(hexb(v()));
-      v();
-      v();
-    }
-    b = bb;
-    at = outer;
-    return out;
-  }
-  // A key package's REFERENCE (RFC 9420 RefHash "MLS 1.0 KeyPackage Reference" over the KeyPackage: the message after
-  // its version and wire format; this suite's hash is SHA-256) — what a welcome names it by.
-  const vlen = n => (n < 64 ? [n] : n < 16384 ? [0x40 | (n >> 8), n & 255] : [0x80 | (n >>> 24), (n >> 16) & 255, (n >> 8) & 255, n & 255]);
-  async function refOf(kpHex) {
-    const kp = bytes(kpHex).subarray(4);
-    const label = new TextEncoder().encode("MLS 1.0 KeyPackage Reference");
-    return hexb(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...vlen(label.length), ...label, ...vlen(kp.length), ...kp]))));
-  }
-  // WHY a welcome does not open, measured: which batch OFFERED the package it names (by its offers row), and whether that
-  // batch holds that package's secret — and how many of what it offered it holds at all.
-  async function explain(t, welcome) {
-    const aimed = welcomeRefs(bytes(welcome));
-    const heldAll = new Set(t.rows().filter(x => x.key.startsWith("packages/") && x.value).flatMap(x => batchRefs(bytes(x.value))));
-    const offeredBy = new Map(); // ref → batch id
-    for (const r of t.rows().filter(x => x.key.startsWith("offers/") && x.value)) {
-      let kps = [];
-      try {
-        kps = JSON.parse(r.value);
-      } catch {}
-      for (const ref of await Promise.all(kps.map(refOf))) offeredBy.set(ref, r.key.slice("offers/".length, "offers/".length + 8));
-    }
-    return `names ${aimed.length} package(s): ${aimed.map(a => `${a.slice(0, 8)} ${offeredBy.has(a) ? `offered by ${offeredBy.get(a)}` : "never offered here"}, ${heldAll.has(a) ? "HELD" : "not held"}`).join("; ")}`;
-  }
-  const memberWith = async packages => {
+  // THE DID's MEMBER for spaces (its signing key and credential: the same on every device of the account).
+  const memberWith = async () => {
     const k = await keysOfMember();
-    return new mlsGlue.SpaceMember(bytes(k.seed), bytes(k.credential), packages ? bytes(packages) : new Uint8Array(0));
+    return new mlsGlue.SpaceMember(bytes(k.seed), bytes(k.credential));
   };
 
-  // A SPACE's GROUP, as this DID's member (a server, a chat): made by its first member, or joined from a welcome; its
+  // A SPACE's GROUP, as this DID's member (a server, a chat): made by its first member, or ENTERED by itself; its
   // state the ACCOUNT's (the table `spacekeys`, row `s/<space>`: the newest any device saved), brought current through
   // the space's epoch logs — each sealed with its epoch's own key. This device keeps each epoch's secret it holds (its
   // identity signs and seals with them). A commit this DID made on another device is not processed here (MLS: a
   // member's own): the state that device saved is loaded instead.
   const groups = new Map();
+  // EACH SPACE's LIST as its replay has it (`roles` hands it here — never read by the group itself: the acts are read
+  // with the group's keys): `{ roster: [did], whole, admits(did, aadHex) }`. What every entry is checked against.
+  const lists = new Map();
+  function setList(id, l) {
+    const had = lists.get(id);
+    lists.set(id, l);
+    const changed = !had || had.whole !== l.whole || had.roster.join() !== l.roster.join() || had.gen !== l.gen;
+    if (changed) groups.get(id)?.listChanged();
+  }
   function group(sp) {
     if (groups.has(sp.id)) return groups.get(sp.id);
     let m = null;
@@ -723,19 +703,55 @@ export async function start(ctx) {
       return x ? glue.epoch_log_public(bytes(x.secret)) : null;
     }
     // ANNOUNCED in the space's writers list (`{ w, epoch, branch }`, once per epoch): which branch this device is on —
-    // what `conversation.admit` checks an ask again against (the owner's branch).
+    // what a member's state is judged against (the owner's branch), and the info a device with no key enters from.
     // Once: the epoch claimed before anything is awaited (many reads at once announce nothing twice), and nothing
     // written when the list holds that very entry already (a page opened again).
+    // …with the GROUP INFO of that epoch (`ih`: its hash) put in the epoch's door in parts (a bag item holds 16 KiB): what
+    // a listed device with no current key enters from (FOUNDATION "Members and keys" 4).
     let announced = -1;
+    const PART = 12000; // hex characters per part
+    const digest = async b => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", b)));
+    // Bounded (a door holds 256 KiB, review 10-17): the OWNER's always (the info a device with no key enters from —
+    // its owner proven by the space's id); another member's only where no whole info is there yet.
+    async function publishInfo(index, s) {
+      const info = s.info;
+      const ih = await digest(info);
+      const items = await index.spacePointers(sp, doorName(s.epoch));
+      const have = items.filter(x => x?.k === "info" && x.d === ih);
+      const whole = d => { const ps = items.filter(x => x?.k === "info" && x.d === d); return ps.length && new Set(ps.map(x => x.i)).size === ps[0].n; };
+      const owner = (await space.account())?.id === sp.governance?.owner;
+      if (!owner && !have.length && items.some(x => x?.k === "info" && whole(x.d))) return null;
+      const hex = hexOf(info);
+      const n = Math.ceil(hex.length / PART);
+      for (let i = 0; i < n; i++)
+        if (!have.some(x => x.i === i && x.n === n)) await index.spacePoint(sp, doorName(s.epoch), { k: "info", e: s.epoch, d: ih, i, n, x: hex.slice(i * PART, (i + 1) * PART) });
+      return ih;
+    }
     async function announce() {
       const s = m?.status();
       if (!s || s.removed || s.epoch === announced || !sp.self) return;
       announced = s.epoch;
       const branch = glue.epoch_log_public(s.secret);
       const index = await ctx.require("index");
-      // (Only an entry every member reads counts: one sealed with an epoch is read by those who hold it alone.)
-      const had = (await index.spacePointers(sp, "writers")).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && p.sealedAt === index.OPEN);
-      if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch, at: Date.now() }).catch(e => ((announced = -1), Promise.reject(e)));
+      try {
+        const ih = await publishInfo(index, s);
+        // (Only an entry every member reads counts: one sealed with an epoch is read by those who hold it alone.)
+        const had = (await index.spacePointers(sp, "writers")).some(p => p?.w === sp.self && p.epoch === s.epoch && p.branch === branch && (p.ih ?? null) === ih && p.sealedAt === index.OPEN);
+        if (!had) await index.spacePoint(sp, "writers", { w: sp.self, epoch: s.epoch, branch, ...(ih ? { ih } : {}), at: Date.now() });
+      } catch (e) {
+        announced = -1;
+        throw e;
+      }
+    }
+    // THE GROUP INFO of epoch `e` whose hash is `ih`, from its door's parts (null: not all there).
+    async function infoAt(e, ih) {
+      const parts = (await doorItems(e)).filter(x => x?.k === "info" && x.e === e && x.d === ih && Number.isInteger(x.i) && typeof x.x === "string");
+      const n = parts[0]?.n;
+      if (!n) return null;
+      const byI = new Map(parts.filter(x => x.n === n).map(x => [x.i, x.x]));
+      if (byI.size !== n) return null;
+      const info = bytes([...Array(n).keys()].map(i => byI.get(i)).join(""));
+      return (await digest(info)) === ih ? info : null;
     }
     // EVERY SWITCH of the group keeps the branch it leaves: its epoch secrets that the group now on does not share
     // (the epochs where the two differ) — kept as lost, read with as alternates. Nothing is ever sealed under a key
@@ -754,10 +770,39 @@ export async function start(ctx) {
       await t.put(`${at}~lost`, JSON.stringify(all));
       ctx.log(`${sp.name ?? "space"} keys`, { what: `${list.length} epoch key(s) of a lost branch kept (what was written there stays readable)` });
     };
+    // THE DOOR of epoch e (FOUNDATION "Members and keys" 4): the entries of devices that entered by itself there.
+    const doorName = e => `door-${e}`;
+    const doorItems = async e => ctx.require("index").then(ix => ix.spacePointers(sp, doorName(e)));
+    // THE LIST CHECK of one entry (`mls::entry_ok` through the MLS package): with the list the replay handed over.
+    const apply = (mm, commit) => {
+      const l = lists.get(sp.id);
+      const r = mm.apply_checked(commit, l?.check ?? { listed: () => false, admits: () => false, mayTakeOut: () => false });
+      if (r.applied) return r;
+      if (!l || !l.whole) {
+        // (The list asked for: `roles` reads the acts with the keys held so far and hands it here.)
+        if (!l) ctx.background("keys: roles.of", ctx.require("roles").then(x => x.of(sp)));
+        return { defer: l ? "the list was not read whole: nothing decided from a short read" : "the list not read yet" };
+      }
+      return { skipped: r.why };
+    };
     const logs = logsOf({
       mls: () => m,
       space: sp.idBytes,
       channel: ch,
+      door: async e => (await doorItems(e)).filter(x => x?.k === "enter" && x.e === e && typeof x.entry === "string").map(x => x.entry),
+      apply,
+      // The WINNER of the position this device committed at (`logs.heal`): the first entry that applies to its group then.
+      winner: async s => {
+        for (const entry of await logs.candidates(s.epoch, bytes(s.secret), true)) {
+          const copy = mlsGlue.Mls.load_space(sp.idBytes, bytes(s.state));
+          try {
+            const r = apply(copy, bytes(parse(entry).commit));
+            if (r.applied) return entry;
+            if (r.defer) return null;
+          } catch {}
+        }
+        return null;
+      },
       seal: async e => (await auth.identity.tableKeyAt(ch, e, sp.idBytes)).tableKey,
       label: `${sp.name ?? "space"} keys`,
       keepLost: list => keepLostHere(list),
@@ -858,20 +903,13 @@ export async function start(ctx) {
           return status(m.status());
         } catch (e) {
           // STUCK behind its OWN commit (10-07, Ivvor: a commit this device wrote reached the log, its state after it was
-          // never saved — the tab closed, or the save failed): MLS never applies a member's own message, so no reload
-          // helps. Said once, and the members asked to welcome it again (`conversation`); a welcome is taken meanwhile
-          // (the space reads as one with no group here).
+          // never saved — the tab closed): MLS never applies a member's own message. Its own NODE's commit (the follower)
+          // is taken; anything else: this device ENTERS AGAIN by itself (FOUNDATION "Members and keys" 1).
           if (/CantProcessMessageFromSelf/.test(String(e?.message ?? e))) {
-            const st = m.status();
-            const branch = glue.epoch_log_public(st.secret);
-            const dids = [...new Set(st.members.filter(x => x.cred).map(x => glue.did_of(new Uint8Array(x.cred.match(/../g).slice(4, 36).map(h => parseInt(h, 16))))))];
-            if (!stuckSaid) {
-              stuckSaid = true;
-              ctx.log(`${sp.name ?? "space"} keys`, { what: `stuck at epoch ${st.epoch}: the next change in its log is this device's own, never saved here — asking the members to welcome it again` });
-              keyEvent("stuck-own-commit", { space: hexOf(sp.idBytes), epoch: st.epoch });
-              dispatchEvent(new CustomEvent("craftworks:keys-stuck", { detail: { space: hexOf(sp.idBytes), epoch: st.epoch, branch, dids } }));
-            }
-            throw new Error(`this device is one change behind its own in ${sp.name ?? "this space"}: the members were asked to welcome it again`);
+            const mine = ((await ctx.optional("keys: upkeepStatus", auth.identity.upkeepStatus(), () => null))?.upkeep?.groups ?? []).find(x => x.space === hexOf(sp.idBytes));
+            if (mine && (await adoptNow(mine.epoch, mine.state))) continue;
+            keyEvent("stuck-own-commit", { space: hexOf(sp.idBytes), epoch: m.status().epoch });
+            return enterNow("stuck");
           }
           if (await load()) continue;
           if (tries >= 3) throw e;
@@ -911,42 +949,81 @@ export async function start(ctx) {
       keyEvent("commit", { space: hexOf(sp.idBytes), from: from.epoch, to: m.status().epoch, intent: intent?.kind ?? "add", ...(intent?.q ? { q: intent.q } : {}) });
       return out;
     }
+    // THE GROUP THIS DEVICE's NODE MOVED (its follower: the same device, the same entry — MLS never applies a member's
+    // own commit, so it is TAKEN, never processed): kept here, unqueued (called inside the queue too).
+    async function adoptNow(epoch, stateHex) {
+      // Taken only if it leads past this device's own copy (the guard "leads past").
+      if (m && glue.guard_leads_past(epoch, m.status().epoch)) return false;
+      // The group as it was here, kept with the commit upkeep wrote from it (its epoch log's): undone like any lost
+      // commit if the log's winner turns out another (`logs.heal`).
+      if (m) {
+        const was = m.status();
+        const entry = await ctx.optional("keys: logs.commitFrom", logs.commitFrom(was.epoch, was.secret, true), () => null);
+        if (entry) await keepSnap(was, entry);
+      }
+      await (await spacekeys()).put(at, JSON.stringify({ epoch, state: stateHex }));
+      await load();
+      ctx.log(`${sp.name ?? "space"} keys`, { what: `the group upkeep moved (someone let in): epoch ${epoch}` });
+      keyEvent("adopt-delegate", { space: hexOf(sp.idBytes), epoch });
+      return true;
+    }
+    // ENTER BY ITSELF (FOUNDATION "Members and keys" 1) — the ONE way a device of a LISTED account gets the space's
+    // keys, whenever it cannot read (never held, another branch, stuck): an MLS external commit from the newest group
+    // info a listed member published, its own old entry out in the same commit, put in that epoch's door. Nobody answers;
+    // nobody else need be online. `proof`: a self-entry's (`{ join: "code", p } | { join: "open" } | { join: "level" }`
+    // — `gov::Gov::admits`), for one not on the list yet. Every reader checks it against the list.
+    async function enterNow(why, proof = null) {
+      const index = await ctx.require("index");
+      const l = lists.get(sp.id);
+      const owner = sp.governance?.owner ?? null;
+      // NEVER ON THE LIST (read whole), never held here, and no proof: nothing to enter — every reader would skip it. (A
+      // device that held the group enters again whatever its own view of the list says: its own `join` act may not be
+      // counted here yet — fx 10-17.)
+      const me = (await space.account())?.id;
+      if (!proof && !m && l?.whole && me && !l.check.listed(me)) {
+        keyEvent("enter-not-listed", { space: hexOf(sp.idBytes), why });
+        throw new Error(`${sp.name ?? "this space"}: not on its list — nothing to enter`);
+      }
+      // The newest epochs announced with their info. AUTHENTIC only (review 10-17: anyone who knows the space's id can
+      // write its open bags): signed by its OWNER (proven by the space's id) — or, the list read whole, by a listed
+      // member; NEVER this account's own (its own fork, entered again and again).
+      const authentic = signer => signer !== me && (signer === owner || (!!l?.whole && l.check.listed(signer)));
+      const anns = (await index.spacePointers.strict(sp, "writers")).filter(p => p?.ih && Number.isInteger(p.epoch));
+      const tried = new Set();
+      for (const a of anns.sort((x, y) => y.epoch - x.epoch)) {
+        if (tried.has(`${a.epoch}|${a.ih}`) || tried.size >= 6) continue;
+        tried.add(`${a.epoch}|${a.ih}`);
+        const info = await ctx.optional("keys: infoAt", infoAt(a.epoch, a.ih), () => null);
+        if (!info) continue;
+        const f = mlsGlue.Mls.info_facts(info);
+        if (f.epoch !== a.epoch || !authentic(f.signer)) continue;
+        const was = m && !m.status().removed ? m.status() : null;
+        if (was) await keepLostHere(await ctx.optional("keys: logs.branch", logs.branch(was, Math.max(0, was.epoch - 8)), () => [{ epoch: was.epoch, secret: hexOf(was.secret) }]));
+        const aad = new TextEncoder().encode(JSON.stringify({ why, ...(proof ?? {}) }));
+        const [m2, commit] = (await memberWith()).enter(sp.idBytes, info, aad);
+        const entry = JSON.stringify({ commit: hexOf(commit), ...(await provOf(`commit enter (${why})`)) });
+        await index.spacePoint(sp, doorName(f.epoch), { k: "enter", e: f.epoch, entry });
+        m = m2;
+        const kept = await save(true, null, "enter");
+        keyEvent("enter", { space: hexOf(sp.idBytes), from: f.epoch, to: m.status().epoch, why, proof: proof?.join ?? null });
+        ctx.log(`${sp.name ?? "space"} keys`, { what: `entered by itself (${why}) at epoch ${f.epoch}: no one else needed` });
+        announce().catch(e => keyEvent("announce-failed", { space: hexOf(sp.idBytes), why: String(e?.message ?? e).slice(0, 160) }));
+        historyOwed = true;
+        return kept;
+      }
+      keyEvent("enter-no-info", { space: hexOf(sp.idBytes), why, announced: anns.length });
+      throw new Error(`${sp.name ?? "this space"}: no group info a listed member published yet — entered when one is`);
+    }
+    let historyOwed = false;
     const g = {
-      // ADD a person (a DID) by a key package from their card: the WELCOME (hex) for them.
-      add: keyPackage =>
-        (queue = ctx.background("keys: queue", queue).then(() =>
-          change(
-            () => {
-              const [commit, welcome] = m.add(bytes(keyPackage));
-              return [commit, hexOf(welcome)];
-            },
-            // (The request it answers, by its key's tag: the commit's step names it — `member`'s key.)
-            { kind: "add", q: glue.admission_tag(keyPackage).slice(0, 10) },
-          ),
-        )),
-      // WELCOMED AGAIN in ONE commit: the person's `stale` entries (indexes) out, their key package in — the WELCOME
-      // (hex). One epoch, not a removal's and an add's: each epoch leaves whoever is behind further behind.
-      readd: (stale, keyPackage) =>
-        (queue = ctx.background("keys: queue", queue).then(() => {
-          const creds = [...stale].map(i => m.status().members.find(x => x.index === i)?.cred).filter(Boolean);
-          return change(
-            () => {
-              const [commit, welcome] = m.readd(Uint32Array.from(stale), bytes(keyPackage));
-              return [commit, hexOf(welcome)];
-            },
-            { kind: "readd", creds, q: glue.admission_tag(keyPackage).slice(0, 10) },
-          );
-        })),
-      // REMOVE members (their indexes in the group): one commit each, a new epoch each, which they cannot read.
-      remove: indexes =>
-        (queue = ctx.background("keys: queue", queue).then(async () => {
-          for (const i of [...indexes].sort((a, b) => b - a)) {
-            const cred = m.status().members.find(x => x.index === i)?.cred ?? null;
-            await change(() => [m.remove(i), null], cred ? { kind: "remove", creds: [cred] } : null);
-          }
-          ctx.log(`${sp.name ?? "space"} keys`, { what: `${indexes.length} member(s) removed: epoch ${m.status().epoch}` });
-          return st;
-        })),
+      // ENTER by itself (`enterNow`), in the group's queue.
+      enter: (why, proof = null) => (queue = ctx.background("keys: queue", queue).then(() => enterNow(why, proof))),
+      // The space's LIST changed (`roles`): what was deferred for it is decided now.
+      listChanged: () => {
+        shared = null;
+        // What waited for it (a catch-up deferred until the list read whole) goes on now.
+        ctx.background("keys: listChanged", g.ready());
+      },
       // REFRESH this DID's own keys in the space (a device of the account was removed: what it held follows nothing
       // after this commit).
       // A TARGET, not a one-off (ARCHITECTURE §5, reconciling): the mark `~refresh` stays until a refresh commit is in
@@ -960,77 +1037,10 @@ export async function start(ctx) {
           ctx.log(`${sp.name ?? "space"} keys`, { what: `this account's keys refreshed: epoch ${m.status().epoch}` });
           return st;
         })),
-      // JOINED from a welcome (someone added this DID): answered by whichever batch of key packages holds its key
-      // package; that batch kept without it (a key package works once).
-      // `expect` ({ epoch, branch }: a REPAIR, `conversation`): taken only if it leads onto that branch — checked before
-      // anything is kept (a member who made a group of their own under this space's id pulls nobody into it).
-      join: (welcome, { expect = null, above = null } = {}) =>
-        (queue = ctx.background("keys: queue", queue).then(async () => {
-          const t = await spacekeys();
-          await t.reread?.();
-          // Already in the group on ANOTHER branch (a fork, healed by being added again): its epoch secrets kept
-          // first — what this node wrote there stays readable — then the welcome's branch joined.
-          if (m && !m.status().removed) {
-            const was = m.status();
-            await keepLostHere(await ctx.optional("keys: logs.branch", logs.branch(was, Math.max(0, was.epoch - 8)), () => [{ epoch: was.epoch, secret: hexOf(was.secret) }]));
-          }
-          // Each batch's own failure: one that does not hold its key package says NotFound; the one that HOLDS it says
-          // why it did not open (what to report — never hidden behind the others' NotFound).
-          const failed = [];
-          for (const row of t.rows().filter(r => r.key.startsWith("packages/"))) {
-            const before = m;
-            let mb = null;
-            try {
-              mb = await memberWith(row.value);
-              m = mb.join_space(sp.idBytes, bytes(welcome));
-            } catch (e) {
-              // Whether this batch HOLDS a package the welcome is made for (then NotFound means: not found in the GROUP's
-              // tree — its entry there is not the one this package made — never "not held").
-              let holds = false;
-              try {
-                const aimed = new Set(welcomeRefs(bytes(welcome)));
-                holds = batchRefs(bytes(row.value)).some(r => aimed.has(r));
-              } catch {}
-              failed.push({ batch: row.key.slice("packages/".length, "packages/".length + 8), size: String(row.value ?? "").length, holds, why: String(e?.message ?? e) });
-              continue;
-            }
-            // A RE-ADD for a node BEHIND (`above`: its epoch): taken only if it leads past where this node is — an old
-            // welcome never takes a node back.
-            if (above != null && m.status().epoch <= above) {
-              m = before;
-              throw new Error(`that welcome leads to epoch ${m?.status().epoch ?? "?"} at most, not past this node's ${above}: not taken`);
-            }
-            if (expect) {
-              const fp = await ctx.optional("keys: fingerprint", fingerprint(expect.epoch), () => null);
-              if (fp !== expect.branch) {
-                m = before;
-                throw new Error("that welcome does not lead onto the space owner's branch: not taken");
-              }
-            }
-            ctx.log(`${sp.name ?? "space"} keys`, { what: `joined the space's group: epoch ${m.status().epoch}` });
-            const kept = await save(false, null, "join");
-            // Its package dropped from the batch only once the group is SAVED (a save that failed: the package kept).
-            await t.put(row.key, hexOf(mb.packages()));
-            keyEvent("join", { space: hexOf(sp.idBytes), epoch: m.status().epoch, batch: row.key.slice("packages/".length, "packages/".length + 8), expect: expect ? `${expect.epoch}/${String(expect.branch).slice(0, 8)}` : null });
-            const n = await logs.history(m.status(), { whole: !!expect }).catch(e => (ctx.log(`${sp.name ?? "space"} keys`, { what: `its history: ${e.message}` }), 0));
-            if (n) ctx.log(`${sp.name ?? "space"} keys`, { what: `${n} earlier epoch(s) of its history kept` });
-            return kept;
-          }
-          keyEvent("join-failed", { space: hexOf(sp.idBytes), batches: failed.length, holding: failed.filter(f => f.holds).length, why: String(failed.find(f => f.holds)?.why ?? failed[0]?.why ?? "none held").slice(0, 160) });
-          const holding = failed.filter(f => f.holds);
-          if (holding.length)
-            throw new Error(`the welcome's key package IS held here (batch ${holding.map(f => f.batch).join(", ")}) but the group it describes has no entry matching it: ${holding[0].why}`);
-          const real = failed.filter(f => !/KeyPackageNotFound/.test(f.why));
-          throw new Error(
-            real.length
-              ? `the batch holding its key package refused it — ${real.map(f => `${f.batch}: ${f.why}`).join("; ")}`
-              : `no key package of this account answers that welcome (${failed.length} batch(es) tried; ${await explain(t, welcome).catch(e => `unexplained: ${e.message}`)}): ${failed[0]?.why ?? "none held"}`,
-          );
-        })),
       // MADE by this DID, its first member.
       create: () =>
         (queue = ctx.background("keys: queue", queue).then(async () => {
-          m = (await memberWith(null)).create_space(sp.idBytes);
+          m = (await memberWith()).create_space(sp.idBytes);
           ctx.log(`${sp.name ?? "space"} keys`, { what: "made the space's group: epoch 0" });
           return save(true, null, "create");
         })),
@@ -1051,22 +1061,8 @@ export async function start(ctx) {
           await ctx.optional("keys: current", current(false), () => null);
           return !!m?.status().removed;
         })),
-      adopt: (epoch, stateHex) =>
-        (queue = ctx.background("keys: queue", queue).then(async () => {
-          if (m && m.status().epoch >= epoch) return false;
-          // The group as it was here, kept with the commit upkeep wrote from it (its epoch log's): undone like any lost
-          // commit if the log's winner turns out another (`logs.heal`).
-          if (m) {
-            const was = m.status();
-            const entry = await ctx.optional("keys: logs.commitFrom", logs.commitFrom(was.epoch, was.secret, true), () => null);
-            if (entry) await keepSnap(was, entry);
-          }
-          await (await spacekeys()).put(at, JSON.stringify({ epoch, state: stateHex }));
-          await load();
-          ctx.log(`${sp.name ?? "space"} keys`, { what: `the group upkeep moved (someone let in): epoch ${epoch}` });
-          keyEvent("adopt-delegate", { space: hexOf(sp.idBytes), epoch });
-          return true;
-        })),
+      adopt: (epoch, stateHex) => (queue = ctx.background("keys: queue", queue).then(() => adoptNow(epoch, stateHex))),
+
       // Loaded and brought current; null where this account is not in the space's group. `fresh`: its log read again
       // from the network first (before a write: sealed with the newest epoch, never one a removed member holds).
       // READY, SHARED: a read takes the group as it stands — one check per space, every table of it waiting on the
@@ -1079,10 +1075,12 @@ export async function start(ctx) {
           const s = await current(fresh);
           if (!s) return null;
           const log = await logs.ensure(m.status(), false, null, "ready");
+          // ENTERED BY ITSELF: its history from the logs, once a member wrote the epoch's way back.
+          if (historyOwed && (await ctx.optional("keys: logs.history", logs.history(m.status()), () => 0))) historyOwed = false;
           if (log && followed !== log) (followed = log), log.onChange?.(() => followed === log && (shared = null));
-          announce().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `announcing its branch: ${e.message}` }));
+          announce().catch(e => keyEvent("announce-failed", { space: hexOf(sp.idBytes), why: String(e?.message ?? e).slice(0, 160) }));
           // RECONCILED, never redone: removals follow the acts (`moderation.enforce`, every pass), admissions too
-          // (`conversation.admit`, on their own request); a REFRESH still owed (its mark: a lost race, a page closed first) made now.
+          // (devices entering by themselves); a REFRESH still owed (its mark: a lost race, a page closed first) made now.
           if (!refreshTried && (await spacekeys()).rows().some(r => r.key === `${at}~refresh` && r.value) && (refreshTried = true))
             queueMicrotask(() => g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refresh owed: ${e.message}` })));
           return s;
@@ -1154,6 +1152,13 @@ export async function start(ctx) {
           return { opens, state: "held", epoch: s.epoch, removed: !!s.removed, members: s.members?.length ?? 0, keyHeld: !!k?.tableKey, why: k?.tableKey ? null : (k?.why ?? k?.refused ?? null) };
         })),
       lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
+      // WHETHER THIS DEVICE HOLDS the group at all — its state row, the table read AGAIN from the network first: a
+      // definite answer (`ready()` is null too while the table is still arriving — never a reason to ask for keys).
+      holds: async () => {
+        const t = await spacekeys();
+        await t.reread?.();
+        return t.rows().some(r => r.key === at && r.value);
+      },
       fingerprint: e => (queue = ctx.background("keys: queue", queue).then(() => fingerprint(e))),
     };
     // (Its READS total — `ctx.total`: never thrown at a caller; a group not ready here reads as null.)
@@ -1172,34 +1177,11 @@ export async function start(ctx) {
     return st && !st.removed ? st.epoch + 1 : 0;
   }
 
-  // Once the account's keys are ready here: its CARD is current — its inbox and its devices' credentials (a device
-  // joined since). (No key packages: a request carries its own — `conversation.askIn`.)
-  // AUDIT (log only — owner 10-07: welcomes "offered by <batch>, not held" kept failing; measured before any fix): per
-  // batch, what it offered against what its row holds, and whether each package on the card is held. Once a page.
+  // AUDIT (log only), once a page: each space's epoch log — one opened without its way back mended (owner 10-07).
   let audited = false;
-  async function auditPackages() {
+  async function auditChains() {
     if (audited) return;
     audited = true;
-    const t = await spacekeys();
-    await t.settled;
-    const rows = t.rows();
-    const lines = [];
-    for (const r of rows.filter(x => x.key.startsWith("offers/") && x.value)) {
-      const id = r.key.slice("offers/".length);
-      let kps = [];
-      try {
-        kps = JSON.parse(r.value);
-      } catch {}
-      const pk = rows.find(x => x.key === `packages/${id}`);
-      let held = [];
-      try {
-        held = pk?.value ? batchRefs(bytes(pk.value)) : [];
-      } catch {}
-      const refs = await Promise.all(kps.map(refOf));
-      const missing = refs.filter(x => !held.includes(x)).length;
-      const w = pk?.id ? pk.id.slice(0, 8) : "?";
-      lines.push(`${id.slice(0, 8)}: offered ${kps.length}, row ${pk ? (pk.value ? `holds ${held.length}` : "EMPTY") : "MISSING"} (writer ${w}), offered-not-held ${missing}`);
-    }
     for (const sp of await ctx.optional("keys: mine", (await ctx.require("space")).mine(), () => [])) {
       if (sp.kind === "account") continue;
       const d = await group(sp).diag().catch(e => ({ state: `error ${e?.message ?? e}` }));
@@ -1212,10 +1194,9 @@ export async function start(ctx) {
       ctx.log("account keys", { what: `AUDIT space ${broken ? "BROKEN CHAIN — " : ""}${sp.name ?? sp.id.slice(0, 8)}${broken ? ` [mend: ${mended}; its key events: ${evs || "none recorded"}]` : ""}: group ${d.state}${d.state === "held" ? ` at epoch ${d.epoch}, ${d.members} member(s)${d.removed ? ", REMOVED" : ""}, its epoch key ${d.keyHeld ? "HELD" : `NOT held${d.why ? ` (${d.why})` : ""}`}, its log's open: ${d.opens}` : ""}` });
     }
     const allEv = await ctx.optional("keys: keyEvents", keyEvents(), () => []);
-    ctx.log("account keys", { what: `AUDIT key events — ${allEv.length} kept; last: ${allEv.slice(-3).map(e => `${e.event}${e.epoch != null ? ` @${e.epoch}` : ""}${e.reason ? ` (${e.reason})` : ""} by ${String(e.device).slice(0, 8)} v${e.v}`).join("; ") || "none"}` });
-    const whole = lines.filter(l => / offered-not-held 0$/.test(l)).length;
-    ctx.log("account keys", { what: `AUDIT key packages — ${lines.length} batch(es), ${whole} hold all they offered, ${lines.length - whole} have used ones` });
+    ctx.log("account keys", { what: `AUDIT key events — ${allEv.length} kept; last: ${allEv.slice(-3).map(e => `${e.event}${e.epoch != null ? ` @${e.epoch}` : ""}`).join(", ")}` });
   }
+  // Once the account's keys are ready here: its CARD is current — its inbox and its devices' credentials.
   const cardReady = () =>
     ctx
       .require("directory")
@@ -1226,7 +1207,7 @@ export async function start(ctx) {
       .catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
   const start = () =>
     ready()
-      .then(st => st && !st.removed && (setTimeout(cardReady), setTimeout(() => auditPackages().catch(e => ctx.failed("account keys", e, `AUDIT failed: ${e?.message ?? e}`)), 20000)))
+      .then(st => st && !st.removed && (setTimeout(cardReady), setTimeout(() => auditChains().catch(e => ctx.failed("account keys", e, `AUDIT failed: ${e?.message ?? e}`)), 20000)))
       .catch(e => ctx.log("account keys", { what: e?.message ?? String(e) }));
   start();
   addEventListener("craftworks:auth", e => {
@@ -1234,94 +1215,5 @@ export async function start(ctx) {
     else start();
   });
 
-  // KEY PACKAGES of this DID, made for a REQUEST (`conversation.askIn`: one, carried by the request — its welcome is
-  // made with it and no other). A fresh batch, its secrets kept in the account's table (any device of the account
-  // opens the welcome).
-  async function keyPackages(n = 4) {
-    const mb = await memberWith(null);
-    const kps = Array.from({ length: n }, () => hexOf(mb.key_package()));
-    // Its id starts with when it was made (base 36): what retires the batches before it. What it OFFERS (the key
-    // packages a card may list) beside it, under the same id: whether a card's packages are answerable here.
-    const id = `${Date.now().toString(36)}-${newId()}`;
-    const t = await spacekeys();
-    await t.put(`packages/${id}`, hexOf(mb.packages()));
-    await t.put(`offers/${id}`, JSON.stringify(kps));
-    prunePackages().catch(e => ctx.failed("account keys", e, `pruning key packages: ${e.message}`));
-    return kps;
-  }
-  // SPENT BATCHES: a batch is off the card once the next one is made; a welcome made from one of its key packages
-  // before that may still arrive, so it is kept a WEEK longer, then dropped. The newest is always kept.
-  const WEEK = 7 * 24 * 3600 * 1000;
-  async function prunePackages() {
-    const t = await spacekeys();
-    const made = key => {
-      const m = /^packages\/([0-9a-z]+)-/.exec(key);
-      return m ? parseInt(m[1], 36) : 0;
-    };
-    const batches = t.rows().filter(r => r.key.startsWith("packages/") && r.value).map(r => ({ key: r.key, at: made(r.key) })).sort((a, b) => a.at - b.at);
-    for (let i = 0; i + 1 < batches.length; i++) {
-      const retired = batches[i + 1].at;
-      if (retired && Date.now() - retired > WEEK) {
-        await t.remove(batches[i].key);
-        await t.remove(batches[i].key.replace(/^packages\//, "offers/"));
-        ctx.log("account keys", { what: `a spent batch of key packages dropped (${batches[i].key})` });
-      }
-    }
-  }
-
-  // A key package's CREDENTIAL (hex in; bytes out, or null): whose it is — checked against their key log after
-  // (`directory.keyNotTheirs`).
-  async function kpCredential(kpHex) {
-    try {
-      return mlsGlue.Mls.key_package_credential(bytes(kpHex));
-    } catch {
-      return null;
-    }
-  }
-  // Whether a key package this account offered (by its TAG: sha-256, 16 bytes, hex — as `keypacks` names them) is held.
-  async function holdsTag(tag) {
-    const t = await spacekeys();
-    await t.settled;
-    const held = new Set(t.rows().filter(r => r.key.startsWith("packages/") && r.value).map(r => r.key.slice("packages/".length)));
-    for (const r of t.rows().filter(r => r.key.startsWith("offers/") && r.value && held.has(r.key.slice("offers/".length)))) {
-      let kps = [];
-      try {
-        kps = JSON.parse(r.value);
-      } catch {}
-      for (const kp of kps) {
-        const h = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(kp)))].slice(0, 16).map(x => x.toString(16).padStart(2, "0")).join("");
-        if (h !== tag) continue;
-        // Its SECRET in its batch, not only the batch's row (one not there: not held — its welcomer is asked again).
-        const pk = t.rows().find(x => x.key === `packages/${r.key.slice("offers/".length)}` && x.value);
-        let refs = [];
-        try {
-          refs = pk ? batchRefs(bytes(pk.value)) : [];
-        } catch {}
-        return refs.includes(await refOf(kp)) ? r.key.slice("offers/".length, "offers/".length + 8) : false;
-      }
-    }
-    return false;
-  }
-  // Whether a WELCOME is made for this key package (its reference among those the welcome names): `{ ok, aimed, asked }`.
-  const welcomeFor = async (welcome, kp) => {
-    const aimed = welcomeRefs(bytes(welcome));
-    const asked = await refOf(kp);
-    return { ok: aimed.includes(asked), aimed: aimed.map(a => a.slice(0, 8)), asked: asked.slice(0, 8) };
-  };
-  // This device's KEY PACKAGES, counted (for a report: what a welcome could have been made for here) — counts only.
-  async function packageCounts() {
-    const t = await spacekeys();
-    await t.settled;
-    const batches = t.rows().filter(r => r.key.startsWith("packages/") && r.value);
-    let held = 0;
-    for (const b of batches) {
-      try {
-        held += batchRefs(bytes(b.value)).length;
-      } catch {}
-    }
-    const offers = t.rows().filter(r => r.key.startsWith("offers/") && r.value).length;
-    return { batches: batches.length, offers, held };
-  }
-
-  return { repairAccount, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, keyPackages, kpCredential, holdsTag, welcomeFor, packageCounts, onChange: f => watchers.push(f) };
+  return { repairAccount, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
 }

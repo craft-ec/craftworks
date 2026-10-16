@@ -741,7 +741,8 @@ export async function start(ctx) {
       // its members, as any file brought into a space).
       await (await ctx.require("files")).publicity(files, null, false).catch(e => ctx.failed("posts", e, `its files kept private: ${e.message}`));
       const sealed = await submit({ board: g.id, title, body, kind, files, meta, at, write, audience: "members" });
-      return submit({ title, body: "", kind, meta: { level: meta.level, gate: { space: g.id, ref: sealed, name: g.name } }, at });
+      // The gate names the group (its owner and nonce prove its id): one at the level enters it by itself.
+      return submit({ title, body: "", kind, meta: { level: meta.level, gate: { space: g.id, ref: sealed, name: g.name, kind: g.kind, owner: g.governance.owner, nonce: g.governance.nonce, ...(g.group ? { group: g.group } : {}) } }, at });
     }
     // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
     if (!board && (audience === "friends" || audience === "followers")) {

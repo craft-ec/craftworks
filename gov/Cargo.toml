@@ -8,3 +8,4 @@ description = "GOVERNANCE (a space's roles and access): the replay of its acts. 
 
 [dependencies]
 serde_json = "1"
+blake3 = { version = "1", default-features = false }

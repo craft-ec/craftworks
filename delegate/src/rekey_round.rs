@@ -112,9 +112,6 @@ fn seen<H: Host>(h: &H) -> std::collections::BTreeMap<String, u64> {
     h.get_secret(SEEN).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
 
-fn wakeups<H: Host>(h: &H) -> u64 {
-    h.get_secret(identity::UPKEEP_WAKEUPS).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0)
-}
 
 /// The contracts, as upkeep holds them.
 pub struct Held {
@@ -172,7 +169,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
     // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
     let dids: Vec<[u8; 32]> = roster.iter().filter_map(|(_, d)| craftworks_account::did_bytes(d)).collect();
     let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
-    let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: wakeups(h), salt: None };
+    let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: identity::upkeep_wakeups(h), salt: None };
     keep(h, Some(&r));
     io
 }
@@ -193,7 +190,7 @@ fn why<H: Host>(h: &mut H, w: u64, what: &str) {
 
 /// A WAKE-UP: a round begun (none running, the time come, a member whose page is away), or a stuck one dropped.
 pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
-    let w = wakeups(h);
+    let w = identity::upkeep_wakeups(h);
     let io = woke_(h);
     if !io.is_empty() {
         why(h, w, "a round begun");
@@ -201,7 +198,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     io
 }
 fn woke_<H: Host>(h: &mut H) -> Vec<Io> {
-    let w = wakeups(h);
+    let w = identity::upkeep_wakeups(h);
     if let Some(r) = load(h) {
         if w.saturating_sub(r.moved) < STUCK {
             why(h, w, "a round is running");
@@ -270,7 +267,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
 }
 fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> {
     let Some(mut r) = load(h) else { return Vec::new() };
-    r.moved = wakeups(h);
+    r.moved = identity::upkeep_wakeups(h);
     match (r.step.clone(), reply) {
         (Step::Reading, Reply::Got { id, state }) => {
             let io = r.reading.got(&c.codes(), id, state);
@@ -419,7 +416,7 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
             ),
         );
         if let Some(s) = soonest {
-            let at = wakeups(h) + s.div_ceil(60_000) + 1;
+            let at = identity::upkeep_wakeups(h) + s.div_ceil(60_000) + 1;
             let was = h.get_secret(NEXT_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(u64::MAX);
             h.set_secret(NEXT_AT, &at.min(was).to_le_bytes());
         }

@@ -1,8 +1,9 @@
 // GROUPS, a capability: "seen by just these people" — ONE implementation for every narrower audience: a person's
 // circles (friends, followers), a channel only some may read (a role's holders, named people). A group is a SPACE (kind
 // `server`, never on the spaces panel) whose MLS group seals what is written there to its members; its members are
-// COMPUTED (`want`: who should be in it now) and KEPT IN STEP by whoever manages it — the missing welcomed through
-// their inbox, the extra removed (the group moves to a new epoch: one taken out reads nothing written after).
+// COMPUTED (`want`: who should be in it now) and KEPT IN STEP by whoever manages it — ITS LIST written (the missing put
+// on it and told: their devices enter by themselves; the extra taken off: the account's node takes their keys out —
+// FOUNDATION "Members and keys").
 //
 //   const groups = await ctx.require("groups");
 //   const sp = await groups.of(key, { name, setup })   // this person's group for `key` (made the first time it is
@@ -33,14 +34,15 @@ export async function start(ctx) {
       );
     return making.get(key);
   }
-  // ITS MEMBERS as `want` says (this person and its owner always): the missing invited, the extra removed.
+  // ITS LIST as `want` says (this person and its owner always): the missing put on it, the extra taken off — by the
+  // list, never by who holds keys now (one listed and not entered yet is not told again).
   async function keep(sp, want) {
     const me = await space.me.strict();
     if (!me) return;
     const r = await roles.of.strict(sp);
     await r.settled;
     const keepIn = new Set([me, r.owner].filter(Boolean));
-    const have = new Set(r.members().map(m => m.did));
+    const have = new Set(r.roster());
     for (const did of want) if (!have.has(did) && !keepIn.has(did)) await conversation.invite(sp, did).catch(e => ctx.failed("groups", e, `${sp.name}: ${did.slice(12, 20)}… not added yet: ${e.message}`));
     const mod = await (await ctx.require("moderation")).of(sp);
     for (const did of have) if (!want.has(did) && !keepIn.has(did)) await mod.remove(did).catch(e => ctx.failed("groups", e, `${sp.name}: ${did.slice(12, 20)}… not removed yet: ${e.message}`));

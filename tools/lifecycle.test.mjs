@@ -137,37 +137,32 @@ test("progress is the lifecycle's: one line per process in progress, its end sai
   }
 });
 
-// A REQUEST TO BE LET IN (owner 10-14: what another user faces is read in the health reports): the asker's `join` and
-// every decider's `member` moves under the SAME key (the request's), each one report carrying its reason — a page's
-// and the node's alike.
-test("a request's story is one key: asked, skipped and why, let in, joined", async () => {
-  const q = "q:abcdef0123";
+// A REQUEST TO JOIN never hangs (owner 10-17): asked; then CANCELLED by the asker, REJECTED by one who may invite, or
+// MEMBER (let in — or in by a code, the open door, a level — entered by itself). Every move reported, keyed by the space.
+test("a request ends: asked, then cancelled, rejected or in — every move reported", async () => {
   const from = healths.length;
-  L.transition("join", q, "ask", { s: "5a5a5a", entry: "join" });
-  L.transition("member", q, "skip", { by: "node", why: "another member's turn first" });
-  L.transition("member", q, "admit", { by: "page" });
-  L.transition("member", q, "welcomed", { by: "page", e: 7 });
-  L.transition("join", q, "joined", { e: 7 });
+  L.transition("join", "s-cancel", "ask", { s: "5a5a5a" });
+  L.transition("join", "s-cancel", "cancelled", {});
+  L.transition("join", "s-reject", "ask", {});
+  L.transition("join", "s-reject", "rejected", { why: "not now" });
+  L.transition("join", "s-in", "ask", {});
+  L.transition("join", "s-in", "joined", { why: "told" });
+  // In by a code with no request first: straight to MEMBER.
+  L.transition("join", "s-code", "joined", { why: "code" });
   await tick();
-  const got = healths.slice(from);
-  assert.deepEqual(got.map(h => [h.k, h.s, h.to]), [
-    ["lifecycle-join", q, "NONE>ASKED"],
-    ["lifecycle-member", q, "NONE>SKIPPED"],
-    ["lifecycle-member", q, "SKIPPED>ADMITTING"],
-    ["lifecycle-member", q, "ADMITTING>WELCOMED"],
-    ["lifecycle-join", q, "ASKED>MEMBER"],
+  assert.deepEqual(healths.slice(from).map(h => [h.s, h.to]), [
+    ["s-cancel", "NONE>REQUESTED"],
+    ["s-cancel", "REQUESTED>CANCELLED"],
+    ["s-reject", "NONE>REQUESTED"],
+    ["s-reject", "REQUESTED>REJECTED"],
+    ["s-in", "NONE>REQUESTED"],
+    ["s-in", "REQUESTED>MEMBER"],
+    ["s-code", "NONE>MEMBER"],
   ]);
-  assert.match(got[1].why, /another member's turn first/, "the reason is in the report");
-  assert.equal(got[1].d.by, "node");
-  // A move the table does not allow is a bug, not a report: admitting again from WELCOMED.
-  assert.throws(() => L.transition("member", q, "admit", {}), e => e.kind === "bug");
-  // WAITING on an ask made on an earlier page (NONE in this one): a move, not a bug (10-15, ×3 in the live reports).
-  assert.equal(L.transition("join", "q:0000aaaa11", "wait", { why: "not let in yet" }), "WAITING");
-  // A FAILED attempt is tried again (the rule still answers the request once).
-  const r = "q:ffff000011";
-  L.transition("member", r, "admit", { by: "page" });
-  L.transition("member", r, "fail", { by: "page", why: "the commit was refused" });
-  assert.equal(L.transition("member", r, "admit", { by: "page" }), "ADMITTING");
+  // A request after its end is a new one.
+  assert.equal(L.transition("join", "s-reject", "ask", {}), "REQUESTED");
+  // The retired deciders' machine is gone: a move on it is a bug, never silent.
+  assert.throws(() => L.transition("member", "q:x", "admit", {}), e => e.kind === "bug");
 });
 
 // A GROUP's STEP (a commit, a join — 10-14: an epoch moved twice and nothing said by what): kept and reported, the
