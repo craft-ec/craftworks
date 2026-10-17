@@ -120,3 +120,26 @@ REQUIRED BY THEM (part of the model):
 
 Every flow above, and their combinations, in the simulation with the real crate, pass/fail per run, controls proving the
 checks fire — before any product code. Then one flow at a time into the product, each proven on fx.
+
+## K3 — where operations live and how they travel (design before code)
+
+1. **One feed per DEVICE, per group: `keyops`** — the device's own tail (its node key: one writer, as every space feed
+   today), so two devices never write one tail. The OPERATION inside is signed by the ACCOUNT's member key (BeeKEM's
+   signer); our check reads that signer, never the feed's owner.
+2. **Sealed with the space's OPEN key** (`space_table_key` from the space id — as the writers list and the door): the
+   operations carry only public keys and secrets already encrypted to members (Keyhive syncs them openly), and a
+   NEWCOMER must read them before it holds any group key.
+3. **Which feeds:** every device of every account the space's credentials name (`storage.writersOf` — the one map of a
+   space's writers), the newcomer's own included.
+4. **Large operations** (a worst-case rotation over ~200 KB) go as a content-addressed block of the space's (erasure-
+   coded, as files); the row holds its hash. Readers fetch the block, check the hash, then merge.
+5. **Merging:** every operation read, from every feed, offered to the group in any order; `Waiting` ones offered again
+   when another arrives (causal order without a global log). The group is saved after each pass.
+6. **Who writes when:** the page while open; the node (K5) when no page ticks — upkeep's existing rule ("a page that
+   ticks keeps upkeep out of its way"), so a device's feed has one writer at a time.
+7. **Nothing else changes in K3:** content keys still come from MLS until K4 switches the space's tables.
+
+Walked flows: a newcomer (reads feeds by credentials, gets the add with its invitation, merges, reads); a member offline
+long (reads every feed's new rows, merges in any order); two devices of one account (two feeds, one member — both
+signed by the account key; our check is per signer); a removed member's later rows (still in its feed; refused by our
+check); a device that lost its state (reads every feed from the start; the account hands its leaf secrets — K6).
