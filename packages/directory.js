@@ -65,6 +65,8 @@ export async function start(ctx) {
     return {
       handle: rows.find(r => r.key === "handle")?.value ?? null,
       inbox: rows.find(r => r.key === "inbox")?.value ?? null,
+      // Their MEMBER for groups (BeeKEM: `setMember`, read by `members`): `{ cred, leaf }` as JSON, or null.
+      beekem: rows.find(r => r.key === "beekem")?.value ?? null,
       // Their wallet's PAY KEYS (TOKEN §7f: what a private payment to them is derived from) — { scan, spend } hex, or null.
       pay: (() => {
         try {
@@ -122,6 +124,16 @@ export async function start(ctx) {
   }
 
   // THIS person's card: its handle, its inbox, its devices.
+  // THIS ACCOUNT's MEMBER for groups (members and keys on BeeKEM): its credential (the account's member signing key,
+  // signed by its data key — verified by a reader against the account's key log) and its first leaf key — what a member
+  // adding it needs. Written once (the `members` service, which holds BeeKEM).
+  async function setMember({ cred, leaf }) {
+    const sp = await space.account.strict();
+    if (!sp?.shared) throw new Error("this node does not hold the account's data key");
+    const t = await storage.publicTail(CARD, sp.shared);
+    const value = JSON.stringify({ cred, leaf });
+    if (read(t).beekem !== value) await t.put("beekem", value);
+  }
   async function publish({ handle } = {}) {
     await (await ctx.require("keys")).mustWrite("the card");
     const sp = await space.account.strict();
@@ -284,5 +296,5 @@ export async function start(ctx) {
     return dids.filter((_, i) => ok[i]);
   }
 
-  return { credTable, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, devicesEver: ctx.total("directory.devicesEver", () => [], devicesEver), handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
+  return { setMember, credTable, card: ctx.total("directory.card", () => null, card), publish, setContributions, setPay, levelOf, devicesEver: ctx.total("directory.devicesEver", () => [], devicesEver), handle: ctx.total("directory.handle", () => null, handle), shown, name, nameEl, publicOf: ctx.total("directory.publicOf", () => null, publicOf), dataKey, devices: ctx.total("directory.devices", () => [], devices), devicesWhy, onDevices, listMe, isListed: ctx.total("directory.isListed", () => false, isListed), listed };
 }

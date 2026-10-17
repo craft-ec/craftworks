@@ -21,6 +21,18 @@ pub const AHEAD_MS: f64 = 3_600_000.0;
 /// How many acts a new one names (`deps`).
 pub const DEPS: usize = 8;
 
+/// The acts that change WHO MAY HOLD A GROUP's KEYS (who is listed, who is put out): PUBLIC, as Matrix's membership
+/// state is (docs/proposals/members-and-keys-beekem.md) — every member, joined whenever, and one being added, checks an
+/// add or a removal against them (`craftworks_groups`' check). `Some(true)`: it lets its target in; `Some(false)`: puts it
+/// out; `None`: not such an act. (Its target: `did`, or its writer for `join` / `leave`.)
+pub fn moves_entries(act: &str) -> Option<bool> {
+    match act {
+        "added" | "admitted" | "member" | "join" | "transfer" => Some(true),
+        "remove" | "ban" | "lapsed" | "leave" => Some(false),
+        _ => None,
+    }
+}
+
 fn deps_of(e: &Value) -> impl Iterator<Item = &str> {
     e.get("deps").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)
 }

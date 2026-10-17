@@ -41,7 +41,11 @@ for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {
     if (f !== home) for (const m of hits) bad.push(`packages/${f}:${lineOf(src, m.index)}: ${what}`);
     else if (hits.length !== n) bad.push(`packages/${f}: ${hits.length} sites, the one implementation is ${n} — ${what}${hits.length ? ` (lines ${hits.map(m => lineOf(src, m.index)).join(", ")})` : ""}`);
   }
-  for (const [re, what] of BANNED) for (const m of src.matchAll(re)) bad.push(`packages/${f}:${lineOf(src, m.index)}: ${what}`);
+  // (`members.js` is the BeeKEM door: a member ADDS who the list names there, by design — the MLS layer's bans are not
+  // its rules.)
+  if (f !== "members.js") for (const [re, what] of BANNED) for (const m of src.matchAll(re)) bad.push(`packages/${f}:${lineOf(src, m.index)}: ${what}`);
+  // ONE DOOR TO BEEKEM on a page: its package loaded only by `members` (our check before it).
+  if (f !== "members.js") for (const m of src.matchAll(/"groups-glue"|"groups-wasm"|\bBeeGroup\b/g)) bad.push(`packages/${f}:${lineOf(src, m.index)}: BeeKEM used outside its one door on a page: \`members\``);
 }
 // The Rust crates.
 const rs = [];

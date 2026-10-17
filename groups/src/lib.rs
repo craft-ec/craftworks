@@ -199,3 +199,119 @@ fn admitted(op: &Signed<CgkaOperation>, check: &impl Check) -> Result<(), String
 
 #[cfg(test)]
 mod tests;
+
+/// THE PAGE's bindings (the `page` feature: this crate as its own package, as MLS's). Bytes in and out; our check as
+/// three JS functions (`accountOf(memberHex)` → DID or null, `listed(did)`, `allows(actHex, add, targetHex)`).
+#[cfg(all(target_arch = "wasm32", feature = "page"))]
+mod page {
+    use super::*;
+    use wasm_bindgen::prelude::*;
+
+    fn err(x: impl core::fmt::Display) -> JsValue {
+        JsValue::from_str(&x.to_string())
+    }
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+    fn b32(b: &[u8]) -> Result<[u8; 32], JsValue> {
+        b.try_into().map_err(|_| err("32 bytes expected"))
+    }
+    fn bytes(v: Option<Vec<u8>>) -> JsValue {
+        v.map(|b| js_sys::Uint8Array::from(&b[..]).into()).unwrap_or(JsValue::NULL)
+    }
+    struct JsCheck(js_sys::Object);
+    impl JsCheck {
+        fn call(&self, f: &str, args: &[JsValue]) -> JsValue {
+            let Ok(f) = js_sys::Reflect::get(&self.0, &f.into()).and_then(|f| f.dyn_into::<js_sys::Function>()) else { return JsValue::NULL };
+            let r = match args {
+                [a] => f.call1(&self.0, a),
+                [a, b, c] => f.call3(&self.0, a, b, c),
+                _ => return JsValue::NULL,
+            };
+            r.unwrap_or(JsValue::NULL)
+        }
+    }
+    impl Check for JsCheck {
+        fn account_of(&self, member: &[u8; 32]) -> Option<String> {
+            self.call("accountOf", &[hex(member).into()]).as_string()
+        }
+        fn listed(&self, did: &str) -> bool {
+            self.call("listed", &[did.into()]).as_bool().unwrap_or(false)
+        }
+        fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
+            self.call("allows", &[hex(act).into(), add.into(), hex(target).into()]).as_bool().unwrap_or(false)
+        }
+    }
+
+    /// An account's member id (hex) and first leaf key, from its space member seed.
+    #[wasm_bindgen]
+    pub fn beekem_member(member_seed: &[u8]) -> Result<js_sys::Array, JsValue> {
+        let a = Account::of(&b32(member_seed)?);
+        Ok([JsValue::from(hex(&a.id.0.to_bytes())), js_sys::Uint8Array::from(&a.leaf_key().to_bytes()[..]).into()].into_iter().collect())
+    }
+
+    #[wasm_bindgen]
+    pub struct BeeGroup(Group);
+
+    #[wasm_bindgen]
+    impl BeeGroup {
+        /// A new group for `space` made by this account: `[group, its first operation]`.
+        pub fn create(space: &[u8], member_seed: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let (g, op) = Group::create(&b32(space)?, Account::of(&b32(member_seed)?)).map_err(err)?;
+            Ok([JsValue::from(BeeGroup(g)), js_sys::Uint8Array::from(&op[..]).into()].into_iter().collect())
+        }
+        /// An empty replica of `space`'s group for this account.
+        pub fn empty(space: &[u8], member_seed: &[u8]) -> Result<BeeGroup, JsValue> {
+            Ok(BeeGroup(Group::empty(&b32(space)?, Account::of(&b32(member_seed)?))))
+        }
+        pub fn load(bytes: &[u8], member_seed: &[u8]) -> Result<BeeGroup, JsValue> {
+            Ok(BeeGroup(Group::load(bytes, Account::of(&b32(member_seed)?)).map_err(err)?))
+        }
+        pub fn save(&self) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.0.save().map_err(err)?[..]))
+        }
+        pub fn placed(&self) -> bool {
+            self.0.placed()
+        }
+        /// The member ids placed (hex).
+        pub fn members(&mut self) -> js_sys::Array {
+            self.0.members().iter().map(|m| JsValue::from(hex(m))).collect()
+        }
+        /// MERGE an operation through our check: "applied", "waiting", or "refused: why".
+        pub fn merge(&mut self, op: &[u8], check: js_sys::Object) -> String {
+            match self.0.merge(op, &JsCheck(check)) {
+                Merged::Applied => "applied".into(),
+                Merged::Waiting => "waiting".into(),
+                Merged::Refused(why) => format!("refused: {why}"),
+            }
+        }
+        /// ADD a member (id, first leaf key), authorized by an act's hash: the operation, or null (placed already).
+        pub fn add(&mut self, member: &[u8], leaf: &[u8], act: &[u8]) -> Result<JsValue, JsValue> {
+            let leaf = keyhive_crypto::share_key::ShareKey::from(x25519_dalek::PublicKey::from(b32(leaf)?));
+            Ok(bytes(self.0.add_member(&b32(member)?, &leaf, &b32(act)?).map_err(err)?))
+        }
+        /// REMOVE a member, authorized by an act's hash: the operation, or null (not placed).
+        pub fn remove(&mut self, member: &[u8], act: &[u8]) -> Result<JsValue, JsValue> {
+            Ok(bytes(self.0.remove_member(&b32(member)?, &b32(act)?).map_err(err)?))
+        }
+        /// ROTATE this account's leaf: `[operation, the new leaf secret]` (the account hands the secret to its devices).
+        pub fn rotate(&mut self) -> Result<js_sys::Array, JsValue> {
+            let (op, sk) = self.0.rotate(&mut rand::rngs::OsRng).map_err(err)?;
+            Ok([js_sys::Uint8Array::from(&op[..]), js_sys::Uint8Array::from(&sk.to_bytes()[..])].into_iter().map(JsValue::from).collect())
+        }
+        /// A leaf secret another device of this account made.
+        pub fn take_leaf(&mut self, secret: &[u8]) -> Result<(), JsValue> {
+            self.0.take_leaf(ShareSecretKey::from(x25519_dalek::StaticSecret::from(b32(secret)?)));
+            Ok(())
+        }
+        /// SEAL: `[sealed, operation or null]` (a key change first when the group has concurrent heads).
+        pub fn seal(&mut self, reference: &[u8], plaintext: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let (sealed, op) = self.0.seal(b32(reference)?, plaintext, &mut rand::rngs::OsRng).map_err(err)?;
+            Ok([JsValue::from(js_sys::Uint8Array::from(&sealed[..])), bytes(op)].into_iter().collect())
+        }
+        /// OPEN sealed bytes.
+        pub fn open(&mut self, sealed: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            Ok(js_sys::Uint8Array::from(&self.0.open(sealed).map_err(err)?[..]))
+        }
+    }
+}

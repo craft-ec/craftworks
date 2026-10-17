@@ -409,7 +409,7 @@ async fn main() -> Result<()> {
         std::fs::write(&off_config, b"{}").context("writing the token-off config")?;
         println!("token: OFF (no beacon, no tokens; Nodes, Wallet and Network left out)");
     }
-    let packages: [(&str, &str, PathBuf); 140] = [
+    let packages: [(&str, &str, PathBuf); 143] = [
         // The look: design tokens and base styles, applied by the loader before anything mounts.
         ("theme", "service", app.join("packages/theme.js")),
         ("header", "module", app.join("packages/header.js")),
@@ -455,6 +455,11 @@ async fn main() -> Result<()> {
         // MLS: its own wasm package, loaded only by `keys`.
         ("mls-glue", "module", built.join("craftworks_mls.js")),
         ("mls-wasm", "bytes", built.join("craftworks_mls_bg.wasm")),
+        // Members and keys on BeeKEM: its own package (docs/proposals/members-and-keys-beekem.md).
+        ("groups-glue", "module", built.join("craftworks_groups.js")),
+        ("groups-wasm", "bytes", built.join("craftworks_groups_bg.wasm")),
+        // The groups' trees and their operations (BeeKEM, through our check): the one door on a page.
+        ("members", "service", app.join("packages/members.js")),
         ("feed-glue", "module", built.join("craftworks_feed.js")),
         ("feed-wasm", "bytes", built.join("craftworks_feed_bg.wasm")),
         ("core-glue", "module", built.join("craftworks_core.js")),

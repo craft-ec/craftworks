@@ -440,7 +440,10 @@ export async function start(ctx) {
         // admissions too (10-11: sealed, the asker — reading only the public acts — never learned it was let in, so a
         // welcome that failed was never asked for again: "Requested" for days while listed as a member).
         const admits = ["admitted", "added", "member"].includes(a.act) && policyOf("", "join", Infinity) === "anyone";
-        const toPublic = !SECRET_ACTS.has(a.act) && (isPublic() || admits || (a.act === "policy" && (a.action === "read" || a.action === "join") && ["anyone", "ask"].includes(a.who)));
+        // An act that changes WHO MAY HOLD THE KEYS is public (Matrix's membership state; members and keys on BeeKEM):
+        // every member — and one being added — checks an add or a removal against it (`members`).
+        const moves = !!node.glue.moves_entries(a.act);
+        const toPublic = !SECRET_ACTS.has(a.act) && (isPublic() || admits || moves || (a.act === "policy" && (a.action === "read" || a.action === "join") && ["anyone", "ask"].includes(a.who)));
         // Its time: after every act seen (`Gov::stamp`: now, or just past the latest) — or when it happened (upkeep let someone
         // in while no page ran: the act says when); and the acts it builds on.
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify(stamp(a)));

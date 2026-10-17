@@ -2297,7 +2297,13 @@ mod js {
     /// (the account, its owner key, the DEVICE's node key — hex), or `undefined`.
     #[wasm_bindgen]
     pub fn credential_parts(cred: &[u8]) -> Option<String> {
-        craftworks_identity::read_credential(cred).map(|(did, owner, node, _)| serde_json::json!({ "did": account::did(&did), "owner": hex(&owner), "node": hex(&node) }).to_string())
+        // (`member`: the signing key it names — an account's MLS key, the same key its BeeKEM member id is.)
+        craftworks_identity::read_credential(cred).map(|(did, owner, node, member)| serde_json::json!({ "did": account::did(&did), "owner": hex(&owner), "node": hex(&node), "member": hex(&member) }).to_string())
+    }
+    /// Whether an act changes who may hold a group's keys (`gov::moves_entries`): "in", "out", or undefined.
+    #[wasm_bindgen]
+    pub fn moves_entries(act: &str) -> Option<String> {
+        craftworks_gov::moves_entries(act).map(|i| if i { "in" } else { "out" }.to_string())
     }
     /// AN INVITE CODE's PROOF for one DID (`gov::join_proof`): what a self-entry names in the clear.
     #[wasm_bindgen]

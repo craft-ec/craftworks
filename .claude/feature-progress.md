@@ -2756,7 +2756,7 @@ branch set-aside/anchor-10-17 (not main).
       mls-rs today; proven in K2. (Upstream's no_std build does not compile — not used.)
 - [x] K2 crate `groups` (done 10-17; tests 6 with controls; wasm: as a PAGE package — `page` feature, the browser's randomness, never in the core, as MLS — and inside the delegate with its own randomness hook; the identity build moved 31e8e8b2 → 5ffa7c47: a PIN once at the next release; group-check: the MLS no-add rule scoped to the MLS layer, a new ONE-DOOR-TO-BEEKEM rule, control exit 1). Was: our check before BeeKEM (signer listed, add/remove naming its act's hash), operations' wire
       form, keys from a replay; built into core (page wasm) and delegate (wasm, custom randomness); tests.
-- [ ] K3 storage: each member's operations as its own feed (one writer), merged in causal order (page and node).
+- [x] K3 (10-17, fx v854: A makes the space's tree, adds B; B merges every device's operations through our check — 3 applied, 0 refused — and is PLACED in 31 s). Found and fixed: cards read fresh; the card reader dropped its new field; membership acts PUBLIC (gov::moves_entries — a newcomer checks the add of itself). OPEN in K3: operations over 32 KB (worst-case rotations from ~270 members) as blocks — the row limit is 64 KB. Was: K3 storage: each member's operations as its own feed (one writer), merged in causal order (page and node).
 - [ ] K4 page, spaces: create, reconcile to the list (add + rotate, remove + rotate), content keys from the replayed root
       (tables' epoch keys → update generations), invitations/history.
 - [ ] K5 node: reconcile with every page closed.
