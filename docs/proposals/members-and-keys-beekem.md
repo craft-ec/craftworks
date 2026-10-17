@@ -194,3 +194,29 @@ with a BeeKEM tree it also reads `pub-keyops`, and instead of the MLS steps:
    one leaf; concurrent removals of one member are one removal.
 5. **Written** into this member's own feed of `pub-keyops` (`write::rows`, as the re-key round writes `files`); a key
    change needs randomness (the pool a page stirs): none — the round waits, said.
+
+## K7 — every space onto BeeKEM (design before code)
+
+Every group kind is a space (`space.create`: a server, a direct or group chat, a circle, a level group — `groups.js`),
+so one move covers them all. (The account's own space is not a group of members: it stays as it is.)
+
+1. **A tree for every space.** A new space: made with it (`space.create`). An existing one (no operation in its
+   `pub-keyops`): made by the first LISTED member whose page opens it — its own placement. Several at once: each places
+   itself; the adds merge (no fork).
+2. **Our check's add rule, simplified:** an add is allowed when the account added is LISTED now (named act or none);
+   a removal still names the act that puts them out. (The tree may only ever hold the list: any listed member may place
+   any listed account — itself included; nobody unlisted.)
+3. **One plan, page and node:** whom to add and remove (`groups::plan`: listed and card-named but not placed; placed
+   but not listed, by the act that put them out) — the node's round and the page's `members.reconcile` both call it.
+   The page reconciles when it opens a space and when its acts or cards change; the node with every page closed (K5).
+4. **History across the move — the BRIDGE:** the member that makes the tree writes every MLS epoch secret it holds of
+   the space into the space's table `keys-history` (sealed with the newest epoch — the first generation): anyone the
+   tree places reads it and keeps those epochs (`epochKeep`), so what was written before the move reads for a
+   newcomer too; later members add epochs they hold that are not there.
+5. **Writes move at once:** a generation's number (≥ 2^24) is above every MLS epoch, so the storage writes with it
+   as soon as it is reached (K4); MLS keeps running beside it until K8 removes it.
+
+Walked flows: Ivvor's space (owner's page opens → tree, bridge, reconcile adds A, B, C → each reads history through
+the bridge); a member whose page opens first (places itself; the owner's later placement merges); two at once; a
+member removed before the move (not listed: never placed); a newcomer after the move (reconcile adds; the bridge gives
+the MLS history); a direct chat (two members, same path).
