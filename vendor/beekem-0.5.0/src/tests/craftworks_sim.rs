@@ -10,6 +10,7 @@
 //! SAME root key; no unlisted (removed) member derives one; the group places EXACTLY the list.
 use crate::{
     cgka::Cgka,
+    encrypted::EncryptedContent,
     error::CgkaError,
     id::{MemberId, TreeId},
     keys::ShareKeyMap,
@@ -42,6 +43,8 @@ struct Sim {
     applied: Vec<BTreeSet<Digest<Signed<CgkaOperation>>>>,
     offline_until: Vec<u64>,
     now: u64,
+    /// Messages written (BeeKEM's content API): (number, plaintext, sealed).
+    messages: Vec<(u64, Vec<u8>, EncryptedContent<Vec<u8>, u64>)>,
 }
 
 impl Sim {
@@ -58,6 +61,7 @@ impl Sim {
             applied: vec![BTreeSet::new(); PEOPLE],
             offline_until: vec![0; PEOPLE],
             now: 0,
+            messages: Vec::new(),
             people,
         };
         // Person 0 makes the group: its replica places itself, then the first members (as Keyhive's own harness).
@@ -70,6 +74,25 @@ impl Sim {
             }
         }
         s
+    }
+    async fn write(&mut self, i: usize) -> Result<(), String> {
+        let n = self.messages.len() as u64;
+        let text = format!("message {n} by {i}").into_bytes();
+        let signer = self.people[i].signer.clone();
+        let r = self.replicas[i].as_mut().unwrap();
+        // (Its replica applies concurrent membership changes first: one REMOVED meanwhile is no longer in the tree and
+        // writes nothing — correct; the caller decides whether that is an error.)
+        let (secret, op, _) = match r.new_app_secret_for::<Local, _, u64, StdRng>(&n, &text, &Vec::new(), &signer, &mut self.rng).await {
+            Ok(x) => x,
+            Err(CgkaError::IdentifierNotFound) => return Err(REMOVED.into()),
+            Err(e) => return Err(format!("seal: {e:?}")),
+        };
+        let sealed = secret.try_encrypt::<Vec<u8>>(&text).map_err(|e| format!("encrypt: {e:?}"))?;
+        if let Some(op) = op {
+            self.send(i, Arc::new(op));
+        }
+        self.messages.push((n, text, sealed));
+        Ok(())
     }
     fn fresh(&self, i: usize) -> Cgka {
         let mut sks = ShareKeyMap::new();
@@ -132,6 +155,20 @@ impl Sim {
                 }
             }
         }
+        // A MESSAGE now and then, sealed with the group's key (the content API: a key change made first when the group
+        // has concurrent heads — sent like any operation).
+        if self.rng.gen_bool(0.3) {
+            match self.write(i).await {
+                // (Removed meanwhile: it writes nothing more — but what it already made in this step still goes out.)
+                Err(e) if e == REMOVED => {
+                    for op in ops {
+                        self.send(i, op);
+                    }
+                    return Ok(());
+                }
+                r => r?,
+            }
+        }
         if ops.is_empty() && self.rng.gen_bool(0.2) {
             let sk = ShareSecretKey::generate(&mut self.rng);
             let pk = sk.share_key();
@@ -177,7 +214,12 @@ fn same_ops_same_tree(s: &mut Sim, incremental: &mut usize) -> Result<(), String
                     }
                 }
                 if cx.tree != cy.tree {
-                    return Err(format!("FORK — persons {a} and {b} applied the same operations into different trees, replayed too"));
+                    // Is it the same history? (Our bookkeeping, or BeeKEM's graphs themselves.)
+                    let ops_of = |c: &Cgka| c.ops_graph.cgka_ops.keys().copied().collect::<BTreeSet<_>>();
+                    let (ox, oy) = (ops_of(&x), ops_of(&y));
+                    let heads_same = x.ops_graph.cgka_op_heads == y.ops_graph.cgka_op_heads;
+                    let mine: Vec<String> = ox.symmetric_difference(&oy).map(|d| format!("{d:?}").chars().take(16).collect()).collect();
+                    return Err(format!("FORK — persons {a} and {b} applied the same operations into different trees, replayed too (operation sets {}, heads {}; {} vs {} ops; differing {:?})", if ox == oy { "IDENTICAL" } else { "DIFFER" }, if heads_same { "same" } else { "differ" }, ox.len(), oy.len(), mine));
                 }
                 if let (Ok(kx), Ok(ky)) = (cx.decrypt_tree_root_secret(), cy.decrypt_tree_root_secret()) {
                     if kx != ky {
@@ -276,6 +318,11 @@ async fn run_with(seed: u64, withhold: bool) -> Result<usize, String> {
         }
         s.replicas[1] = Some(r);
     }
+    // ONE MESSAGE after the list is final (by person 0), delivered: what no removed member may read.
+    s.write(0).await.map_err(|e| format!("seed {seed}: {e}"))?;
+    for p in 0..PEOPLE {
+        s.deliver(p, true);
+    }
     // THE CHECKS.
     let r0tree = s.replicas[0].as_ref().unwrap().tree.clone();
     for p in 0..PEOPLE {
@@ -318,8 +365,25 @@ async fn run_with(seed: u64, withhold: bool) -> Result<usize, String> {
     if incremental > 0 {
         INCREMENTAL.fetch_add(incremental, core::sync::atomic::Ordering::Relaxed);
     }
+    // EVERY LISTED MEMBER READS EVERY MESSAGE (history included); NO REMOVED ONE reads the last.
+    let last = s.messages.len() - 1;
+    for p in 0..PEOPLE {
+        let Some(r) = s.replicas[p].as_mut() else { continue };
+        for (k, (n, text, sealed)) in s.messages.iter().enumerate() {
+            let read = r.decryption_key_for(sealed).ok().and_then(|key| sealed.try_decrypt(key).ok());
+            if s.listed.contains(&p) && read.as_ref() != Some(text) {
+                return Err(format!("seed {seed}: person {p} is listed but cannot read message {n}"));
+            }
+            if !s.listed.contains(&p) && k == last && read.is_some() {
+                return Err(format!("seed {seed}: person {p} was removed but reads the message written after"));
+            }
+        }
+    }
+    MESSAGES.fetch_add(s.messages.len(), core::sync::atomic::Ordering::Relaxed);
     Ok(s.sent.len())
 }
+const REMOVED: &str = "removed meanwhile";
+static MESSAGES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 static INCREMENTAL: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 static LIVE_KEY_DIFF: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
@@ -333,7 +397,7 @@ async fn craftworks_situation_never_forks_and_follows_the_list() {
             Err(f) => failed.push(f),
         }
     }
-    std::println!("beekem, craftworks' situation: {runs} runs, {} failed, {ops} operations in all; pairs with the same operations whose trees differed before a replay: {}; whose LIVE root keys differed: {}", failed.len(), INCREMENTAL.load(core::sync::atomic::Ordering::Relaxed), LIVE_KEY_DIFF.load(core::sync::atomic::Ordering::Relaxed));
+    std::println!("beekem, craftworks' situation: {runs} runs, {} failed, {ops} operations, {} messages in all; pairs with the same operations whose trees differed before a replay: {}; whose LIVE root keys differed: {}", failed.len(), MESSAGES.load(core::sync::atomic::Ordering::Relaxed), INCREMENTAL.load(core::sync::atomic::Ordering::Relaxed), LIVE_KEY_DIFF.load(core::sync::atomic::Ordering::Relaxed));
     for f in failed.iter().take(12) {
         std::println!("  {f}");
     }

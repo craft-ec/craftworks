@@ -68,6 +68,13 @@ and the simulation gate (below) passes for every flow. Nothing in the product ch
 | 9 | Ivvor's space | migration: a new tree from the current list (open question 3) | its owner once |
 | 10 | Outsider posts operations | an operation is signed by a placed member — an outsider's is not merged (BeeKEM checks the signer) | nobody |
 
+## Messages (the content API — what the product uses)
+
+The simulation with members WRITING messages at random (BeeKEM's `new_app_secret_for` / `decryption_key_for`: content
+names the update whose secret sealed it, and its hash): 100 runs, 5,347 operations, 2,405 messages, 0 failures — every
+listed member decrypts EVERY message (history included), no removed member decrypts the one written after the list is
+final. (The tree's live root can differ by arrival order; content keys never use it.)
+
 ## Flows proven (scratch evaluation, each with its control)
 
 | Flow | Result |
