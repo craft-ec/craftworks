@@ -143,3 +143,28 @@ Walked flows: a newcomer (reads feeds by credentials, gets the add with its invi
 long (reads every feed's new rows, merges in any order); two devices of one account (two feeds, one member — both
 signed by the account key; our check is per signer); a removed member's later rows (still in its feed; refused by our
 check); a device that lost its state (reads every feed from the start; the account hands its leaf secrets — K6).
+
+## K4 — a space's content keys from BeeKEM (design before code)
+
+The storage's EPOCH-KEY machinery stays as it is (table keys from an epoch secret — `epoch_table_key`; the identity
+keeping each epoch's secret — `keep_epoch` / `tableKeyAt`; the node reading with them). What changes is WHERE an epoch
+secret comes from:
+
+1. **A GENERATION is an epoch.** Each BeeKEM update is one: its number the first 8 bytes of the update's hash (as a u64
+   — unique in practice), its secret the update's root secret (`PcsKey`).
+2. **Writing:** with the CURRENT generation — BeeKEM's single-head root (a key change made first when there are
+   concurrent heads, as its content API does).
+3. **Reading:** every generation this member reaches — its own, those its tree decrypts, and earlier ones through the
+   predecessor-secret chain (history) — handed to the identity (`epochKeep`) as epochs of the space; the storage reads a
+   row with the epoch it names.
+4. **One switch per space:** a space whose BeeKEM tree exists uses it; every other (made before) keeps MLS until K7
+   moves it. Nothing in the MLS path changes in K4.
+5. **The vendored crate** gains two read-only accessors (a CRAFTWORKS PATCH, as mls-rs's): the current generation
+   (`record_tree_root_secret`) and every reachable one (`find_or_derive_root_secret` over the updates) — BeeKEM keeps
+   them private.
+
+Walked flows: a member writes (current generation, or a key change first); a newcomer reads history (the chain gives the
+earlier generations; the identity keeps them); a removed member (no generation after its removal reachable: rows sealed
+after are unreadable to it); two devices of one account (each derives the same generations; the account's leaf secret
+handed on — K6); concurrent changes (writing makes the key change that resolves them, readers reach both branches'
+generations).
