@@ -73,8 +73,10 @@ export async function frame(cap, ctx) {
   return { ...pure(await ctx.require("kinds"), () => ctx.site), spaceIdOf, tagsOf, normalTags, isNsfw };
 }
 
-// AN ITEM's REFERENCE — the one builder: `<writer>/<id>` (its writer's DID or node, its id in their feed).
-export const refOf = (by, id) => `${by}/${id}`;
+// AN ITEM's REFERENCE — the one builder: `<writer>/<id>` (its writer's DID or node, its id in their feed). (Not
+// `refOf`: that reads a reference out of a link's text — the two shared one name in v399, and the link reader shadowed
+// this inside `start`: every profile item's reference came out wrong, so Discover and the media feeds were empty.)
+export const itemRef = (by, id) => `${by}/${id}`;
 
 export async function start(ctx) {
   const [content, index, space, edge] = await Promise.all(["content", "index", "space", "edge"].map(n => ctx.require(n)));
@@ -530,7 +532,7 @@ export async function start(ctx) {
     // EVERYONE WHO ANSWERED the posts listed (their comments, votes and replies live in their own profiles, pointed in
     // each post's bag — as its thread reads them): opened too, so a count is the thread's, not only the followed's.
     if (withVotes) {
-      const listed = rs.flatMap(r => r.list().filter(it => kinds.includes(it.kind) && authorSet.has(it.by) && !it.meta?.space && it.at >= since).map(it => refOf(it.by, it.id)));
+      const listed = rs.flatMap(r => r.list().filter(it => kinds.includes(it.kind) && authorSet.has(it.by) && !it.meta?.space && it.at >= since).map(it => itemRef(it.by, it.id)));
       const held = new Set([...authors, self, ...(await following()), ...readers]);
       const more = [...new Set((await Promise.all(listed.map(ref => pointersTo(ref)))).flat())].filter(d => !held.has(d));
       if (more.length) rs = [...rs, ...(await profiles(more))];
@@ -538,7 +540,7 @@ export async function start(ctx) {
     const votes = new Map();
     const counts = new Map();
     // What counts about an item: by its rule (`roles.mayWrite`: the one check, as in a space) — as it was when written.
-    const posts = new Map(rs.flatMap(r => r.list().filter(it => TOP.has(it.kind)).map(it => [refOf(it.by, it.id), it])));
+    const posts = new Map(rs.flatMap(r => r.list().filter(it => TOP.has(it.kind)).map(it => [itemRef(it.by, it.id), it])));
     const counts_ = (ref, action, by, cred, at) => {
       const p = posts.get(ref);
       return !p || roles.mayWrite({ action, item: p, writer: by, cred, at: at ?? Infinity }) === true;
@@ -552,7 +554,7 @@ export async function start(ctx) {
       for (const it of r.list()) {
         // One made in a SPACE (an outsider's post there) is that space's: listed in its room, not here.
         if (!kinds.includes(it.kind) || !authorSet.has(it.by) || it.meta?.space) continue;
-        const ref = refOf(it.by, it.id);
+        const ref = itemRef(it.by, it.id);
         out.push({ ...shape(it, ref, null), comments: counts.get(ref) ?? 0, ...scored(ref, votes, self), mayRemove: it.by === self, mayEdit: it.by === self });
       }
     return out;
@@ -809,14 +811,14 @@ export async function start(ctx) {
       const rs = await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]);
       // The post's rule (`roles.mayWrite`): who may comment and vote on it, as it was when each was written (a rule made
       // later never takes back what it allowed) — what does not pass, not counted.
-      const post = rs.flatMap(r => r.list()).find(it => refOf(it.by, it.id) === ref) ?? null;
+      const post = rs.flatMap(r => r.list()).find(it => itemRef(it.by, it.id) === ref) ?? null;
       const may = (action, by, cred, at) => !post || roles.mayWrite({ action, item: post, writer: by, cred, at: at ?? Infinity }) === true;
       const votes = new Map();
       for (const r of rs) tally(r.reactions().filter(x => x.item !== ref || signalPasses(x.emoji, action => may(action, x.by, x.cred, x.at))), votes);
       for (const r of rs)
         for (const it of r.list())
           if (it.kind === "comment" && postOf(it) === ref && may("comment", it.by, it.meta?.cred, it.at)) {
-            const cref = refOf(it.by, it.id);
+            const cref = itemRef(it.by, it.id);
             all.push({ ...it, ref: cref, parent: it.re, ...scored(cref, votes, self), mayRemove: it.by === self, replies: [] });
           }
     }
@@ -835,7 +837,7 @@ export async function start(ctx) {
     const owner = whereOf(ref);
     const self = await me();
     if (!owner || owner === self) return null;
-    const post = (await profileRoom(owner)).list().find(it => refOf(it.by, it.id) === ref);
+    const post = (await profileRoom(owner)).list().find(it => itemRef(it.by, it.id) === ref);
     if (!post) return null;
     await roles.personal(owner).ready;
     const cred = await roles.credToCite(post, action);
@@ -1040,7 +1042,7 @@ export async function start(ctx) {
       for (const it of r.list()) if (it.kind === kind && it.in === idOf(ref)) out.push({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), mayRemove: r.mayRemove(it) });
     } else {
       for (const r of await profiles([whereOf(ref), self, ...(await following()), ...(await pointersTo(ref))]))
-        for (const it of r.list()) if (it.kind === kind && it.in === ref) out.push({ ...shape(it, refOf(it.by, it.id), null), mayRemove: it.by === self });
+        for (const it of r.list()) if (it.kind === kind && it.in === ref) out.push({ ...shape(it, itemRef(it.by, it.id), null), mayRemove: it.by === self });
     }
     const seen = new Set();
     return out.filter(x => !seen.has(x.ref) && seen.add(x.ref)).sort((a, b) => a.at - b.at);
@@ -1122,7 +1124,7 @@ export async function start(ctx) {
   };
   const told = (p, ref, kind, body) => (ref && ctx.background("items: mentionsTold", mentionsTold(ref, kind, body)), p);
   return {
-    refOf,
+    itemRef,
     submit: async o => {
       const ref = await submit(o);
       if (o?.audience !== "private") told(null, ref, o?.kind ?? "post", o?.body);
