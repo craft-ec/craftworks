@@ -665,6 +665,7 @@ dependencies = [
  "craftworks-feed",
  "craftworks-files",
  "craftworks-gov",
+ "craftworks-groups",
  "craftworks-identity",
  "craftworks-idlog-contract",
  "craftworks-mls",
@@ -715,6 +716,21 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "serde_json",
+]
+
+[[package]]
+name = "craftworks-groups"
+version = "0.1.0"
+dependencies = [
+ "beekem",
+ "bincode",
+ "blake3",
+ "ed25519-dalek",
+ "future_form",
+ "getrandom 0.2.17",
+ "keyhive_crypto",
+ "rand 0.8.8",
+ "x25519-dalek",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@
 //
 //   node tools/group-check.mjs [repo dir]
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 const root = process.argv[2] ?? new URL("..", import.meta.url).pathname;
 const pkgs = join(root, "packages");
@@ -60,8 +60,13 @@ for (const p of rs) {
   const src = readFileSync(p, "utf8");
   if (rel !== join("rules", "src", "admission.rs")) for (const m of src.matchAll(/2166136261/g)) bad.push(`${rel}:${lineOf(src, m.index)}: a turn ranking of its own: \`craftworks_rules::admission::turn\``);
   if (rel !== join("rules", "src", "ordering.rs")) for (const m of src.matchAll(/"c\/\{:012\}"/g)) bad.push(`${rel}:${lineOf(src, m.index)}: an ordered log's row built by hand: \`craftworks_rules::ordering\``);
-  // NOBODY ADDS ANYONE (an MLS Add or Welcome anywhere: the device enters by itself).
-  for (const m of src.matchAll(/\.add_member\(|\.join_group\(|welcome_messages/g)) bad.push(`${rel}:${lineOf(src, m.index)}: an MLS add or welcome: nobody adds anyone — a listed device enters by itself (\`mls::enter_with\`)`);
+  // THE MLS LAYER (until K8 removes it): NOBODY ADDS ANYONE there (an MLS Add or Welcome: the device enters by itself).
+  // The BeeKEM layer (`groups/`, docs/proposals/members-and-keys-beekem.md, owner 10-17) ADDS — by design: a member
+  // adds who the list names — so the rule covers every crate but that one door.
+  const inGroups = rel.startsWith(`groups${sep}`);
+  if (!inGroups) for (const m of src.matchAll(/\.add_member\(|\.join_group\(|welcome_messages/g)) bad.push(`${rel}:${lineOf(src, m.index)}: an MLS add or welcome: nobody adds anyone — a listed device enters by itself (\`mls::enter_with\`)`);
+  // ONE DOOR TO BEEKEM: the tree, its operations and its content API only through `groups` (our check before it).
+  if (!inGroups) for (const m of src.matchAll(/\bbeekem::|\bCgka\b/g)) bad.push(`${rel}:${lineOf(src, m.index)}: BeeKEM used outside its one door: \`craftworks_groups\` (our check before it)`);
   // ONE WAY IN: the external commit builder only in `mls` (`enter_with`).
   if (rel !== join("mls", "src", "lib.rs")) for (const m of src.matchAll(/external_commit_builder\(/g)) bad.push(`${rel}:${lineOf(src, m.index)}: an entry of its own: \`mls::enter_with\``);
   // ONE ENTRY CHECK: `entry_ok` defined only in `mls`.

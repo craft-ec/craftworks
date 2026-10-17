@@ -17,6 +17,8 @@ freenet-main-delegate = []
 trace = []
 
 [dependencies]
+# Members and keys on BeeKEM (docs/proposals/members-and-keys-beekem.md): the one door to it.
+craftworks-groups = { path = "../groups" }
 craftworks-identity = { path = "../identity" }
 # 0.12: a delegate MANIFEST (periodic wake-ups, lifecycle events: freenet-core #5747). The contracts stay on theirs.
 freenet-stdlib = { version = "0.12.1", features = ["contract"] }

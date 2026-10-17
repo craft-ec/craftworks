@@ -2754,7 +2754,7 @@ branch set-aside/anchor-10-17 (not main).
       workspace member; our simulation + flow tests beside upstream's: `cargo test --release -p beekem --lib` 95 pass.
       wasm32: beekem's std build needs getrandom's source from the consumer (the page: js; the delegate: custom) — as
       mls-rs today; proven in K2. (Upstream's no_std build does not compile — not used.)
-- [ ] K2 crate `groups`: our check before BeeKEM (signer listed, add/remove naming its act's hash), operations' wire
+- [x] K2 crate `groups` (done 10-17; tests 6 with controls; wasm: as a PAGE package — `page` feature, the browser's randomness, never in the core, as MLS — and inside the delegate with its own randomness hook; the identity build moved 31e8e8b2 → 5ffa7c47: a PIN once at the next release; group-check: the MLS no-add rule scoped to the MLS layer, a new ONE-DOOR-TO-BEEKEM rule, control exit 1). Was: our check before BeeKEM (signer listed, add/remove naming its act's hash), operations' wire
       form, keys from a replay; built into core (page wasm) and delegate (wasm, custom randomness); tests.
 - [ ] K3 storage: each member's operations as its own feed (one writer), merged in causal order (page and node).
 - [ ] K4 page, spaces: create, reconcile to the list (add + rotate, remove + rotate), content keys from the replayed root

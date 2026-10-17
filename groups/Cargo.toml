@@ -1,0 +1,23 @@
+[package]
+name = "craftworks-groups"
+version = "0.1.0"
+edition = "2021"
+description = "Members and keys on BeeKEM (docs/proposals/members-and-keys-beekem.md): our check before BeeKEM, an account's one member, operations as bytes, sealing through the content API."
+
+[dependencies]
+beekem = { path = "../vendor/beekem-0.5.0" }
+keyhive_crypto = { path = "../vendor/keyhive_crypto-0.2.1" }
+future_form = "0.3.1"
+rand = { version = "0.8.5", default-features = false, features = ["std", "std_rng"] }
+bincode = "1"
+blake3 = { version = "1", default-features = false }
+ed25519-dalek = { version = "=2.2.0", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+
+[features]
+# The PAGE's package (as MLS's: its own, never in the core): the browser's randomness. The identity delegate uses this
+# crate without it (its own randomness hook).
+page = ["dep:getrandom"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"], optional = true }
