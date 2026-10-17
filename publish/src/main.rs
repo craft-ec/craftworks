@@ -46,45 +46,62 @@ const M: usize = 8;
 /// The builder's own piece size.
 const PAYLOAD: usize = 96 * 1024;
 
-/// One piece: its container, its state and the address the node names it by.
+/// One piece: its bytes, its SALT, and — from them — its container, its state and the address the node names it by.
 struct Piece {
+    bytes: Vec<u8>,
+    salt: u32,
     address: String,
     contract: ContractContainer,
     state: Vec<u8>,
 }
 
-/// A package as its PIECE SET (`pieces::bundle` then `pieces::cut`, the SDK's one implementation). Nothing is sent
-/// here. Returns the pieces and the manifest entry's fields after `kind`.
-fn cut_package(webapp_code: &[u8], file: &str, bytes: &[u8]) -> Result<(Vec<Piece>, String)> {
+/// WHERE A PIECE LIVES is its address, and the address is the hash of its container: a SALT (a second file in the
+/// container, `salt`) moves it to other peers while the `piece` file — what a page fetches and checks against its
+/// sha256 — stays the same bytes. Salt 0 is the container as before (a piece already findable keeps its address).
+fn placed(webapp_code: &[u8], bytes: &[u8], salt: u32) -> Result<Piece> {
+    let state = if salt == 0 {
+        wire::webapp::piece_container(bytes)
+    } else {
+        wire::webapp::app_container(&[(wire::webapp::PIECE_FILE, bytes), ("salt", salt.to_string().as_bytes())])
+    }
+    .map_err(|e| anyhow::anyhow!(e))?;
+    let address = wire::webapp::address(webapp_code, &state);
+    let contract = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
+        std::sync::Arc::new(ContractCode::from(webapp_code.to_vec())),
+        Parameters::from(wire::webapp::params(&state).to_vec()),
+    )));
+    Ok(Piece { bytes: bytes.to_vec(), salt, address, contract, state })
+}
+
+/// A package CUT (`pieces::bundle` then `pieces::cut`, the SDK's one implementation): its pieces and the entry's other
+/// fields. Nothing is sent here; the entry is written once every piece is placed (`entry_fields`).
+struct Cut {
+    file: String,
+    sha: String,
+    k: usize,
+    m: usize,
+    payload: usize,
+    bundle_len: usize,
+    pieces: Vec<Piece>,
+}
+fn cut_package(webapp_code: &[u8], file: &str, bytes: &[u8]) -> Result<Cut> {
     let bundle = pieces::bundle(&[(file, bytes)]).map_err(|e| anyhow::anyhow!("{e:?}"))?;
     let cut = pieces::cut(&bundle, PAYLOAD, M).map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    let mut out = Vec::new();
-    let mut lines = Vec::new();
-    for p in &cut.pieces {
-        let state = wire::webapp::piece_container(p).map_err(|e| anyhow::anyhow!(e))?;
-        let address = wire::webapp::address(webapp_code, &state);
-        let contract = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
-            std::sync::Arc::new(ContractCode::from(webapp_code.to_vec())),
-            Parameters::from(wire::webapp::params(&state).to_vec()),
-        )));
-        lines.push(format!(r#"{{ "address": "{address}", "sha256": "{}" }}"#, sha256_hex(p)));
-        out.push(Piece { address, contract, state });
-    }
-    let fields = format!(
-        r#""file": "{file}", "sha256": "{}", "k": {}, "m": {}, "payload": {}, "bundle_len": {}, "pieces": [{}]"#,
-        sha256_hex(bytes),
-        cut.k,
-        cut.m,
-        cut.payload,
-        cut.bundle_len,
-        lines.join(", ")
-    );
-    Ok((out, fields))
+    let pieces = cut.pieces.iter().map(|p| placed(webapp_code, p, 0)).collect::<Result<Vec<_>>>()?;
+    Ok(Cut { file: file.to_string(), sha: sha256_hex(bytes), k: cut.k, m: cut.m, payload: cut.payload, bundle_len: cut.bundle_len, pieces })
+}
+/// The manifest entry's fields after `kind`: the pieces at the addresses they were PLACED at.
+fn entry_fields(c: &Cut) -> String {
+    let lines: Vec<String> = c.pieces.iter().map(|p| format!(r#"{{ "address": "{}", "sha256": "{}" }}"#, p.address, sha256_hex(&p.bytes))).collect();
+    format!(r#""file": "{}", "sha256": "{}", "k": {}, "m": {}, "payload": {}, "bundle_len": {}, "pieces": [{}]"#, c.file, c.sha, c.k, c.m, c.payload, c.bundle_len, lines.join(", "))
 }
 
 /// The pieces the node does NOT serve: each asked for (a GET, all at once on one connection), and those not answered
 /// with their state within 60 s of the last ask — refused, or silent — named by address.
 async fn not_served(ws: &str, pieces: &[&Piece]) -> Result<std::collections::HashSet<String>> {
+    not_served_within(ws, pieces, Duration::from_secs(60)).await
+}
+async fn not_served_within(ws: &str, pieces: &[&Piece], wait: Duration) -> Result<std::collections::HashSet<String>> {
     use futures::{SinkExt, StreamExt};
     let mut owed: std::collections::HashSet<String> = pieces.iter().map(|p| p.address.clone()).collect();
     if owed.is_empty() {
@@ -98,7 +115,7 @@ async fn not_served(ws: &str, pieces: &[&Piece]) -> Result<std::collections::Has
             c.send(Message::Binary(f.into())).await?;
         }
     }
-    let until = Instant::now() + Duration::from_secs(60);
+    let until = Instant::now() + wait;
     while !owed.is_empty() {
         let Some(left) = until.checked_duration_since(Instant::now()) else { break };
         match tokio::time::timeout(left, c.next()).await {
@@ -617,46 +634,39 @@ async fn main() -> Result<()> {
         },
         Err(_) => Default::default(),
     };
-    let mut all = Vec::new();
-    // Per package sent: its name, its k, and its pieces' addresses.
-    let mut sent: Vec<(String, usize, Vec<String>)> = Vec::new();
+    // Per package: its name, kind, cut, and whether it is up already (its pieces not sent).
+    let mut cuts: Vec<(String, String, Cut, bool)> = Vec::new();
     // Each package's ENTRY (its pieces), as its own file of the site named by its hash: a page reads only the ones it
-    // needs. The manifest names each by kind and hash alone.
+    // needs. The manifest names each by kind and hash alone. Written once every piece is PLACED (its final address).
     let mut entry_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut sources: Vec<(String, String)> = Vec::new();
     for (name, kind, path) in &packages {
         let bytes = read(path)?;
         let file = path.file_name().and_then(|n| n.to_str()).context("a package file name")?;
-        let (pieces, fields) = cut_package(&webapp_code, file, &bytes)?;
-        let sha = sha256_hex(&bytes);
-        let up = published.contains(&sha);
-        println!("package {name}: {} B as {} pieces{}", bytes.len(), pieces.len(), if up { " (already published)" } else { "" });
-        entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", "sha256": "{sha}" }}"#));
-        // One file per CONTENT: two packages with the same bytes (two configs both `{}`) share it — a path twice in the
-        // site's archive makes the node refuse the whole site ("failed unpacking contract").
-        let entry_path = format!("p/{}.json", &sha[..16]);
-        if !entry_files.iter().any(|(p, _)| *p == entry_path) {
-            entry_files.push((entry_path, format!(r#"{{ "kind": "{kind}", {fields} }}"#).into_bytes()));
-        }
+        let cut = cut_package(&webapp_code, file, &bytes)?;
+        let up = published.contains(&cut.sha);
+        println!("package {name}: {} B as {} pieces{}", bytes.len(), cut.pieces.len(), if up { " (already published)" } else { "" });
+        entries.push(format!(r#"    "{name}": {{ "kind": "{kind}", "sha256": "{}" }}"#, cut.sha));
         if *kind != "bytes" {
             sources.push((name.to_string(), String::from_utf8_lossy(&bytes).into_owned()));
         }
-        if !up {
-            let k = pieces.len() - M;
-            sent.push((name.to_string(), k, pieces.iter().map(|p| p.address.clone()).collect()));
-            all.extend(pieces);
-        }
+        cuts.push((name.to_string(), kind.to_string(), cut, up));
     }
-    let t = Instant::now();
-    let rebuildable = |missing: &std::collections::HashSet<String>| {
-        sent.iter().all(|(_, k, a)| a.iter().filter(|x| !missing.contains(*x)).count() >= *k)
+    let sending = |cuts: &Vec<(String, String, Cut, bool)>| -> Vec<(usize, usize)> {
+        cuts.iter().enumerate().filter(|(_, c)| !c.3).flat_map(|(i, c)| (0..c.2.pieces.len()).map(move |j| (i, j))).collect()
     };
-    let mut missing = put_all(&ws, &all.iter().collect::<Vec<_>>(), rebuildable).await?;
-    println!("pieces: {} of {} accepted in {} ms", all.len() - missing.len(), all.len(), t.elapsed().as_millis());
+    let t = Instant::now();
+    let all_ix = sending(&cuts);
+    let mut missing = {
+        let refs: Vec<&Piece> = all_ix.iter().map(|&(i, j)| &cuts[i].2.pieces[j]).collect();
+        let rebuildable = |missing: &std::collections::HashSet<String>| cuts.iter().filter(|c| !c.3).all(|c| c.2.pieces.iter().filter(|p| !missing.contains(&p.address)).count() >= c.2.k);
+        put_all(&ws, &refs, rebuildable).await?
+    };
+    println!("pieces: {} of {} accepted in {} ms", all_ix.len() - missing.len(), all_ix.len(), t.elapsed().as_millis());
     // SERVED, not only accepted: every accepted piece asked for again (a GET) — a PUT's ack can come before the node
     // serves it, and a page loaded then is answered "not found". Those put again, until each is served (or said).
     for round in 1..=3 {
-        let accepted: Vec<&Piece> = all.iter().filter(|p| !missing.contains(&p.address)).collect();
+        let accepted: Vec<&Piece> = all_ix.iter().map(|&(i, j)| &cuts[i].2.pieces[j]).filter(|p| !missing.contains(&p.address)).collect();
         let unserved = not_served(&ws, &accepted).await?;
         if unserved.is_empty() {
             println!("pieces: all {} accepted ones served", accepted.len());
@@ -670,15 +680,61 @@ async fn main() -> Result<()> {
             missing.extend(not_served(&ws, &again).await?);
         }
     }
+    // FINDABLE FROM ANOTHER NODE (FIND_WS — not the publisher's own, which serves every piece from its own store):
+    // a lookup is ROUTED to the peers nearest a piece's address, never to the publisher; peers there that are full
+    // refuse it or never keep it, and then nobody finds it (v401, 10-18: 219 of its pieces could not be found from
+    // the owner's node while B held every one). A piece not found there is PLACED ELSEWHERE — its salt moved, its
+    // address with it — put again and asked again, up to FIND_ROUNDS times.
+    if let Ok(find_ws) = std::env::var("FIND_WS") {
+        const FIND_ROUNDS: u32 = 4;
+        for round in 1..=FIND_ROUNDS {
+            let ix: Vec<(usize, usize)> = all_ix.iter().copied().filter(|&(i, j)| !missing.contains(&cuts[i].2.pieces[j].address)).collect();
+            let lost = {
+                let refs: Vec<&Piece> = ix.iter().map(|&(i, j)| &cuts[i].2.pieces[j]).collect();
+                not_served_within(&find_ws, &refs, Duration::from_secs(120)).await?
+            };
+            println!("findable from another node (round {round}): {} of {}", ix.len() - lost.len(), ix.len());
+            if lost.is_empty() || round == FIND_ROUNDS {
+                if !lost.is_empty() {
+                    println!("pieces: {} still not findable from another node after {FIND_ROUNDS} placements", lost.len());
+                }
+                break;
+            }
+            // Each not found: placed elsewhere (its next salt), and put.
+            let mut moved = Vec::new();
+            for &(i, j) in &ix {
+                let p = &cuts[i].2.pieces[j];
+                if lost.contains(&p.address) {
+                    let next = placed(&webapp_code, &p.bytes, p.salt + 1)?;
+                    cuts[i].2.pieces[j] = next;
+                    moved.push((i, j));
+                }
+            }
+            let refs: Vec<&Piece> = moved.iter().map(|&(i, j)| &cuts[i].2.pieces[j]).collect();
+            let refused = put_all(&ws, &refs, |_| false).await?;
+            missing.extend(refused);
+        }
+    }
     // RACING needs any k of a package's k + m pieces: a package with fewer accepted cannot be rebuilt, so nothing that
     // names it is published. One with k or more is fine; the rest are said.
-    for (name, k, addresses) in &sent {
-        let have = addresses.iter().filter(|a| !missing.contains(*a)).count();
-        if have < *k {
-            bail!("package {name}: only {have} of its {} pieces accepted, fewer than the {k} that rebuild it", addresses.len());
+    for (name, _, c, up) in &cuts {
+        if *up {
+            continue;
         }
-        if have < addresses.len() {
-            println!("package {name}: {have} of {} pieces accepted (any {k} rebuild it)", addresses.len());
+        let have = c.pieces.iter().filter(|p| !missing.contains(&p.address)).count();
+        if have < c.k {
+            bail!("package {name}: only {have} of its {} pieces accepted, fewer than the {} that rebuild it", c.pieces.len(), c.k);
+        }
+        if have < c.pieces.len() {
+            println!("package {name}: {have} of {} pieces accepted (any {} rebuild it)", c.pieces.len(), c.k);
+        }
+    }
+    // The ENTRIES, at the addresses placed. One file per CONTENT: two packages with the same bytes (two configs both
+    // `{}`) share it — a path twice in the site's archive makes the node refuse the whole site.
+    for (_, kind, c, _) in &cuts {
+        let entry_path = format!("p/{}.json", &c.sha[..16]);
+        if !entry_files.iter().any(|(p, _)| *p == entry_path) {
+            entry_files.push((entry_path, format!(r#"{{ "kind": "{kind}", {} }}"#, entry_fields(c)).into_bytes()));
         }
     }
     // EARLIER IDENTITY BUILDS: each build is a new delegate, and the members on a node stay in the build that made
