@@ -291,10 +291,13 @@ export async function run(boot) {
 
   // A RELEASE STILL SPREADING: for minutes after a release the network cannot find its new pieces yet (10-17: the
   // owner's node answered 503 for 51 of them while B held every one). So before anything starts, the packages this
-  // page needs are fetched; a version that cannot give them within READY_MS is not run — the manifest's `previous`
+  // page needs are fetched; a version that cannot give them — a package that FAILS (a piece the network does not have
+  // yet), never one only SLOW (a cold browser fetching 131 packages takes over 20 s even from a node holding every piece:
+  // v401, every first visit ran the version before and reloaded a minute later) — is not run: the manifest's `previous`
   // (the version before, its entries kept on the site; its pieces long spread, most in the browser already) is, and
   // this one is asked again every RETRY_MS, taken once it can be (`follow`).
-  const READY_MS = 20_000;
+  // (A backstop only: a fetch that never answers at all.)
+  const READY_MS = 120_000;
   const RETRY_MS = 30_000;
   async function fetchable(man, at) {
     const names = [...new Set([man.theme, ...(man.needs?.[routeIn(man, placeOf(at).full)] ?? [])])].filter(n => n && man.packages[n]);
