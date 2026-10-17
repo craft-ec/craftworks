@@ -40,7 +40,17 @@ export async function start(ctx) {
   // AN ACCOUNT's member, from its card (its credential checked: the signing key it names, signed by the data key its
   // key log names — the one check `storage`'s writers use).
   // `{ why }` when it is not (said: a refusal names its cause).
+  // (Each account's member, as last read: kept 10 minutes — a reconcile of every space every few minutes read every
+  // listed member's card FRESH each time, all of it load on the node for nothing that changed.)
+  const memberRead = new Map(); // did → { at, m }
   async function memberOf(did) {
+    const held = memberRead.get(did);
+    if (held && !held.m.why && Date.now() - held.at < 600e3) return held.m;
+    const m = await memberOfNow(did);
+    memberRead.set(did, { at: Date.now(), m });
+    return m;
+  }
+  async function memberOfNow(did) {
     // (FRESH: a card just written elsewhere — a member being added — is read as it is now, not as last seen.)
     const card = await directory.card(did, { fresh: true });
     if (!card) return { why: "no card" };
@@ -71,9 +81,19 @@ export async function start(ctx) {
       const m = await me();
       const row = (await state()).rows().find(r => r.key === at)?.value;
       g = row ? G.BeeGroup.load(bytes(row), m.seed) : G.BeeGroup.empty(sp.idBytes, m.seed);
+      savedHex = row ?? null;
       return g;
     }
-    const save = async () => (await state()).put(at, hexOf(g.save()));
+    // SAVED ONLY WHEN IT CHANGED: every sync and every reconcile used to write the whole tree into the account table —
+    // every space, every 2 minutes (v401, 10-18: the node signing them answered nothing else in time; a conversation's
+    // keys went unanswered and its messages did not read).
+    let savedHex = null;
+    const save = async () => {
+      const h = hexOf(g.save());
+      if (h === savedHex) return;
+      await (await state()).put(at, h);
+      savedHex = h;
+    };
     // An operation in a row (its SHA-256 the key); one too large for a row (a row holds 64 KB: a worst-case rotation from
     // ~270 members) as a PUBLIC file of the space, the row naming it — read back and checked against the key.
     const ROW = 60000;
@@ -303,7 +323,7 @@ export async function start(ctx) {
   }
 
   // EVERY SPACE KEPT TO ITS LIST on this page (K7): each of this account's spaces (every kind — a server, a chat, a
-  // circle, a level group; never the account's own) reconciled now and then — its tree made if it has none, the bridge
+  // circle, a level group; never the account's own) reconciled every 10 minutes — its tree made if it has none, the bridge
   // carried. (With every page closed, the node does it: K5.)
   async function reconcileAll() {
     if (!(await space.account())) return 0;
@@ -314,7 +334,7 @@ export async function start(ctx) {
     }
     return n;
   }
-  (await ctx.require("lifecycle")).job("members reconcile", { every: 120e3, delay: 30e3, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => reconcileAll() });
+  (await ctx.require("lifecycle")).job("members reconcile", { every: 600e3, delay: 30e3, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => reconcileAll() });
 
   return { group, me, memberOf, reconcileAll };
 }
