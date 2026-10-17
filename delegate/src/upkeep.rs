@@ -21,6 +21,10 @@ use craftworks_rules::members;
 use serde::{Deserialize, Serialize};
 
 use crate::rekey_round::Held;
+
+/// K5: a BeeKEM space kept to its list by the node (its own file; a child, so it reads the round as upkeep does).
+#[path = "keys_round.rs"]
+mod keys_round;
 use crate::table::Reading;
 
 /// What upkeep asks of the network.
@@ -74,6 +78,9 @@ enum Step {
     Log { m: Moved },
     Commit { m: Moved },
     Next { m: Moved },
+    /// K5: a BeeKEM space's operations being written into this member's own `pub-keyops` (`rows` still to send;
+    /// `waiting`: the contracts whose answers come first; `blocks`: those were a flush's blocks).
+    Keys { rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, waiting: Vec<[u8; 32]>, blocks: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +100,10 @@ struct Round {
     moved_ms: u64,
     /// The wake-up count when the round last moved.
     moved: u64,
+    /// K5: this read is by EVERY account the list ever named (a BeeKEM space: whom to add or take out are read by their
+    /// cards — a newcomer is in no group yet).
+    #[serde(default)]
+    by_list: bool,
 }
 
 pub const ROUND: &[u8] = b"identity_upkeep/round";
@@ -148,7 +159,7 @@ fn due_since<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], epoch: u64
 fn round<H: Host>(h: &H) -> Option<Round> {
     h.get_secret(ROUND).filter(|b| !b.is_empty()).and_then(|b| bincode::deserialize(&b).ok())
 }
-fn keep<H: Host>(h: &mut H, r: Option<&Round>) {
+pub(crate) fn keep<H: Host>(h: &mut H, r: Option<&Round>) {
     h.set_secret(ROUND, &r.map(|r| bincode::serialize(r).expect("a round encodes")).unwrap_or_default());
 }
 fn unhex(s: &str) -> Option<Vec<u8>> {
@@ -166,7 +177,7 @@ fn mandate<H: Host>(h: &H, r: &Round) -> Option<Mandate> {
 
 /// THE ROUND's step over a space (`identity::Decided`: the `group` lifecycle's `follow-<step>` move, by the node — its
 /// plan, its commit, an entry skipped, a stall, each with why). Never free text beside it.
-fn followed<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], step: &str, why: &str) {
+pub(crate) fn followed<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], step: &str, why: &str) {
     let at = identity::upkeep_now(h).unwrap_or(0) * 1000;
     identity::upkeep_decide(h, member, identity::Decided { seq: 0, space: *space, did: String::new(), q: [0; 16], at, step: step.into(), why: why.into() });
 }
@@ -223,26 +234,26 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
                 dids.push(o);
             }
         }
-        let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts"]);
-        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now(h).unwrap_or(0) * 1000, moved: identity::upkeep_wakeups(h) };
+        let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
+        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now(h).unwrap_or(0) * 1000, moved: identity::upkeep_wakeups(h), by_list: false };
         keep(h, Some(&r));
         return io;
     }
     keep(h, None);
     Vec::new()
 }
-fn next_space<H: Host>(h: &mut H, c: &Held, r: Round) -> Vec<Io> {
+pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, r: Round) -> Vec<Io> {
     begin(h, c, r.member, r.me, r.rest)
 }
 
 /// The space's list as its acts say (`gov`'s replay, the page's too).
-fn governance<H: Host>(h: &H, r: &Round, now_ms: u64) -> Option<craftworks_gov::Gov> {
+pub(crate) fn governance<H: Host>(h: &H, r: &Round, now_ms: u64) -> Option<craftworks_gov::Gov> {
     let m = mandate(h, r)?;
     Some(crate::rekey::governance(&r.reading, &r.reading.writer_dids, &m.owner, now_ms))
 }
 
 /// The list read WHOLE (the guard): no feed silent, no act named and not held.
-fn whole(r: &Round, gov: &craftworks_gov::Gov) -> Result<(), String> {
+pub(crate) fn whole(r: &Round, gov: &craftworks_gov::Gov) -> Result<(), String> {
     let have: std::collections::BTreeSet<String> = r.reading.rows("acts").keys().chain(r.reading.rows("pub-acts").keys()).map(|k| String::from_utf8_lossy(k).into_owned()).collect();
     craftworks_rules::guards::whole(&r.reading.notes, gov.missing(&have).len())
 }
@@ -260,6 +271,7 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
             Step::Log { .. } => "the epoch's log never answered".into(),
             Step::Commit { .. } => "the commit was never answered".into(),
             Step::Next { .. } => "the next epoch's log never answered".into(),
+            Step::Keys { .. } => "a key operation's write never answered".into(),
         };
         followed(h, &r.member, &r.space, "stalled", &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
         keep(h, None);
@@ -326,7 +338,7 @@ fn door_id(c: &Held, space: &[u8; 32], epoch: u64) -> [u8; 32] {
 /// The contract a step waits on (`CatchUp` matches its two itself).
 fn waits_for(r: &Round, c: &Held, channel: Option<&str>) -> Option<[u8; 32]> {
     match &r.step {
-        Step::Acts | Step::CatchUp { .. } => None,
+        Step::Acts | Step::CatchUp { .. } | Step::Keys { .. } => None,
         Step::Log { m } | Step::Commit { m } => Some(epoch_log(&c.tail, channel?, &m.from_secret).id_bytes()),
         Step::Next { m } => Some(epoch_log(&c.tail, channel?, &m.secret).id_bytes()),
     }
@@ -382,7 +394,39 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 keep(h, Some(&r));
                 return io;
             }
+            // A SPACE WITH A BEEKEM TREE (its operations in `pub-keyops`): kept to the list here (K5), not by MLS.
+            if !r.reading.rows("pub-keyops").is_empty() {
+                if r.by_list {
+                    return keys_round::reconcile(h, &c, r, &m, now_ms);
+                }
+                // READ AGAIN by everyone the list ever named (their cards: whom to add or take out; their feeds).
+                let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, &c, r) };
+                let mut dids: Vec<[u8; 32]> = gov.ever_listed.iter().chain(gov.roster.iter()).chain(std::iter::once(&m.owner)).filter_map(|d| craftworks_account::did_bytes(d)).collect();
+                dids.sort();
+                dids.dedup();
+                let (reading, io) = Reading::of_members(&c.codes(), r.space, r.reading.epochs().clone(), &dids, &["acts", "pub-acts", "pub-keyops"]);
+                r.reading = reading;
+                r.by_list = true;
+                keep(h, Some(&r));
+                return io;
+            }
             catch_up(h, &c, r, &m)
+        }
+        (Step::Keys { rows, mut waiting, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
+            waiting.retain(|w| *w != id);
+            if !ok {
+                followed(h, &member, &r.space, "keys-refused", &format!("{}: a key operation's write was refused: the next round reads again", m.name));
+                return next_space(h, &c, r);
+            }
+            if !waiting.is_empty() {
+                r.step = Step::Keys { rows, waiting, blocks };
+                keep(h, Some(&r));
+                return Vec::new();
+            }
+            if rows.is_empty() {
+                return next_space(h, &c, r);
+            }
+            keys_round::write(h, &c, r, &m, rows, blocks)
         }
         (Step::CatchUp { epoch, secret, mut log, mut door }, Reply::Got { id, state }) => {
             if id == epoch_log(&c.tail, &m.channel, &secret).id_bytes() && log.is_none() {

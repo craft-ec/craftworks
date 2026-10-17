@@ -302,11 +302,21 @@ export async function start(ctx) {
     // A table found by its NAME: only whether its catalog lists it (not listed or never made: not looked for).
     if (byName) {
       const { catalog: cat = null, ...rest } = opts;
-      const made = { ...rest, beforeCreate: cat && ownKeys.has(owner) ? () => notePlace(cat, app, "blinded") : rest.beforeCreate };
+      // A PUBLIC table of a space (`pub-…`): also named in the space's open writers list by its writer (`listPublic`).
+      const pubIn = opts.public && inSpace?.id ? inSpace : null;
+      const listPub = () => (pubIn ? listPublic(pubIn, owner, app) : Promise.resolve());
+      const made = { ...rest, beforeCreate: cat && ownKeys.has(owner) ? () => notePlace(cat, app, "blinded").then(listPub) : rest.beforeCreate };
       if (!cat) return tailAt(owner, app, app, made);
-      return cat.answer().then(() => {
+      return cat.answer().then(async () => {
         const place = placeOf(cat, app);
-        if (place === "unlisted" || place === "none") return whenListed(cat, app, tailAt(owner, app, app, { ...made, known: false }));
+        if (place === "unlisted" || place === "none") {
+          // Not in a catalog this reader opens — but named in the space's OPEN writers list: read by its name (a newcomer
+          // before it holds the epochs the catalog is sealed with: fx 10-17, a node's key operations never read).
+          if (pubIn && !ownKeys.has(owner) && (await publicListed(pubIn, owner, app))) return tailAt(owner, app, app, made);
+          return whenListed(cat, app, tailAt(owner, app, app, { ...made, known: false }));
+        }
+        // One of this account's own, made before the open list named public tables: named there now (once a page).
+        if (pubIn && ownKeys.has(owner)) ctx.background("storage: listPublic", listPub());
         return tailAt(owner, app, app, made);
       });
     }
@@ -1126,7 +1136,7 @@ export async function start(ctx) {
           const items = await index.spacePointers.strict(sp, "writers");
           // `blind`: entries no key here opens — who they name is unknown, so every member's device is read (a
           // missing catalog only costs a lookup, asked less and less often).
-          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), blind: (items.unread ?? 0) > 0 };
+          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), blind: (items.unread ?? 0) > 0, pub: new Set(items.filter(i => typeof i?.w === "string" && typeof i?.pub === "string").map(i => `${i.w}|${i.pub}`)) };
           ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)`, ms: Math.round(performance.now() - t0) });
           // A writer listed only under an EPOCH (before the list was sealed with the space's own key): listed again as
           // every member reads it, by whoever reads it now — once per page and writer.
@@ -1140,6 +1150,15 @@ export async function start(ctx) {
       );
     return bags.get(sp.id);
   }
+  // A writer's PUBLIC table named in the space's OPEN writers list (`{ w, pub }`): what a reader whose catalog read is
+  // sealed to it (a newcomer, before it holds the space's epochs) looks at — only what is listed is looked up.
+  async function listPublic(sp, w, app) {
+    const b = await writersBag(sp);
+    if (b.pub?.has(`${w}|${app}`)) return;
+    await (await ctx.require("index")).spacePoint(sp, "writers", { w, pub: app });
+    b.pub?.add(`${w}|${app}`);
+  }
+  const publicListed = async (sp, w, app) => !!(await ctx.optional("storage: writersBag", writersBag(sp), () => null))?.pub?.has(`${w}|${app}`);
   async function listWriters(sp, ws) {
     const index = await ctx.require("index");
     const b = await ctx.optional("storage: writersBag", writersBag(sp), () => ({ set: new Set() }));
@@ -1222,7 +1241,9 @@ export async function start(ctx) {
         if (!c) return;
         await c.answer();
         const open = async () => {
-          if (opened.has(o) || !lists(c, name)) return;
+          // Listed in its catalog — or, a PUBLIC table, named in the space's open writers list (`listPublic`: what a
+          // reader whose catalog read is sealed to it reads by; fx 10-17, a newcomer read 0 feeds of `pub-keyops`).
+          if (opened.has(o) || !(lists(c, name) || (opts.public && sp.kind !== "account" && (await publicListed(sp, o, name))))) return;
           opened.add(o);
           take(await theirs(o, true, c));
         };

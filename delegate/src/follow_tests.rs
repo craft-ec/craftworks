@@ -455,3 +455,182 @@ fn a_proof_entry_is_kept_until_the_acts_put_it_out() {
     }
     assert!(!w.leaves().contains(&z.id()), "banned: out, whatever its leaf says: {:?}", w.said());
 }
+
+// ---- K5: a BeeKEM space kept to its list by the node (docs/proposals/members-and-keys-beekem.md, K5) ----
+
+use craftworks_groups as groups;
+
+impl Person {
+    /// This account's BeeKEM member (one per account: from its space member seed).
+    fn bee(&self) -> groups::Account {
+        groups::Account::of(&identity::space_member_seed(&self.data))
+    }
+    /// Their CARD with their member on it, its rows FLUSHED into a tree (a card with many rows: what a node reads from
+    /// blocks, fx 10-17 — before, it read such a card as having no member).
+    fn publish_member_flushed(&self, net: &mut Net, nodes: &[Vec<u8>]) {
+        self.publish_member(net, nodes);
+        let key = SigningKey::from_bytes(&self.data);
+        let mut o = data::Open::new(TAIL, &key.verifying_key().to_bytes(), "card");
+        o.public = true;
+        assert!(o.absorb(&net.st[&o.id_bytes()]));
+        let Ok(data::Step::Ready(f)) = o.flush() else { panic!("the card flushes") };
+        for (cid, st) in &f.blocks {
+            let id = table::block_id(&o, cid, &contract_keys::code_hash(SEALED), &contract_keys::code_hash(BLOCK)).unwrap();
+            net.st.insert(id, st.clone());
+        }
+        let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
+        o.commit(key.sign(&p.signed_message(false, f.seq, &f.hash)).to_bytes()).unwrap();
+        net.st.insert(o.id_bytes(), o.state());
+        // (Its rows are in the tree now: a reader that does not fetch blocks reads no member.)
+        let mut bare = data::Open::new(TAIL, &key.verifying_key().to_bytes(), "card");
+        bare.public = true;
+        bare.absorb(&net.st[&o.id_bytes()]);
+        assert!(matches!(bare.opened(), Ok(data::Step::Need(_))), "control: the card needs its blocks");
+    }
+    /// Their CARD with their BeeKEM member on it (`beekem`: `{ cred, leaf }` — the page's `directory.setMember`).
+    fn publish_member(&self, net: &mut Net, nodes: &[Vec<u8>]) {
+        net.st.insert(id(IDLOG, &self.did), self.log.encode());
+        let key = SigningKey::from_bytes(&self.data);
+        let mut o = data::Open::new(TAIL, &key.verifying_key().to_bytes(), "card");
+        o.public = true;
+        let leaf: [u8; 32] = *self.bee().leaf_key().as_bytes();
+        let cred = identity::space_member_credential(&self.did, &self.data, &self.mls_pub);
+        let mut ops = vec![tail::Op::Set { key: b"beekem".to_vec(), value: json!({ "cred": hex(&cred), "leaf": hex(&leaf) }).to_string().into_bytes() }];
+        if !nodes.is_empty() {
+            ops.push(tail::Op::Set { key: b"nodes".to_vec(), value: serde_json::to_vec(&nodes.iter().map(|n| hex(n)).collect::<Vec<_>>()).unwrap() });
+        }
+        let (seq, h) = o.prepare(ops).unwrap();
+        let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
+        o.commit(key.sign(&p.signed_message(false, seq, &h)).to_bytes()).unwrap();
+        net.st.insert(o.id_bytes(), o.state());
+    }
+}
+
+/// The OWNER's tree made (its first operation in its device's `pub-keyops`, listed in its catalog); B's card names its
+/// member. `acts` as the test says.
+fn bee_world(acts: &[serde_json::Value], b: &Person) -> World {
+    let mut w = world(acts, &[]);
+    let me_key = SigningKey::from_bytes(&SEED);
+    let cred = identity::credential(&w.owner.did, &w.member, &w.owner.mls_pub, &craftworks_account::owner_seed(&w.owner.entropy).unwrap());
+    w.owner.publish_member(&mut w.net, &[cred]);
+    b.publish_member(&mut w.net, &[]);
+    let (_, first) = groups::Group::create(&SPACE, w.owner.bee()).unwrap();
+    let s0 = identity::upkeep_mandate(&w.h, &w.member).map(|_| ()).unwrap();
+    let _ = s0;
+    let ep: Vec<(u64, [u8; 32])> = Vec::new();
+    let cat = table::table_name(&SPACE, "tables");
+    let mut c = Feed::new(&me_key, &cat, &cat, &[(0, epoch0(&w))]);
+    c.put(&table::table_name(&SPACE, "acts"), r#"{"b":1}"#);
+    c.put(&table::table_name(&SPACE, "pub-keyops"), r#"{"b":1}"#);
+    w.net.seed_tail(&c.o);
+    let name = table::table_name(&SPACE, "pub-keyops");
+    let mut k = Feed::new(&me_key, &name, &name, &ep);
+    k.o.public = true;
+    k.put(&hex(&sha2_of(&first)), &hex(&first));
+    w.net.seed_tail(&k.o);
+    w
+}
+fn epoch0(w: &World) -> [u8; 32] {
+    identity::upkeep_mandate(&w.h, &w.member).unwrap().1[0].clone().state.len();
+    craftworks_mls::Account::load(craftworks_mls::Rule::Space(SPACE), &w.mandate().state).unwrap().epoch_secret().unwrap()
+}
+fn sha2_of(b: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(b).into()
+}
+/// Every operation in the owner device's `pub-keyops`, as a reader takes them.
+fn owner_ops(w: &World) -> Vec<Vec<u8>> {
+    let name = table::table_name(&SPACE, "pub-keyops");
+    let mut o = data::Open::new(TAIL, &w.member, &name);
+    o.public = true;
+    o.absorb(&w.net.st[&o.id_bytes()]);
+    let Ok(data::Step::Ready(rows)) = o.opened() else { panic!("the feed reads") };
+    rows.values().filter_map(|env| craftworks_feed::open(env).and_then(|r| r.value)).map(|v| unhex(std::str::from_utf8(&v).unwrap())).collect()
+}
+/// B's page: merges every operation (no check needed for this reading: the operations are the node's own).
+struct Anyone;
+impl groups::Check for Anyone {
+    fn account_of(&self, _: &[u8; 32]) -> Option<String> {
+        Some("x".into())
+    }
+    fn listed(&self, _: &str) -> bool {
+        true
+    }
+    fn allows(&self, _: &[u8; 32], _: bool, _: &[u8; 32]) -> bool {
+        true
+    }
+}
+fn merged(p: &Person, ops: &[Vec<u8>]) -> groups::Group {
+    let mut g = groups::Group::empty(&SPACE, p.bee());
+    let mut pending = ops.to_vec();
+    for _ in 0..8 {
+        pending.retain(|op| g.merge(op, &Anyone) == groups::Merged::Waiting);
+    }
+    g
+}
+
+/// FLOW 1 + 3 — B LISTED, every page closed: the OWNER's NODE adds B (by the act that lets it in) and changes the key;
+/// B, reading the operations, is placed and derives the generation the node kept. The next round: nothing.
+/// Control — B NOT listed: nobody added.
+#[test]
+fn k5_the_node_adds_a_listed_member_every_page_closed() {
+    let b = person(0x52);
+    let mut w = bee_world(&[json!({ "act": "added", "did": b.id(), "at": 10 })], &b);
+    let before = owner_ops(&w).len();
+    w.run();
+    let ops = owner_ops(&w);
+    assert_eq!(ops.len(), before + 2, "an add and a key change: {:?}", w.said());
+    let mut gb = merged(&b, &ops);
+    assert!(gb.placed(), "B placed: {:?}", w.said());
+    let mut go = merged(&w.owner, &ops);
+    let (n, k) = go.current_now().expect("a single head");
+    assert!(gb.generations().contains(&(n, k)), "B reaches the generation the owner writes with");
+    assert_eq!(identity::epoch_secret(&w.h, &w.member, SPACE, n), Some(k), "the node kept it as the space's epoch");
+    let again = w.run();
+    assert_eq!(owner_ops(&w).len(), ops.len(), "nothing more: {:?} {:?}", w.said(), World::writes(&again));
+
+    // CONTROL: no act lets B in — nothing added.
+    let mut c = bee_world(&[], &b);
+    c.run();
+    assert_eq!(owner_ops(&c).len(), 1, "nobody added: {:?}", c.said());
+    assert!(!merged(&b, &owner_ops(&c)).placed());
+}
+
+/// FLOW 6 — B placed, then the acts put B out: the node removes B and changes the key; B does not reach the new
+/// generation. Control: the owner does.
+#[test]
+fn k5_the_node_takes_out_a_member_the_list_put_out() {
+    let b = person(0x53);
+    let added = json!({ "act": "added", "did": b.id(), "at": 10 });
+    let mut w = bee_world(&[added.clone()], &b);
+    w.run();
+    let placed = owner_ops(&w);
+    assert!(merged(&b, &placed).placed());
+    // The acts now put B out (the owner's device writes the removal).
+    let me_key = SigningKey::from_bytes(&SEED);
+    let mut a = Feed::new(&me_key, &table::table_name(&SPACE, "acts"), &blinded("acts"), &[(0, epoch0(&w))]);
+    a.put("a0", &added.to_string());
+    a.put("a1", &json!({ "act": "remove", "did": b.id(), "at": 20 }).to_string());
+    w.net.seed_tail(&a.o);
+    w.run();
+    let ops = owner_ops(&w);
+    assert_eq!(ops.len(), placed.len() + 2, "a removal and a key change: {:?}", w.said());
+    let (n, k) = merged(&w.owner, &ops).current_now().expect("a single head");
+    assert!(!merged(&b, &ops).generations().iter().any(|(x, _)| *x == n), "B does not reach the new generation");
+    assert!(merged(&w.owner, &ops).generations().contains(&(n, k)), "control: the owner does");
+}
+
+/// fx 10-17: A CARD FLUSHED into blocks still names its member to the node — B added. (Before: the node read such a
+/// card as having none, refused the owner's own placement and changed nothing.)
+#[test]
+fn k5_a_card_kept_in_blocks_is_read_whole() {
+    let b = person(0x54);
+    let mut w = bee_world(&[json!({ "act": "added", "did": b.id(), "at": 10 })], &b);
+    b.publish_member_flushed(&mut w.net, &[]);
+    let cred = identity::credential(&w.owner.did, &w.member, &w.owner.mls_pub, &craftworks_account::owner_seed(&w.owner.entropy).unwrap());
+    w.owner.publish_member_flushed(&mut w.net, &[cred]);
+    let before = owner_ops(&w).len();
+    w.run();
+    assert_eq!(owner_ops(&w).len(), before + 2, "B added from cards kept in blocks: {:?}", w.said());
+    assert!(merged(&b, &owner_ops(&w)).placed());
+}

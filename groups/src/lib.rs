@@ -167,6 +167,15 @@ impl Group {
         let op = now(self.cgka.add::<Local, _>(id, *leaf, CgkaAuthorization::Delegation(*act), &self.account.signer)).map_err(e)?;
         op.map(|o| bincode::serialize(&o).map_err(|x| x.to_string())).transpose()
     }
+    /// ADD by a card's raw leaf key (32 bytes) — the node's (K5).
+    pub fn add_member_raw(&mut self, member: &[u8; 32], leaf: &[u8; 32], act: &[u8; 32]) -> Result<Option<Vec<u8>>, String> {
+        self.add_member(member, &ShareKey::from(x25519_dalek::PublicKey::from(*leaf)), act)
+    }
+    /// A KEY CHANGE drawing from `seed` (the node's randomness: upkeep's pool — K5).
+    pub fn rotate_seeded(&mut self, seed: [u8; 32]) -> Result<Vec<u8>, String> {
+        use rand::SeedableRng;
+        Ok(self.rotate(&mut rand::rngs::StdRng::from_seed(seed))?.0)
+    }
     /// REMOVE a member, authorized by the act `act`: the operation's bytes, or `None` if not placed.
     pub fn remove_member(&mut self, member: &[u8; 32], act: &[u8; 32]) -> Result<Option<Vec<u8>>, String> {
         let id = MemberId(ed25519_dalek::VerifyingKey::from_bytes(member).map_err(|x| x.to_string())?);
@@ -189,6 +198,11 @@ impl Group {
         let (op, _) = self.rotate(rng)?;
         let (h, k) = self.cgka.current_generation().ok_or("no generation after a key change")?;
         Ok((self.number(&h), k.0.to_bytes(), Some(op)))
+    }
+    /// The current generation, if there is one with no key change (a single head, its root reached here).
+    pub fn current_now(&mut self) -> Option<(u64, [u8; 32])> {
+        let (h, k) = self.cgka.current_generation()?;
+        Some((self.number(&h), k.0.to_bytes()))
     }
     /// EVERY GENERATION this member reaches (reading: history included): `(number, secret)`.
     pub fn generations(&mut self) -> Vec<(u64, [u8; 32])> {

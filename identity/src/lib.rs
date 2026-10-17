@@ -1745,6 +1745,12 @@ fn guarded<H: Host>(h: &mut H, params_hash: &[u8], seq: u64, value_hash: &[u8]) 
     Ok(())
 }
 
+/// UPKEEP's BEEKEM MEMBER for a member held here: its account's space member seed (`space_member_seed`, the page's
+/// `SpaceMember` too) — `None`: the account's data key is not held on this node.
+pub fn upkeep_space_member<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<[u8; 32]> {
+    Some(space_member_seed(&member_(h, member)?.data?))
+}
+
 /// UPKEEP's KEY in a space: the member's own (a page writes a space's feeds under it: `space.self`) — `None`: no such
 /// member held here.
 pub fn upkeep_space_writer<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<[u8; 32]> {

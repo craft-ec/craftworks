@@ -2305,6 +2305,12 @@ mod js {
     pub fn moves_entries(act: &str) -> Option<String> {
         craftworks_gov::moves_entries(act).map(|i| if i { "in" } else { "out" }.to_string())
     }
+    /// WHOM a counted act lets in or puts out (`gov::entry_move`, the node's too): `[in?, did]`, or undefined.
+    #[wasm_bindgen]
+    pub fn entry_move(act: &str) -> Option<String> {
+        let a: serde_json::Value = serde_json::from_str(act).ok()?;
+        craftworks_gov::entry_move(&a).map(|(i, d)| serde_json::json!([i, d]).to_string())
+    }
     /// AN INVITE CODE's PROOF for one DID (`gov::join_proof`): what a self-entry names in the clear.
     #[wasm_bindgen]
     pub fn join_proof(code: &str, did: &str) -> String {

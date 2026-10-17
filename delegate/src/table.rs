@@ -86,6 +86,30 @@ pub struct Reading {
     resolving: Vec<([u8; 32], Option<Vec<u8>>, [u8; 32], Option<Vec<Vec<u8>>>)>,
     /// Each writer's DID (a device of a member, or a roster writer given): whose acts are whose.
     pub writer_dids: Vec<([u8; 32], String)>,
+    /// Each member's BEEKEM MEMBER from their card (`beekem`: its credential checked against their key log's data key):
+    /// `(DID, member id, first leaf key)` — whom an operation's signer is, whom to add (K5).
+    #[serde(default)]
+    pub beekem: Vec<(String, [u8; 32], [u8; 32])>,
+    /// A member's CARD whose tree is being fetched (a card with many rows keeps them in blocks): `(DID, its state,
+    /// the blocks got, the block contracts still out — with each one's cid)`.
+    /// What cards SAID about their member that is not a failed read (none on it, one that does not check) — reported by
+    /// the keys round, never a short read.
+    #[serde(default)]
+    pub card_says: Vec<String>,
+    #[serde(default)]
+    card_trees: Vec<([u8; 32], Vec<u8>, Vec<([u8; 32], Vec<u8>)>, Vec<([u8; 32], [u8; 32])>)>,
+}
+
+/// A card's BEEKEM MEMBER (`{ cred, leaf }`, hex): its credential names this account and is signed by its DATA key (the
+/// key log's head — the page's `members.memberOf`, the same check). `(member id, leaf key)`.
+fn beekem_member(did: &[u8; 32], data_key: &[u8; 32], v: &[u8]) -> Option<([u8; 32], [u8; 32])> {
+    let j: serde_json::Value = serde_json::from_slice(v).ok()?;
+    let b = |s: &str| -> Option<Vec<u8>> { (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect() };
+    let (d, owner, _, member) = identity::read_credential(&b(j["cred"].as_str()?)?)?;
+    if d != *did || owner != *data_key {
+        return None;
+    }
+    Some((member.try_into().ok()?, b(j["leaf"].as_str()?)?.try_into().ok()?))
 }
 
 pub fn hex(b: &[u8]) -> String {
@@ -107,7 +131,7 @@ pub fn table_name(space: &[u8; 32], name: &str) -> String {
 fn by_name(space: &[u8; 32], table: &str) -> bool {
     ["tables", "members", "log"].iter().any(|n| table == table_name(space, n)) || is_public(space, table)
 }
-fn is_public(space: &[u8; 32], table: &str) -> bool {
+pub(crate) fn is_public(space: &[u8; 32], table: &str) -> bool {
     table.starts_with(&table_name(space, "pub-"))
 }
 
@@ -186,6 +210,9 @@ impl Reading {
             notes: Vec::new(),
             resolving: Vec::new(),
             writer_dids: Vec::new(),
+            beekem: Vec::new(),
+            card_says: Vec::new(),
+            card_trees: Vec::new(),
         };
         (r, vec![Io::Get { id: bag, subscribe: false }])
     }
@@ -234,11 +261,37 @@ impl Reading {
                 // has a devices contract.
                 let mut o = data::Open::new(c.tail, &log.head().data, "card");
                 o.public = true;
-                let rows = state.filter(|st| o.absorb(st)).and_then(|_| match o.opened() {
-                    Ok(data::Step::Ready(rows)) => Some(rows),
+                let state_was_none = state.is_none();
+                let tree = self.card_trees.iter().position(|t| t.0 == did);
+                let absorbed = state.as_ref().is_some_and(|st| o.absorb(st));
+                if let Some(k) = tree {
+                    for (cid, st) in &self.card_trees[k].2 {
+                        o.absorb_block(cid, st);
+                    }
+                }
+                let rows = match (absorbed, o.opened()) {
+                    (true, Ok(data::Step::Ready(rows))) => Some(rows),
+                    // ITS TREE's BLOCKS fetched (once: a block still missing after that is a card that does not read).
+                    (true, Ok(data::Step::Need(cids))) if tree.is_none() => {
+                        let want: Vec<([u8; 32], [u8; 32])> = cids.iter().filter_map(|cid| Some((block_id(&o, cid, &c.sealed_hash, &c.block_hash)?, *cid))).collect();
+                        if !want.is_empty() {
+                            let io = want.iter().map(|(id, _)| Io::Get { id: *id, subscribe: false }).collect();
+                            self.card_trees.push((did, state.clone().expect("absorbed"), Vec::new(), want));
+                            return io;
+                        }
+                        None
+                    }
                     _ => None,
-                });
+                };
                 let marked = rows.as_ref().and_then(|r| r.get(b"devices".as_slice())).is_some_and(|v| v.as_slice() == b"1");
+                match rows.as_ref().map(|r| r.get(b"beekem".as_slice())) {
+                    Some(Some(v)) => match beekem_member(&did, &log.head().data, v) {
+                        Some(m) => self.beekem.push((name.clone(), m.0, m.1)),
+                        None => self.card_says.push(format!("{}: its card's member does not check", name.get(12..20).unwrap_or(&name))),
+                    },
+                    Some(None) => self.card_says.push(format!("{}: no member on its card", name.get(12..20).unwrap_or(&name))),
+                    None => self.notes.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),
+                }
                 let creds: Vec<Vec<u8>> = rows
                     .and_then(|r| r.get(b"nodes".as_slice()).cloned())
                     .and_then(|v| serde_json::from_slice::<Vec<String>>(&v).ok())
@@ -281,7 +334,7 @@ impl Reading {
 
     /// Whether this read waits on contract `id`.
     pub fn wants(&self, id: &[u8; 32]) -> bool {
-        self.bag == Some(*id) && !self.bag_read || self.waiting.iter().any(|(w, _, _)| w == id) || self.resolving.iter().any(|(_, _, w, _)| w == id)
+        self.bag == Some(*id) && !self.bag_read || self.waiting.iter().any(|(w, _, _)| w == id) || self.resolving.iter().any(|(_, _, w, _)| w == id) || self.card_trees.iter().any(|t| t.3.iter().any(|(w, _)| w == id))
     }
 
     /// A tail opened as its job says: its keys, its state, its blocks.
@@ -430,6 +483,21 @@ impl Reading {
 
     /// An ANSWER: the bag (its writers' catalogs asked), a tail (read on), or a block (read on).
     pub fn got(&mut self, c: &Codes, id: [u8; 32], state: Option<Vec<u8>>) -> Vec<Io> {
+        // A block of a member's CARD: once all are in, the card read again with them.
+        if let Some(k) = self.card_trees.iter().position(|t| t.3.iter().any(|(w, _)| *w == id)) {
+            let t = &mut self.card_trees[k];
+            let at = t.3.iter().position(|(w, _)| *w == id).expect("found");
+            let (_, cid) = t.3.remove(at);
+            if let Some(st) = state {
+                t.2.push((cid, st));
+            }
+            if !t.3.is_empty() {
+                return Vec::new();
+            }
+            let (did, card) = (t.0, t.1.clone());
+            let Some(at) = self.resolving.iter().position(|(d, l, _, cr)| *d == did && l.is_some() && cr.is_none()) else { return Vec::new() };
+            return self.resolved(c, at, Some(card));
+        }
         if let Some(at) = self.resolving.iter().position(|(_, _, w, _)| *w == id) {
             return self.resolved(c, at, state);
         }

@@ -100,14 +100,11 @@ export async function start(ctx) {
       for (const [d, m] of found) if (m.why) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${d.slice(12, 20)}… not mapped — ${m.why}` });
       const members = found.map(([, m]) => m).filter(m => !m.why);
       const byMember = new Map(members.map(m => [m.id, m.did]));
-      // (Which acts let in or put out: the replay's one list — `gov::moves_entries`.)
+      // (Whom each act lets in or puts out: the replay's one rule — `gov::entry_move`, the node's too.)
       const acts = new Map();
       for (const a of r.acts()) {
-        const moves = glue.moves_entries(a.act);
-        if (!moves) continue;
-        const kind = moves === "in" ? "add" : "remove";
-        const target = a.act === "join" || a.act === "leave" ? a.by : a.did;
-        acts.set(await sha(a.id), { kind, target });
+        const mv = JSON.parse(glue.entry_move(JSON.stringify(a)) ?? "null");
+        if (mv) acts.set(await sha(a.id), { kind: mv[0] ? "add" : "remove", target: mv[1] });
       }
       const misses = [];
       return {

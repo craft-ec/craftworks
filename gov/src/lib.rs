@@ -25,6 +25,15 @@ pub const DEPS: usize = 8;
 /// state is (docs/proposals/members-and-keys-beekem.md) — every member, joined whenever, and one being added, checks an
 /// add or a removal against them (`craftworks_groups`' check). `Some(true)`: it lets its target in; `Some(false)`: puts it
 /// out; `None`: not such an act. (Its target: `did`, or its writer for `join` / `leave`.)
+/// WHOM a counted act lets in or puts out (`moves_entries`): `(in?, the account)` — the actor itself for a `join` or a
+/// `leave`, the act's `did` otherwise. The page's and the node's one reading of an act for the keys (`members`).
+pub fn entry_move(a: &Value) -> Option<(bool, String)> {
+    let act = a.get("act")?.as_str()?;
+    let moves = moves_entries(act)?;
+    let target = if act == "join" || act == "leave" { a.get("by") } else { a.get("did") };
+    Some((moves, target?.as_str()?.to_string()))
+}
+
 pub fn moves_entries(act: &str) -> Option<bool> {
     match act {
         "added" | "admitted" | "member" | "join" | "transfer" => Some(true),

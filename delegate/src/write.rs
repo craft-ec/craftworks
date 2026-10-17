@@ -36,10 +36,14 @@ fn feed_open(c: &Codes, r: &Reading, owner: &[u8; 32], name: &str, label: &str, 
     let space = r.space();
     let t = table::table_name(&space, name);
     let mut o = data::Open::new(c.tail, owner, label);
-    o.set_table_key(identity::space_table_key(&space, &t));
-    let newest = r.epochs().keys().max().copied();
-    for (e, s) in r.epochs() {
-        o.epoch_key(*e, Some(identity::epoch_table_key(s, &t)), Some(*e) == newest);
+    if table::is_public(&space, &t) {
+        o.public = true;
+    } else {
+        o.set_table_key(identity::space_table_key(&space, &t));
+        let newest = r.epochs().keys().max().copied();
+        for (e, s) in r.epochs() {
+            o.epoch_key(*e, Some(identity::epoch_table_key(s, &t)), Some(*e) == newest);
+        }
     }
     if let Some((state, blocks)) = held {
         if let Some(st) = state {
@@ -91,7 +95,8 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
     }
     let space = r.space();
     let t = table::table_name(&space, name);
-    let label = identity::blind_name(&identity::space_table_key(&space, &t), &t);
+    // (A PUBLIC table — `pub-…` — is found by its name and open: the reader's one rule, `table::is_public`.)
+    let label = if table::is_public(&space, &t) { t.clone() } else { identity::blind_name(&identity::space_table_key(&space, &t), &t) };
     let cat_name = table::table_name(&space, "tables");
     let feed = r.own(&me, name);
 
