@@ -2760,7 +2760,7 @@ branch set-aside/anchor-10-17 (not main).
 - [x] K4 (10-17, fx v858): a space's content keys from BeeKEM GENERATIONS — the storage's epoch-key machinery unchanged; a generation's number = its update's depth × 2^24 + 3 hash bytes (the newest the highest), its secret the update's root secret; `members` hands every reached generation to the identity (epochKeep). A wrote a row with epoch 48930215 (a generation), B read it. Vendored beekem patched (CRAFTWORKS PATCH: current/reachable generations, an operation's depth). MLS spaces untouched (both coexist until K7/K8). Was: K4 page, spaces: create, reconcile to the list (add + rotate, remove + rotate), content keys from the replayed root
       (tables' epoch keys → update generations), invitations/history.
 - [ ] K5 node: reconcile with every page closed.
-- [ ] K6 account: one leaf per account, its devices sharing the leaf secret (the account hands new ones on).
+- [x] K6 (10-17, done before K5 — the node needs it to change keys): one leaf per account; a key change's leaf secret is DERIVED from the account's member seed and the heads it follows (never drawn), so every device and the node derives it on merging the account's own update — nothing handed between devices. Test with controls (a device before the change cannot read; another account derives nothing); mutation (derivation off) fails it.
 - [ ] K7 migration of existing spaces; the other kinds (chats, audiences, circles, levels).
 - [ ] K8 the MLS group layer and its entry machinery removed (group-check enforces).
 Each phase: built, tested with controls, proven on fx, committed. Not decided: the upstream report (owner's say).

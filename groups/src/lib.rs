@@ -31,6 +31,7 @@ pub fn tree_id(space: &[u8; 32]) -> TreeId {
 /// key — `craftworks_identity::space_member_seed`), its member id (that key's public half), its first leaf secret.
 #[derive(Clone)]
 pub struct Account {
+    seed: [u8; 32],
     pub signer: MemorySigner,
     pub id: MemberId,
     pub leaf: ShareSecretKey,
@@ -41,7 +42,18 @@ impl Account {
     pub fn of(member_seed: &[u8; 32]) -> Account {
         let key = ed25519_dalek::SigningKey::from_bytes(member_seed);
         let leaf = ShareSecretKey::from(x25519_dalek::StaticSecret::from(blake3::derive_key("craftworks 2026-10-17 beekem leaf", member_seed)));
-        Account { id: MemberId(key.verifying_key()), signer: MemorySigner::from(key), leaf }
+        Account { seed: *member_seed, id: MemberId(key.verifying_key()), signer: MemorySigner::from(key), leaf }
+    }
+    /// THE LEAF SECRET of a key change made after `heads` (K5/K6): derived from the account's seed and what it follows,
+    /// never drawn — so every device of the account, and its node, derives the leaf secret of any change the account
+    /// made, and nothing is handed between them.
+    fn leaf_after(&self, heads: &[keyhive_crypto::digest::Digest<Signed<CgkaOperation>>]) -> ShareSecretKey {
+        let mut h = blake3::Hasher::new_derive_key("craftworks 2026-10-17 beekem rotation");
+        h.update(&self.seed);
+        for d in heads {
+            h.update(d.as_slice());
+        }
+        ShareSecretKey::from(x25519_dalek::StaticSecret::from(*h.finalize().as_bytes()))
     }
     pub fn leaf_key(&self) -> ShareKey {
         self.leaf.share_key()
@@ -130,6 +142,17 @@ impl Group {
         if let Err(why) = admitted(&op, check) {
             return Merged::Refused(why);
         }
+        // THIS ACCOUNT's own key change, made on another device or its node: its leaf secret derived here (K6).
+        if let CgkaOperation::Update { id, new_path, predecessors, .. } = &op.payload {
+            if *id == self.account.id {
+                let mut heads = predecessors.clone();
+                heads.sort();
+                let sk = self.account.leaf_after(&heads);
+                if matches!(&new_path.leaf_pk, beekem::keys::NodeKey::ShareKey(pk) if *pk == sk.share_key()) {
+                    self.cgka.owner_sks.insert(sk.share_key(), sk);
+                }
+            }
+        }
         match self.cgka.merge_concurrent_operation(Arc::new(op)) {
             Ok(_) => Merged::Applied,
             Err(CgkaError::OutOfOrderOperation) => Merged::Waiting,
@@ -153,7 +176,7 @@ impl Group {
     /// ROTATE this account's leaf (after an add or a remove; when the root is unresolved): the operation, and the new
     /// leaf secret — which the ACCOUNT hands to its other devices.
     pub fn rotate<R: rand::CryptoRng + rand::RngCore>(&mut self, rng: &mut R) -> Result<(Vec<u8>, ShareSecretKey), String> {
-        let sk = ShareSecretKey::generate(rng);
+        let sk = self.account.leaf_after(&self.cgka.current_heads());
         let (_, op, _) = now(self.cgka.update::<Local, _, R>(sk.share_key(), sk, &self.account.signer, rng)).map_err(e)?;
         Ok((bincode::serialize(&op).map_err(|x| x.to_string())?, sk))
     }

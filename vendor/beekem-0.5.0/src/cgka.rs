@@ -234,6 +234,14 @@ impl Cgka {
         self.record_tree_root_secret()
     }
 
+    /// The current HEADS (what an update made now names as its predecessors), sorted — after a pending replay.
+    pub fn current_heads(&mut self) -> Vec<Digest<Signed<CgkaOperation>>> {
+        let _ = self.replay_if_pending();
+        let mut h: Vec<_> = self.ops_graph.cgka_op_heads.iter().copied().collect();
+        h.sort();
+        h
+    }
+
     /// An operation's depth in the graph (0 if unknown).
     pub fn ops_graph_depth(&self, op: &Digest<Signed<CgkaOperation>>) -> u64 {
         self.ops_graph.depth_of(op).unwrap_or(0)

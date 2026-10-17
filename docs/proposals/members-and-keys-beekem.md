@@ -169,3 +169,28 @@ earlier generations; the identity keeps them); a removed member (no generation a
 after are unreadable to it); two devices of one account (each derives the same generations; the account's leaf secret
 handed on — K6); concurrent changes (writing makes the key change that resolves them, readers reach both branches'
 generations).
+
+## K6 — the account's devices share its leaf by DERIVATION (built before K5)
+
+A key change's leaf secret is `derive_key("craftworks 2026-10-17 beekem rotation", member seed ‖ the heads it follows)`
+— never drawn. A device (or the account's node) merging an update signed by its own account derives the leaf secret
+from the update's predecessors and keeps it when its public key matches the update's. Nothing is handed between
+devices; a device that lost its state derives every leaf from the operations. (The path secrets above the leaf stay
+random; the leaf secret was always the account's — its seed is the account's identity — so no forward secrecy is lost
+that the model had: open question 5.)
+
+## K5 — the node keeps the tree to the list with every page closed (design before code)
+
+The follower round (`upkeep`) already reads a space's acts from every member's feeds with no page open. For a space
+with a BeeKEM tree it also reads `pub-keyops`, and instead of the MLS steps:
+
+1. **The tree, rebuilt from the operations** each round (no state kept: every leaf secret of the account derives — K6).
+2. **Our check** from the replay (`gov`) and the members' CARDS (the `beekem` row: credential checked against the key
+   log — the reading already reads each member's card).
+3. **Generations kept**: each reached handed to the identity (`keep_epoch`) — the node reads the space's new rows too.
+4. **Reconcile** (only from a WHOLE read — I6): ADD each listed account whose card names a member and that the tree does
+   not place, authorized by the latest act letting it in; REMOVE each placed member whose account the list no longer
+   names, by the act putting it out; then ONE key change. No turns: concurrent adds of one person by several nodes fill
+   one leaf; concurrent removals of one member are one removal.
+5. **Written** into this member's own feed of `pub-keyops` (`write::rows`, as the re-key round writes `files`); a key
+   change needs randomness (the pool a page stirs): none — the round waits, said.

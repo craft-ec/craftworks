@@ -130,7 +130,7 @@ fn a_removed_member_cannot_open_what_is_sealed_after() {
 }
 
 #[test]
-fn an_accounts_devices_are_one_member_and_share_a_new_leaf_through_the_account() {
+fn an_accounts_devices_are_one_member_and_derive_each_others_new_leaf() {
     let mut rng = StdRng::seed_from_u64(3);
     let (a, b) = (account(1), account(2));
     assert_eq!(id(&Account::of(&[2; 32])), id(&b), "every device of an account derives the same member");
@@ -143,20 +143,34 @@ fn an_accounts_devices_are_one_member_and_share_a_new_leaf_through_the_account()
     let (mut b1, mut b2) = (Group::empty(&SPACE, b.clone()), Group::empty(&SPACE, b.clone()));
     merge_all(&mut b1, &ops, &l);
     merge_all(&mut b2, &ops, &l);
-    // Device 1 rotates B's leaf; A seals after it.
-    let (brot, new_leaf) = b1.rotate(&mut rng).unwrap();
+    // Device 1 (or the account's node) changes B's leaf; A seals after it.
+    let (brot, _) = b1.rotate(&mut rng).unwrap();
     ga.merge(&brot, &l);
-    b2.merge(&brot, &l);
     let (sealed, op) = ga.seal([4; 32], b"to b", &mut rng).unwrap();
+    let after: Vec<Vec<u8>> = op.into_iter().collect();
+    // Control: device 2 WITHOUT that change cannot open what is sealed after it.
+    let mut b2_before = Group::load(&b2.save().unwrap(), b.clone()).unwrap();
+    for o in &after {
+        b2_before.merge(o, &l);
+    }
+    assert!(b2_before.open(&sealed).is_err(), "control: without the change, device 2 cannot read");
+    // Merging it, device 2 DERIVES the new leaf secret (nothing handed over) and reads.
     for g in [&mut b1, &mut b2] {
-        if let Some(op) = &op {
-            g.merge(op, &l);
+        g.merge(&brot, &l);
+        for o in &after {
+            g.merge(o, &l);
         }
     }
     assert_eq!(b1.open(&sealed).unwrap(), b"to b");
-    assert!(b2.open(&sealed).is_err(), "control: device 2 without the account's new leaf");
-    b2.take_leaf(new_leaf);
-    assert_eq!(b2.open(&sealed).unwrap(), b"to b", "handed through the account: it reads");
+    assert_eq!(b2.open(&sealed).unwrap(), b"to b", "device 2 derives the account's new leaf and reads");
+    // And ANOTHER account's device merging the same change derives nothing of B's: control on the derivation.
+    let c = account(3);
+    l.accounts.insert(id(&c), "did:c".into());
+    let mut gc = Group::empty(&SPACE, c);
+    for o in ops.iter().chain([&brot]).chain(after.iter()) {
+        gc.merge(o, &l);
+    }
+    assert!(gc.open(&sealed).is_err(), "control: an account not in the group derives nothing");
 }
 
 #[test]
