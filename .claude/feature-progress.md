@@ -2744,3 +2744,23 @@ Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
 - [ ] 2 owner offline: any listed member's node publishes the group info
 - [ ] 3 forks at scale: 4 members committing at once
 - [ ] 4 door junk cap
+
+## K — Members and keys on BeeKEM (owner 10-17: "if that fit the design, go on"; docs/proposals/members-and-keys-beekem.md)
+Why: MLS forks without a commit orderer (its Delivery Service); DMLS leaves fork resolution open; witness voting
+(`mls/tests/witnessed.rs`) never forked but stalled on split votes. BeeKEM (Ink & Switch Keyhive, causal order only,
+concurrent changes merged) proven in a randomized simulation of our situation and our flows. The E/anchor work is on
+branch set-aside/anchor-10-17 (not main).
+- [x] K1 vendor keyhive @ 585e6fc (beekem 0.5.0, keyhive_crypto 0.2.1, keyhive_codec 0.1.0) in vendor/, beekem a
+      workspace member; our simulation + flow tests beside upstream's: `cargo test --release -p beekem --lib` 95 pass.
+      wasm32: beekem's std build needs getrandom's source from the consumer (the page: js; the delegate: custom) — as
+      mls-rs today; proven in K2. (Upstream's no_std build does not compile — not used.)
+- [ ] K2 crate `groups`: our check before BeeKEM (signer listed, add/remove naming its act's hash), operations' wire
+      form, keys from a replay; built into core (page wasm) and delegate (wasm, custom randomness); tests.
+- [ ] K3 storage: each member's operations as its own feed (one writer), merged in causal order (page and node).
+- [ ] K4 page, spaces: create, reconcile to the list (add + rotate, remove + rotate), content keys from the replayed root
+      (tables' epoch keys → update generations), invitations/history.
+- [ ] K5 node: reconcile with every page closed.
+- [ ] K6 account: one leaf per account, its devices sharing the leaf secret (the account hands new ones on).
+- [ ] K7 migration of existing spaces; the other kinds (chats, audiences, circles, levels).
+- [ ] K8 the MLS group layer and its entry machinery removed (group-check enforces).
+Each phase: built, tested with controls, proven on fx, committed. Not decided: the upstream report (owner's say).

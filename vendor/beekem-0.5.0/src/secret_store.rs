@@ -1,0 +1,208 @@
+//! Secret store for inner tree nodes.
+
+use crate::{
+    collections::Set,
+    encrypted::EncryptedSecret,
+    error::CgkaError,
+    keys::{share_secret_key_from_decrypted_secret, ConflictKeys, NodeKey, ShareKeyMap},
+    treemath::TreeNodeIndex,
+};
+use alloc::{collections::BTreeMap, string::ToString, vec, vec::Vec};
+use keyhive_crypto::share_key::{ShareKey, ShareSecretKey};
+use nonempty::NonEmpty;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SecretStore {
+    /// Every encrypted secret key (and hence version) corresponds to a single
+    /// public key. There must be at least one.
+    ///
+    /// Kept sorted and free of duplicates.
+    versions: NonEmpty<SecretStoreVersion>,
+}
+
+/// We implement here since deriving would require turning on a feature of
+/// `NonEmpty` to get its `Arbitrary`.
+#[cfg(any(test, feature = "arbitrary"))]
+impl<'a> arbitrary::Arbitrary<'a> for SecretStore {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let mut versions = NonEmpty::new(SecretStoreVersion::arbitrary(u)?);
+        versions.extend(Vec::<SecretStoreVersion>::arbitrary(u)?);
+        Ok(Self {
+            versions: Self::sorted(versions),
+        })
+    }
+}
+
+impl SecretStore {
+    pub fn new(
+        pk: ShareKey,
+        encrypter_pk: ShareKey,
+        sk: BTreeMap<TreeNodeIndex, EncryptedSecret<ShareSecretKey>>,
+    ) -> Self {
+        let version = SecretStoreVersion {
+            pk,
+            sk,
+            encrypter_pk,
+        };
+        Self {
+            versions: NonEmpty::new(version),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn versions(&self) -> &NonEmpty<SecretStoreVersion> {
+        &self.versions
+    }
+
+    pub fn has_conflict(&self) -> bool {
+        self.versions.len() > 1
+    }
+
+    pub fn node_key(&self) -> NodeKey {
+        match self.versions.tail.as_slice() {
+            [] => NodeKey::ShareKey(self.versions.head.pk),
+            [second] => ConflictKeys {
+                first: self.versions.head.pk,
+                second: second.pk,
+                more: vec![],
+            }
+            .into(),
+            [second, more @ ..] => ConflictKeys {
+                first: self.versions.head.pk,
+                second: second.pk,
+                more: more.iter().map(|v| v.pk).collect(),
+            }
+            .into(),
+        }
+    }
+
+    pub fn decrypt_secret(
+        &self,
+        child_node_key: &NodeKey,
+        child_sks: &mut ShareKeyMap,
+        seen_idxs: &[TreeNodeIndex],
+    ) -> Result<ShareSecretKey, CgkaError> {
+        if self.has_conflict() {
+            return Err(CgkaError::UnexpectedKeyConflict);
+        }
+        self.versions
+            .head
+            .decrypt_secret(child_node_key, child_sks, seen_idxs)
+    }
+
+    /// Decrypt this node's secret with the secret of its child's sibling, found
+    /// in `sks`. If the sibling was blank or in conflict, the key is from its
+    /// resolution.
+    ///
+    /// Returns `None` if the node has more than one version or none of its
+    /// encryptions is to a key in `sks`.
+    pub(crate) fn decrypt_with_sibling_secret(&self, sks: &ShareKeyMap) -> Option<ShareSecretKey> {
+        if self.has_conflict() {
+            return None;
+        }
+        let version = &self.versions.head;
+        version.sk.values().find_map(|encrypted| {
+            let plaintext = sks
+                .try_decrypt_encryption(version.encrypter_pk, encrypted)
+                .ok()?;
+            share_secret_key_from_decrypted_secret(plaintext)
+        })
+    }
+
+    /// Decrypt this node's secret with `child_sk`, the secret of the child below
+    /// it that encrypted it.
+    ///
+    /// Returns `None` if the node has more than one version or `child_sk` is not
+    /// that child's secret.
+    pub(crate) fn decrypt_with_child_secret(
+        &self,
+        child_sk: &ShareSecretKey,
+    ) -> Option<ShareSecretKey> {
+        if self.has_conflict() {
+            return None;
+        }
+        self.versions
+            .head
+            .sk
+            .values()
+            .find_map(|encrypted| encrypted.try_encrypter_decrypt(child_sk).ok())
+            .and_then(share_secret_key_from_decrypted_secret)
+    }
+
+    /// Drop the versions corresponding to `removed_keys` and then merge `other`.
+    pub fn merge(&mut self, other: &SecretStore, removed_keys: &Set<ShareKey>) {
+        let mut versions = other.versions.clone();
+        versions.extend(
+            self.versions
+                .iter()
+                .filter(|version| !removed_keys.contains(&version.pk))
+                .cloned(),
+        );
+        self.versions = Self::sorted(versions);
+    }
+
+    /// Sort `versions` and drop duplicates.
+    fn sorted(versions: NonEmpty<SecretStoreVersion>) -> NonEmpty<SecretStoreVersion> {
+        let mut sorted: Vec<SecretStoreVersion> = versions.into_iter().collect();
+        sorted.sort();
+        sorted.dedup();
+        NonEmpty::from_vec(sorted).expect("sorting a non-empty list leaves it non-empty")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize, Serialize)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+pub struct SecretStoreVersion {
+    /// Every encrypted secret key (and hence version) corresponds to a single public
+    /// key.
+    pub pk: ShareKey,
+    /// This is a map in order to handle the case of blank siblings, when we must encrypt
+    /// the same secret key separately for each public key in the sibling resolution.
+    pub sk: BTreeMap<TreeNodeIndex, EncryptedSecret<ShareSecretKey>>,
+    /// The PublicKey of the child that encrypted this parent.
+    pub encrypter_pk: ShareKey,
+}
+
+impl SecretStoreVersion {
+    pub fn decrypt_secret(
+        &self,
+        child_node_key: &NodeKey,
+        child_sks: &mut ShareKeyMap,
+        seen_idxs: &[TreeNodeIndex],
+    ) -> Result<ShareSecretKey, CgkaError> {
+        let is_encrypter = child_node_key.contains_key(&self.encrypter_pk);
+        let mut lookup_idx = seen_idxs.last().ok_or(CgkaError::EncryptedSecretNotFound)?;
+        if !self.sk.contains_key(lookup_idx) {
+            let mut found = false;
+            for idx in seen_idxs.iter().rev().skip(1) {
+                if self.sk.contains_key(idx) {
+                    lookup_idx = idx;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return Err(CgkaError::EncryptedSecretNotFound);
+            }
+        }
+        let encrypted = self
+            .sk
+            .get(lookup_idx)
+            .ok_or(CgkaError::EncryptedSecretNotFound)?;
+
+        let decrypted: Vec<u8> = if is_encrypter {
+            let secret_key = child_sks
+                .get(&self.encrypter_pk)
+                .ok_or(CgkaError::SecretKeyNotFound)?;
+
+            encrypted
+                .try_encrypter_decrypt(secret_key)
+                .map_err(|e| CgkaError::Decryption(e.to_string()))?
+        } else {
+            child_sks.try_decrypt_encryption(self.encrypter_pk, encrypted)?
+        };
+
+        share_secret_key_from_decrypted_secret(decrypted).ok_or(CgkaError::Conversion)
+    }
+}
