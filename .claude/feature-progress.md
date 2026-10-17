@@ -2733,6 +2733,8 @@ Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
   settings "Who sees it" (read, owner only, inherited by every app); Anyone → published + listed in Discover; a space
   taking requests ("ask") counts as public too (`Gov::is_public`).
 
+- [x] RELEASED 10-17 as live v400 (loader v51): HOTFIX from f139ba8 + 1c30ef4 (a release spreading) + c3ed744 (Permissions page) + 54e953e (Discover/media feeds: `refOf` shadowed in items — every profile item's reference wrong). Worktree tmp/release21, its own publisher; identity unchanged (31e8e8b2: no PIN). Live from B as a guest, Discover: video 0→14, audio 0→4, image 0→1, book 0→2, post 0→2. NOT in it: 338ea76 (delegate: identity moves) and K1–K6. Next release: set PREVIOUS_SITE (it said none: no fallback while spreading).
+
 ## After v399 (10-17) — work that needs nobody
 - [x] 1 A RELEASE STILL SPREADING (owner's node 503'd 51 new pieces for minutes after v399): the manifest carries the
   version before as `previous` (publisher, `PREVIOUS_SITE` from `tools/previous-site.sh`; its entries kept on the site);
