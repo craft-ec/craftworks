@@ -150,8 +150,9 @@ The storage's EPOCH-KEY machinery stays as it is (table keys from an epoch secre
 keeping each epoch's secret — `keep_epoch` / `tableKeyAt`; the node reading with them). What changes is WHERE an epoch
 secret comes from:
 
-1. **A GENERATION is an epoch.** Each BeeKEM update is one: its number the first 8 bytes of the update's hash (as a u64
-   — unique in practice), its secret the update's root secret (`PcsKey`).
+1. **A GENERATION is an epoch.** Each BeeKEM update is one: its number the update's DEPTH in the operations × 2^24
+   plus 3 bytes of its hash (a later generation is always higher, so the storage's "newest" is the current one), its
+   secret the update's root secret (`PcsKey`).
 2. **Writing:** with the CURRENT generation — BeeKEM's single-head root (a key change made first when there are
    concurrent heads, as its content API does).
 3. **Reading:** every generation this member reaches — its own, those its tree decrypts, and earlier ones through the
