@@ -55,12 +55,15 @@ export async function start(ctx) {
   }
 
   const groups = new Map();
+  const life = () => ctx.require("lifecycle");
   function group(sp) {
     if (groups.has(sp.id)) return groups.get(sp.id);
     let g = null;
     let queue = Promise.resolve();
     const once = f => (queue = queue.then(f, f));
     const at = `g/${sp.id}`;
+    // (What was last REPORTED, so each change is said once — never the same report every round.)
+    let lastUnmapped = "", lastWaiting = "", lastShort = null, lastInStep = null;
     const state = () => storage.table("beekem");
     const feed = () => storage.table(space.tableOf(sp, "pub-keyops"), sp);
     async function load() {
@@ -104,7 +107,11 @@ export async function start(ctx) {
       }
       // Cards of the listed AND of everyone an act moved (whom to take out is found by their card too).
       const found = await Promise.all([...new Set([...roster, ...(owner ? [owner] : []), ...moves.map(m => m.did)])].map(async d => [d, await memberOf(d)]));
-      for (const [d, m] of found) if (m.why) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${d.slice(12, 20)}… not mapped — ${m.why}` });
+      const unmapped = found.filter(([, m]) => m.why);
+      // (Said ONCE per change — never a report every round for the same card.)
+      const um = unmapped.map(([d, m]) => `${d.slice(12, 20)}: ${m.why}`).join("; ");
+      if (um && um !== lastUnmapped) life().then(l => l.transition("group", sp.id, "keys-unmapped", { why: um.slice(0, 300), n: unmapped.length }));
+      lastUnmapped = um;
       const members = found.map(([, m]) => m).filter(m => !m.why);
       const byMember = new Map(members.map(m => [m.id, m.did]));
       // (Whom each act lets in or puts out: the replay's one rule — `gov::entry_move`, the node's too.)
@@ -172,7 +179,10 @@ export async function start(ctx) {
       said.generations = await keepGenerations();
       if (c.misses.length) said.misses = c.misses.slice(-3);
       await save();
-      if (said.refused.length || said.waiting) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said.waiting} operation(s) waiting, ${said.refused.length} refused (${said.refused.slice(0, 2).join("; ")})` });
+      if (said.refused.length) life().then(l => l.transition("group", sp.id, "keys-refused", { why: said.refused.slice(0, 3).join("; "), n: said.refused.length, misses: JSON.stringify(said.misses ?? []).slice(0, 300) }));
+      const w = said.waiting ? String(said.waiting) : "";
+      if (w !== lastWaiting && said.waiting) life().then(l => l.transition("group", sp.id, "keys-waiting", { why: `${said.waiting} operation(s) wait on their predecessors`, n: said.waiting }));
+      lastWaiting = w;
       return said;
     }
 
@@ -221,8 +231,14 @@ export async function start(ctx) {
         await send(op);
         await save();
         said.made = true;
+        life().then(l => l.transition("group", sp.id, "keys-tree-made", { why: myDid === c.owner ? "the owner placed itself" : "a listed member placed itself (naming its act)" }));
       }
-      if (!c.whole()) return { ...said, short: "the list not read whole: nothing changed" };
+      if (!c.whole()) {
+        if (lastShort !== true) life().then(l => l.transition("group", sp.id, "keys-short", { why: "the list not read whole: the keys not changed (I6)" }));
+        lastShort = true;
+        return { ...said, short: "the list not read whole: nothing changed" };
+      }
+      lastShort = false;
       if (g.placed()) {
         const r = g.reconcile(c.cards, c.listedNow, c.ins, c.outs);
         for (const op of r.ops) await send(op);
@@ -234,7 +250,14 @@ export async function start(ctx) {
         said.bridged = await ctx.optional("members: bridge", bridge(), () => 0);
       }
       said.crossed = await ctx.optional("members: crossBridge", crossBridge(), () => 0);
-      if (said.added?.length || said.removed?.length) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said.added.length} added, ${said.removed.length} removed — one key change` });
+      const l = await life();
+      const short = d => d.replace(/^did:craftec:/, "").slice(0, 6);
+      if (said.added?.length || said.removed?.length || said.not?.length)
+        l.transition("group", sp.id, "keys-reconciled", { why: `${said.added?.length ?? 0} added (${(said.added ?? []).map(short).join(", ")}), ${said.removed?.length ?? 0} removed (${(said.removed ?? []).map(short).join(", ")}) — one key change${said.not?.length ? ` — not: ${said.not.join("; ").slice(0, 200)}` : ""}`, generations: said.generations, members: g.members().length });
+      else if (g.placed() && lastInStep !== g.members().length) l.transition("group", sp.id, "keys-in-step", { why: `the tree places the list (${g.members().length})`, generations: said.generations });
+      lastInStep = g.placed() ? g.members().length : null;
+      if (said.bridged) l.transition("group", sp.id, "keys-bridged", { why: `${said.bridged} MLS epoch(s) carried into the tree's history`, n: said.bridged });
+      if (said.crossed) l.transition("group", sp.id, "keys-crossed", { why: `${said.crossed} MLS epoch(s) of its history kept from the bridge`, n: said.crossed });
       return said;
     }
 

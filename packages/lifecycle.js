@@ -76,7 +76,7 @@ export async function start(ctx) {
       initial: "UNKNOWN",
       journal: true,
       // Steps that are routine (still kept in the journal): not each a health report.
-      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found", "follow-info"],
+      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found", "follow-info", "keys-in-step", "follow-keys"],
       events: {
         held: { from: "*", to: "HELD" },
         // Ahead of the owner's announcement (it reads: HELD).
@@ -131,6 +131,29 @@ export async function start(ctx) {
         "follow-info-held": { from: "*" },
         // Steps of the node lost to its limit before a page read them: how many.
         "follow-dropped": { from: "*" },
+        // MEMBERS AND KEYS ON BEEKEM (K3–K7, `members`): its TREE made (this account placed itself); a reconcile that
+        // CHANGED it (added, removed — one key change) or found it IN STEP with the list; one that decided nothing (the
+        // list not read whole — I6); OPERATIONS refused by our check (why) or waiting on their predecessors; a listed
+        // account whose card names no member we can check; the HISTORY BRIDGE written and crossed.
+        "keys-tree-made": { from: "*" },
+        "keys-reconciled": { from: "*" },
+        "keys-in-step": { from: "*" },
+        "keys-short": { from: "*" },
+        "keys-refused": { from: "*" },
+        "keys-waiting": { from: "*" },
+        "keys-unmapped": { from: "*" },
+        "keys-bridged": { from: "*" },
+        "keys-crossed": { from: "*" },
+        // …and the NODE's (`keys_round`, every page closed): in step; its plan (added, removed); not changed — the list
+        // short, this account not placed, no randomness yet, no data key here; its write failed or was refused.
+        "follow-keys": { from: "*" },
+        "follow-keys-plan": { from: "*" },
+        "follow-keys-short": { from: "*" },
+        "follow-keys-not-placed": { from: "*" },
+        "follow-keys-wait": { from: "*" },
+        "follow-keys-no-member": { from: "*" },
+        "follow-keys-write": { from: "*" },
+        "follow-keys-refused": { from: "*" },
       },
     },
     // A REQUEST TO JOIN (owner 10-17: "requests are not hanging"), keyed by the space: asked; then CANCELLED by the asker,

@@ -1236,6 +1236,7 @@ export async function start(ctx) {
       // again — its catalog is followed once it exists, and a missing one is asked every 30 s — so what it writes later
       // arrives without a reload.
       const opened = new Set();
+      const notOpened = new Map(); // writer → its open (a public table): asked again as the open writers list changes
       const gather = async o => {
         const c = await ctx.optional("storage: scope.catalogOf", scope.catalogOf(o), () => null);
         if (!c) return;
@@ -1248,6 +1249,8 @@ export async function start(ctx) {
           take(await theirs(o, true, c));
         };
         c.onChange(() => ctx.background("storage: open", open()));
+        // (A PUBLIC table not opened yet: tried again when the open writers list changes — it may name it later.)
+        if (opts.public) notOpened.set(o, open);
         if (c.absent) {
           // Listed, not there yet (being made as it was listed): asked again until it is.
           absentCatalog(c);
@@ -1281,7 +1284,14 @@ export async function start(ctx) {
       let gathered = false;
       gathering.finally(() => (gathered = true));
       // New writers appear in the bag — read again now and then (one read for the whole space).
-      if (scope.bag) pollBag(sp, scope, set => set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), ctx.background("storage: gather", gather(o)))));
+      if (scope.bag)
+        pollBag(sp, scope, set => {
+          set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), ctx.background("storage: gather", gather(o))));
+          // A PUBLIC table's writers found but not opened: the list may name it now (fx 10-18: named after this table
+          // first looked, a newcomer read it only when the writer's catalog happened to change — or never).
+          for (const [o, open] of notOpened) if (opened.has(o)) notOpened.delete(o);
+          else ctx.background("storage: open public", open());
+        });
       if (scope.departed?.(name)) ctx.background("storage: scope.departedTable", scope.departedTable().then(d => d.onChange(() => ctx.background("storage: gatherDeparted", gatherDeparted()))));
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
       const seen = new Set(others.filter(listed));
