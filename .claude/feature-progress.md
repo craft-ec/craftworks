@@ -2719,7 +2719,7 @@ windows, post_key/once/fresh/answered, follower adds, admission request decision
 - [x] fx v827 traced (`pw/enter.mjs`): join by code 41 s (listed), re-entry (one entry), spent code skipped, invite,
       removal one commit, request rejected then let in — 6/6. Found on the way: info bytes as hex; node randomness not
       armed; own-list guard too strict; another member's round blocking; removed requester hidden.
-- [ ] D6 release (owner's say: identity build moves — a PIN once; old builds retired); Ivvor's space: its 7 written to
+- [~] D6 RELEASED 10-17 as live v399 (loader v50) from f139ba8, clean worktree; 49 packages changed incl. identity. OPEN: Ivvor's space repair + live health 7/7. Was: D6 release (owner's say: identity build moves — a PIN once; old builds retired); Ivvor's space: its 7 written to
       the acts (owner's page), each device enters by itself; done when health shows 7/7.
 Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
 - FIXED (fx v829/v832 → v833, 10-17): an open page did not read a newcomer's acts feed for minutes. Measured by the
@@ -2732,3 +2732,15 @@ Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
   the Space app's space-level settings had NO Read — public reading was per app only. FIXED (uncommitted): space
   settings "Who sees it" (read, owner only, inherited by every app); Anyone → published + listed in Discover; a space
   taking requests ("ask") counts as public too (`Gov::is_public`).
+
+## After v399 (10-17) — work that needs nobody
+- [x] 1 A RELEASE STILL SPREADING (owner's node 503'd 51 new pieces for minutes after v399): the manifest carries the
+  version before as `previous` (publisher, `PREVIOUS_SITE` from `tools/previous-site.sh`; its entries kept on the site);
+  the loader fetches the page's packages first (`fetchable`, 20 s) and runs `previous` when it cannot, asking again every
+  30 s and taking the served one once it can. fx: control (no previous, footer pieces 503) footer never shown; with
+  previous: the version before ran in 25 s, the served one taken 30 s after unblocking. RELEASE STEP: run
+  `tools/previous-site.sh <live site http base> <dir>` and publish with `PREVIOUS_SITE=<dir>` — the publisher prints
+  "previous: NONE" when it is missing.
+- [ ] 2 owner offline: any listed member's node publishes the group info
+- [ ] 3 forks at scale: 4 members committing at once
+- [ ] 4 door junk cap

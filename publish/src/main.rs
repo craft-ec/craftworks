@@ -754,6 +754,38 @@ async fn main() -> Result<()> {
         manifest = serde_json::to_string(&m)?;
     }
 
+    // THE VERSION BEFORE (`PREVIOUS_SITE`: the live site's manifest.json and its `p/` entries, as the publish script
+    // read them): carried as `previous`, its entries kept on the site. For minutes after a release the network cannot
+    // find its new pieces yet; a page that cannot fetch them runs this one instead (the loader's `fetchable`). One
+    // version back: its own `previous` dropped.
+    let mut previous_entries: Vec<(String, Vec<u8>)> = Vec::new();
+    if let Ok(dir) = std::env::var("PREVIOUS_SITE") {
+        let dir = PathBuf::from(dir);
+        let mut prev: serde_json::Value = serde_json::from_slice(&read(&dir.join("manifest.json"))?).context("PREVIOUS_SITE: manifest.json is not JSON")?;
+        prev.as_object_mut().context("PREVIOUS_SITE: a manifest that is not an object")?.remove("previous");
+        let mut m: serde_json::Value = serde_json::from_str(&manifest).context("the manifest is not JSON")?;
+        let shas = |v: &serde_json::Value| -> Vec<String> { v["packages"].as_object().map(|p| p.values().filter_map(|x| x["sha256"].as_str().map(String::from)).collect()).unwrap_or_default() };
+        let (before, now) = (shas(&prev), shas(&m));
+        if before.is_empty() {
+            bail!("PREVIOUS_SITE: a manifest with no packages");
+        }
+        if before.iter().any(|s| !now.contains(s)) {
+            for sha in &before {
+                let path = format!("p/{}.json", &sha[..16]);
+                if !entry_files.iter().chain(previous_entries.iter()).any(|(p, _)| *p == path) {
+                    previous_entries.push((path.clone(), read(&dir.join(&path)).with_context(|| format!("PREVIOUS_SITE: {path}"))?));
+                }
+            }
+            m["previous"] = prev;
+            manifest = serde_json::to_string(&m)?;
+            println!("previous: the live version carried, {} of its entries kept beside this one's", previous_entries.len());
+        } else {
+            println!("previous: every package of the live version is in this one: nothing carried");
+        }
+    } else {
+        println!("previous: NONE (no PREVIOUS_SITE, tools/previous-site.sh): while this release spreads, a page that cannot fetch it has nothing to run");
+    }
+
     // 3. The loader's site, then the app's (whose wrapper names the loader's site).
     let sdk = app.join("loader/sdk");
     let loader_web = wire::webapp::app_web(&[
@@ -778,6 +810,7 @@ async fn main() -> Result<()> {
     let index_html = read(&app.join("wrapper/index.html"))?;
     let mut files: Vec<(&str, &[u8])> = vec![("index.html", &index_html), ("boot.js", boot.as_bytes()), ("manifest.json", manifest.as_bytes())];
     files.extend(entry_files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
+    files.extend(previous_entries.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
     let app_web = wire::webapp::app_web(&files).map_err(|e| anyhow::anyhow!(e))?;
     println!("manifest: {} B ({} package entries in their own files)", manifest.len(), entry_files.len());
     d.publish(&site_name, &site_code, app_web).await?;
