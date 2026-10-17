@@ -39,7 +39,7 @@ export async function start(ctx) {
     const b = Object.assign(document.createElement("button"), { type: "button", className: `cw-pin ${className}`.trim(), textContent: "📌" });
     b.dataset.ref = ref;
     paint(b, false);
-    has(ref).then(on => paint(b, on));
+    (async () => paint(b, await has(ref)))();
     b.onclick = async e => {
       e.stopPropagation();
       const on = b.getAttribute("aria-pressed") !== "true";

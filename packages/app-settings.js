@@ -242,7 +242,21 @@ export async function start(ctx) {
         return section(null, `me:${key}`, r, me);
       }),
     ]);
-    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, ...forms);
+    // SHOW ME IN DISCOVER (your profile public): the same control as Contact's (`directory.listedBox`) — 10-17, the
+    // owner looked for it here.
+    // (The choice is the card's — `directory.isListed` / `listMe`, Contact's checkbox the same.)
+    const directory = await ctx.require("directory");
+    const said = h("p", { className: "said", hidden: true });
+    const box = h("input", { type: "checkbox" });
+    ctx.background("app-settings: directory.isListed", directory.isListed().then(on => (box.checked = on)));
+    box.onchange = () =>
+      directory.listMe(box.checked).catch(e => {
+        box.checked = !box.checked;
+        said.textContent = ctx.say(e);
+        said.hidden = false;
+      });
+    const profile = h("section", { className: "cw-appset" }, h("h3", { textContent: "Your profile" }), h("label", {}, box, " Show me in Discover (anyone can find your name, id and public posts)"), said);
+    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, profile, ...forms);
   }
 
 
