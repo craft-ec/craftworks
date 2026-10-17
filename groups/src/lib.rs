@@ -157,6 +157,24 @@ impl Group {
         let (_, op, _) = now(self.cgka.update::<Local, _, R>(sk.share_key(), sk, &self.account.signer, rng)).map_err(e)?;
         Ok((bincode::serialize(&op).map_err(|x| x.to_string())?, sk))
     }
+    /// THE GENERATION TO WRITE WITH (K4: a generation is the storage's epoch): `(number, secret, operation)` — a key
+    /// change made first (its operation to send) when the group has concurrent heads or no root secret here.
+    pub fn current<R: rand::CryptoRng + rand::RngCore>(&mut self, rng: &mut R) -> Result<(u64, [u8; 32], Option<Vec<u8>>), String> {
+        if let Some((h, k)) = self.cgka.current_generation() {
+            return Ok((self.number(&h), k.0.to_bytes(), None));
+        }
+        let (op, _) = self.rotate(rng)?;
+        let (h, k) = self.cgka.current_generation().ok_or("no generation after a key change")?;
+        Ok((self.number(&h), k.0.to_bytes(), Some(op)))
+    }
+    /// EVERY GENERATION this member reaches (reading: history included): `(number, secret)`.
+    pub fn generations(&mut self) -> Vec<(u64, [u8; 32])> {
+        self.cgka.reachable_generations().into_iter().map(|(h, k)| (self.number(&h), k.0.to_bytes())).collect()
+    }
+    fn number(&self, h: &keyhive_crypto::digest::Digest<Signed<CgkaOperation>>) -> u64 {
+        generation_number(self.cgka.ops_graph_depth(h), h)
+    }
+
     /// A leaf secret this account's other device made (handed through the account).
     pub fn take_leaf(&mut self, sk: ShareSecretKey) {
         self.cgka.owner_sks.insert(sk.share_key(), sk);
@@ -175,6 +193,13 @@ impl Group {
         let key = self.cgka.decryption_key_for(&sealed).map_err(e)?;
         sealed.try_decrypt(key).map_err(|x| x.to_string())
     }
+}
+
+/// A generation's NUMBER (the storage's epoch, whose NEWEST — the highest — is written with): its update's DEPTH in the
+/// operations (a later generation is always deeper), and 3 bytes of its hash below it (concurrent ones at one depth).
+fn generation_number(depth: u64, h: &keyhive_crypto::digest::Digest<Signed<CgkaOperation>>) -> u64 {
+    let low = u64::from(h.as_slice()[0]) << 16 | u64::from(h.as_slice()[1]) << 8 | u64::from(h.as_slice()[2]);
+    depth << 24 | low
 }
 
 /// OUR CHECK (the list's): the signer listed; an add or a remove authorized by an act that allows exactly that.
@@ -308,6 +333,15 @@ mod page {
         pub fn seal(&mut self, reference: &[u8], plaintext: &[u8]) -> Result<js_sys::Array, JsValue> {
             let (sealed, op) = self.0.seal(b32(reference)?, plaintext, &mut rand::rngs::OsRng).map_err(err)?;
             Ok([JsValue::from(js_sys::Uint8Array::from(&sealed[..])), bytes(op)].into_iter().collect())
+        }
+        /// THE GENERATION TO WRITE WITH: `[number (decimal string), secret, operation or null]`.
+        pub fn current(&mut self) -> Result<js_sys::Array, JsValue> {
+            let (n, k, op) = self.0.current(&mut rand::rngs::OsRng).map_err(err)?;
+            Ok([JsValue::from(n.to_string()), js_sys::Uint8Array::from(&k[..]).into(), bytes(op)].into_iter().collect())
+        }
+        /// EVERY GENERATION reached: `[[number (decimal string), secret]…]`.
+        pub fn generations(&mut self) -> js_sys::Array {
+            self.0.generations().into_iter().map(|(n, k)| -> JsValue { [JsValue::from(n.to_string()), js_sys::Uint8Array::from(&k[..]).into()].into_iter().collect::<js_sys::Array>().into() }).collect()
         }
         /// OPEN sealed bytes.
         pub fn open(&mut self, sealed: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {

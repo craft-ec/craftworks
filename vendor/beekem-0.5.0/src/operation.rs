@@ -294,6 +294,12 @@ impl CgkaOperationGraph {
     }
 
     /// Whether the causal graph has a single head.
+    /// CRAFTWORKS PATCH (K4): an operation's depth — the longest chain of predecessors before it (a later generation is
+    /// always deeper: the storage's epoch numbers grow along the history).
+    pub fn depth_of(&self, op: &Digest<Signed<CgkaOperation>>) -> Option<u64> {
+        self.depths.get(op).copied()
+    }
+
     pub fn has_single_head(&self) -> bool {
         self.cgka_op_heads.len() == 1
     }

@@ -222,6 +222,43 @@ impl Cgka {
         Ok(app_secret.key())
     }
 
+    // CRAFTWORKS PATCH (docs/proposals/members-and-keys-beekem.md, K4): read-only access to the GENERATIONS — each
+    // update's root secret — the storage keys tables with. Upstream keeps these private.
+
+    /// The CURRENT generation: the single-head root (`None` while there are concurrent heads or no root secret here).
+    pub fn current_generation(&mut self) -> Option<(Digest<Signed<CgkaOperation>>, PcsKey)> {
+        self.replay_if_pending().ok()?;
+        if !self.has_tree_root_secret() {
+            return None;
+        }
+        self.record_tree_root_secret()
+    }
+
+    /// An operation's depth in the graph (0 if unknown).
+    pub fn ops_graph_depth(&self, op: &Digest<Signed<CgkaOperation>>) -> u64 {
+        self.ops_graph.depth_of(op).unwrap_or(0)
+    }
+
+    /// Every generation this member REACHES cheaply — recorded, decrypted from its update's path, or through the
+    /// predecessor-secret chain (history). (Never a full rebuild per update: that is the cost of an update no route
+    /// reaches, retried — measured at seconds.)
+    pub fn reachable_generations(&mut self) -> Vec<(Digest<Signed<CgkaOperation>>, PcsKey)> {
+        let updates: Vec<Digest<Signed<CgkaOperation>>> = self
+            .ops_graph
+            .cgka_ops
+            .keys()
+            .copied()
+            .filter(|h| matches!(self.ops_graph.cgka_ops.get(h).map(|op| &op.payload), Some(CgkaOperation::Update { .. })))
+            .collect();
+        updates
+            .into_iter()
+            .filter_map(|h| {
+                let key = self.root_secrets.get(&h).or_else(|| self.root_secret_from_update_path(&h)).or_else(|| self.root_secret_from_chain(&h))?;
+                Some((h, key))
+            })
+            .collect()
+    }
+
     /// Whether the tree has a root key and the graph a single head, meaning there is
     /// a current root secret. Does not check if we can decrypt it.
     pub fn has_tree_root_secret(&self) -> bool {

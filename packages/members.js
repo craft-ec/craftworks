@@ -124,6 +124,22 @@ export async function start(ctx) {
       };
     }
 
+    // THE GENERATIONS (K4: a generation is the space's epoch — its number grows along the history): every one reached,
+    // handed to the identity as the space's epochs (`epochKeep`), so the storage seals and reads this space's tables with
+    // them — writing with the newest. Each once; then the tables are told (`craftworks:keys`).
+    const kept = new Set();
+    async function keepGenerations() {
+      let n = 0;
+      for (const [num, secret] of g.generations()) {
+        if (kept.has(num)) continue;
+        await auth.identity.epochKeep(Number(num), secret, sp.idBytes);
+        kept.add(num);
+        n += 1;
+      }
+      if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } }));
+      return kept.size;
+    }
+
     // SYNC: every device's operations, merged in any order (one ahead of its predecessors offered again).
     async function syncNow() {
       await load();
@@ -145,6 +161,7 @@ export async function start(ctx) {
         pending = next;
       }
       said.waiting = pending.length;
+      said.generations = await keepGenerations();
       if (c.misses.length) said.misses = c.misses.slice(-3);
       await save();
       if (said.refused.length || said.waiting) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said.waiting} operation(s) waiting, ${said.refused.length} refused (${said.refused.slice(0, 2).join("; ")})` });

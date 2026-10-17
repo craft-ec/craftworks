@@ -168,3 +168,56 @@ fn a_group_saved_and_loaded_is_the_same() {
     let mut again = Group::load(&ga.save().unwrap(), a).unwrap();
     assert_eq!(again.open(&sealed).unwrap(), b"kept");
 }
+
+#[test]
+fn generations_agree_reach_history_and_end_at_a_removal() {
+    let mut rng = StdRng::seed_from_u64(9);
+    let (a, b, c) = (account(1), account(2), account(3));
+    let mut l = list(&[(&a, "did:a"), (&b, "did:b"), (&c, "did:c")]);
+    l.acts.insert([7; 32], (true, id(&b)));
+    l.acts.insert([8; 32], (true, id(&c)));
+    l.acts.insert([6; 32], (false, id(&b)));
+    let (mut ga, first) = Group::create(&SPACE, a.clone()).unwrap();
+    let add_b = ga.add_member(&id(&b), &b.leaf_key(), &[7; 32]).unwrap().unwrap();
+    let (rot1, _) = ga.rotate(&mut rng).unwrap();
+    let mut gb = Group::empty(&SPACE, b.clone());
+    merge_all(&mut gb, &[first.clone(), add_b.clone(), rot1.clone()], &l);
+    // THE SAME GENERATION, number and secret, for every member.
+    let (na, ka, op) = ga.current(&mut rng).unwrap();
+    assert!(op.is_none(), "a single head: no key change needed");
+    let (nb, kb, _) = gb.current(&mut rng).unwrap();
+    assert_eq!((na, ka), (nb, kb), "A and B write with one generation");
+    // A NEWCOMER (C, added later) reaches the earlier generation too (history); control: before its add, it reaches none.
+    let add_c = ga.add_member(&id(&c), &c.leaf_key(), &[8; 32]).unwrap().unwrap();
+    let (rot2, _) = ga.rotate(&mut rng).unwrap();
+    let mut gc = Group::empty(&SPACE, c.clone());
+    merge_all(&mut gc, &[first.clone(), add_b.clone(), rot1.clone()], &l);
+    assert!(gc.generations().is_empty(), "control: not added yet, nothing reached");
+    merge_all(&mut gc, &[add_c, rot2.clone()], &l);
+    assert!(gc.generations().iter().any(|(n, k)| (*n, *k) == (na, ka)), "C reaches the generation from before its add");
+    // B REMOVED, A rotates: B does not reach the new generation; control — C does.
+    gb.merge(&rot2, &l);
+    let remove = ga.remove_member(&id(&b), &[6; 32]).unwrap().unwrap();
+    let (rot3, _) = ga.rotate(&mut rng).unwrap();
+    let (n_after, k_after, _) = ga.current(&mut rng).unwrap();
+    for g in [&mut gb, &mut gc] {
+        g.merge(&remove, &l);
+        g.merge(&rot3, &l);
+    }
+    assert!(!gb.generations().iter().any(|(n, _)| *n == n_after), "removed: the generation after is not reached");
+    assert!(gc.generations().contains(&(n_after, k_after)), "control: a member still in reaches it");
+}
+
+#[test]
+fn a_later_generation_has_a_higher_number() {
+    let mut rng = StdRng::seed_from_u64(11);
+    let a = account(1);
+    let (mut ga, _) = Group::create(&SPACE, a).unwrap();
+    let mut last = 0;
+    for _ in 0..5 {
+        ga.rotate(&mut rng).unwrap();
+        let (n, _, _) = ga.current(&mut rng).unwrap();
+        assert!(n > last, "the newest is the highest: {n} after {last}");
+        last = n;
+    }
+}
