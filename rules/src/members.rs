@@ -89,6 +89,22 @@ pub fn follow(v: &View) -> Plan {
     p
 }
 
+/// How many listed members besides the owner publish an epoch's GROUP INFO from their nodes (FOUNDATION "Members and
+/// keys" 4): what a listed device with no key enters from when the owner's node is away — bounded, so a door holds a
+/// few copies an epoch, never one per member.
+pub const INFO_PUBLISHERS: i64 = 2;
+
+/// Whether `me`'s node publishes epoch `epoch`'s group info: the OWNER's always; of the other members holding keys
+/// (`followers`), the first `INFO_PUBLISHERS` in turn for that epoch (`admission::turn` — the same ranking everywhere).
+pub fn publishes_info(me: &str, owner: &str, followers: &[String], epoch: u64) -> bool {
+    if me == owner {
+        return true;
+    }
+    let others: Vec<String> = followers.iter().filter(|d| d.as_str() != owner).cloned().collect();
+    let k = turn(&format!("info|{epoch}"), &others, me);
+    (0..INFO_PUBLISHERS).contains(&k)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +161,19 @@ mod tests {
         assert!(follow(&v).wait.is_some(), "the others wait, and say how long");
         v.now += 2 * v.takeover_ms;
         assert_eq!(follow(&v).remove, vec![7], "taken over once the first stays away");
+    }
+
+    #[test]
+    fn group_info_from_the_owner_and_two_members_in_turn() {
+        let f = s(&["did:o", "did:a", "did:b", "did:c", "did:d"]);
+        for epoch in [1, 7, 485] {
+            assert!(publishes_info("did:o", "did:o", &f, epoch), "the owner always");
+            let n = f.iter().filter(|m| m.as_str() != "did:o" && publishes_info(m, "did:o", &f, epoch)).count();
+            assert_eq!(n, INFO_PUBLISHERS as usize, "exactly two others, epoch {epoch}");
+        }
+        assert!(!publishes_info("did:x", "did:o", &f, 7), "not holding keys: never");
+        // The owner away (not among those holding keys): still two members publish.
+        let away = s(&["did:a", "did:b", "did:c"]);
+        assert_eq!(away.iter().filter(|m| publishes_info(m, "did:o", &away, 3)).count(), 2);
     }
 }

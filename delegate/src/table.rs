@@ -158,6 +158,17 @@ pub fn seal_open_item(space: &[u8; 32], value: &serde_json::Value, nonce: [u8; 1
 }
 
 impl Reading {
+    /// What it still WAITS for (a stalled round says it): GETs out — how many, of tails and of blocks — and whether
+    /// the writers bag is read.
+    pub fn waiting_for(&self) -> String {
+        let blocks = self.waiting.iter().filter(|(_, _, b)| b.is_some()).count();
+        let bag = match (self.bag.is_some(), self.bag_read) {
+            (_, true) => "read",
+            (true, false) if self.resolving.is_empty() => "asked, not answered",
+            _ => "not asked yet",
+        };
+        format!("{} read(s) unanswered ({} tail(s), {blocks} block(s)), {} member device lookup(s) out, writers bag {bag}", self.waiting.len(), self.waiting.len() - blocks, self.resolving.len())
+    }
     /// A read of `tables` (their short names: `files`, `acts`…) of `space`, as a member holding `epochs`, whose group's
     /// writers are `writers`. The first GET: the writers bag.
     pub fn new(c: &Codes, space: [u8; 32], epochs: BTreeMap<u64, [u8; 32]>, writers: Vec<[u8; 32]>, tables: &[&str]) -> (Reading, Vec<Io>) {

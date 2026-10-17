@@ -111,17 +111,27 @@ const DUE: &[u8] = b"identity_upkeep/due/";
 /// The epoch whose info this node last published (`member ‖ space` → epoch): once an epoch.
 const ANNOUNCED: &[u8] = b"identity_upkeep/announced/";
 
-/// THE OWNER's INFO, once an epoch (FOUNDATION "Members and keys" 4: what a listed device with no key enters from — its
-/// signer proven by the space's id): the owner's node publishes it whenever no commit of its own did.
-fn owner_info<H: Host>(h: &mut H, c: &Held, r: &Round, m: &Mandate, g: &mut craftworks_mls::Account) -> Vec<Io> {
+/// THE GROUP INFO, once an epoch (FOUNDATION "Members and keys" 4: what a listed device with no key enters from): the
+/// owner's node — its signer proven by the space's id — and the nodes of two members in turn (`members::publishes_info`:
+/// the owner away, a keyless member still enters), whenever no commit of its own published it.
+fn group_info<H: Host>(h: &mut H, c: &Held, r: &Round, m: &Mandate, followers: &[String], g: &mut craftworks_mls::Account) -> Vec<Io> {
     let key = [ANNOUNCED, &r.member[..], &r.space[..]].concat();
     let epoch = g.epoch();
-    if r.me != m.owner || h.get_secret(&key).and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok()).map(u64::from_le_bytes) == Some(epoch) {
+    if !members::publishes_info(&r.me, &m.owner, followers, epoch) || h.get_secret(&key).and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok()).map(u64::from_le_bytes) == Some(epoch) {
         return Vec::new();
     }
     let (Ok(info), Ok(secret)) = (g.group_info(), g.epoch_secret()) else { return Vec::new() };
+    let io = door_io(h, c, &r.member, &r.space, epoch, &secret, &info);
+    // NOTHING WRITTEN (no randomness: a page stirs the pool): said, and the epoch NOT marked — asked again next round
+    // (before, it was marked first, and an epoch whose info found the pool empty was never published).
+    if io.is_empty() {
+        followed(h, &r.member, &r.space, "info-held", &format!("{}: epoch {epoch}: no randomness yet (a page stirs the pool): its group info waits", m.name));
+        return io;
+    }
     h.set_secret(&key, &epoch.to_le_bytes());
-    door_io(h, c, &r.member, &r.space, epoch, &secret, &info)
+    let whose = if r.me == m.owner { "the owner's" } else { "a member's, in turn" };
+    followed(h, &r.member, &r.space, "info", &format!("{}: epoch {epoch}: group info published ({whose})", m.name));
+    io
 }
 
 /// FROM WHEN a removal is due here: the act's time, or when this node first saw it due at this epoch (kept).
@@ -245,7 +255,7 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
             return Vec::new();
         }
         let at = match &r.step {
-            Step::Acts => "the space's acts never answered whole".to_string(),
+            Step::Acts => format!("the space's acts never answered whole ({})", r.reading.waiting_for()),
             Step::CatchUp { epoch, .. } => format!("epoch {epoch}'s entries never answered"),
             Step::Log { .. } => "the epoch's log never answered".into(),
             Step::Commit { .. } => "the commit was never answered".into(),
@@ -333,15 +343,22 @@ fn catch_up<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate) -> Vec<Io> 
     io
 }
 
-/// An ANSWER from the network: the round moved on. What to send next.
+/// An ANSWER from the network: to EVERY round that asked for it (the re-key round and this one run side by side and
+/// read the same space — its writers bag, its members' devices: fx 10-17, an answer given to the re-key round alone left
+/// this one waiting with nothing asked, until it was dropped as stalled). What to send next.
 pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
-    // An answer the RE-KEY round waits on is its own (both rounds run side by side).
     let id = match &reply {
         Reply::Got { id, .. } | Reply::Put { id, .. } | Reply::Updated { id, .. } => *id,
     };
-    if crate::rekey_round::wants(h, &id) {
-        return crate::rekey_round::replied(h, reply, now_ms);
-    }
+    let mut io = if crate::rekey_round::wants(h, &id) { crate::rekey_round::replied(h, reply.clone(), now_ms) } else { Vec::new() };
+    io.extend(follow_replied(h, reply, now_ms));
+    io
+}
+
+fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
+    let id = match &reply {
+        Reply::Got { id, .. } | Reply::Put { id, .. } | Reply::Updated { id, .. } => *id,
+    };
     let Some(mut r) = round(h) else { return Vec::new() };
     let Some(c) = Held::of(h) else { return Vec::new() };
     let Some(m) = mandate(h, &r) else {
@@ -528,7 +545,7 @@ fn follow_out<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, gov: &cra
         if let Some(w) = p.wait {
             identity::upkeep_set_next(h, &r.member, now_ms + w);
         }
-        let mut io = owner_info(h, c, &r, m, &mut g);
+        let mut io = group_info(h, c, &r, m, &followers, &mut g);
         io.extend(next_space(h, c, r));
         return io;
     }

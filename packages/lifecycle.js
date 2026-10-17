@@ -76,7 +76,7 @@ export async function start(ctx) {
       initial: "UNKNOWN",
       journal: true,
       // Steps that are routine (still kept in the journal): not each a health report.
-      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found"],
+      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found", "follow-info"],
       events: {
         held: { from: "*", to: "HELD" },
         // Ahead of the owner's announcement (it reads: HELD).
@@ -126,6 +126,9 @@ export async function start(ctx) {
         "follow-commit-refused": { from: "*" },
         "follow-next-refused": { from: "*" },
         "follow-no-commit": { from: "*" },
+        // The node's group info for an epoch: published, or waiting for randomness (a page stirs the pool).
+        "follow-info": { from: "*" },
+        "follow-info-held": { from: "*" },
         // Steps of the node lost to its limit before a page read them: how many.
         "follow-dropped": { from: "*" },
       },
