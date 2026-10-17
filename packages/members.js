@@ -71,11 +71,29 @@ export async function start(ctx) {
       return g;
     }
     const save = async () => (await state()).put(at, hexOf(g.save()));
-    const send = async op => (await feed()).put(hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", op))), hexOf(op));
+    // An operation in a row (its SHA-256 the key); one too large for a row (a row holds 64 KB: a worst-case rotation from
+    // ~270 members) as a PUBLIC file of the space, the row naming it — read back and checked against the key.
+    const ROW = 60000;
+    const send = async op => {
+      const key = hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", op)));
+      const hex = hexOf(op);
+      if (hex.length <= ROW) return (await feed()).put(key, hex);
+      const files = await ctx.require("files");
+      const ref = await files.put(new Blob([op]), { space: sp, public: true, app: "members" });
+      return (await feed()).put(key, JSON.stringify({ file: ref }));
+    };
+    const opOf = async row => {
+      if (!row.value.startsWith("{")) return bytes(row.value);
+      const ref = JSON.parse(row.value).file;
+      const got = new Uint8Array(await (await (await ctx.require("files")).get(ref)).arrayBuffer());
+      return hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", got))) === row.key ? got : null;
+    };
 
     // OUR CHECK, from the list (`roles`: its roster, owner, acts) and its accounts' cards.
     async function check() {
       const r = await (await ctx.require("roles")).of(sp);
+      // (The acts as they are NOW — an act just written elsewhere, the add of this very member, read before judging.)
+      await r.refresh?.();
       const roster = r.roster();
       const owner = sp.governance?.owner ?? null;
       const found = await Promise.all([...new Set([...roster, ...(owner ? [owner] : [])])].map(async d => [d, await memberOf(d)]));
@@ -91,14 +109,17 @@ export async function start(ctx) {
         const target = a.act === "join" || a.act === "leave" ? a.by : a.did;
         acts.set(await sha(a.id), { kind, target });
       }
+      const misses = [];
       return {
+        misses,
         accountOf: memberHex => byMember.get(memberHex) ?? null,
         listed: did => roster.includes(did) || did === owner,
         allows: (actHex, add, targetHex) => {
           const target = byMember.get(targetHex);
-          if (actHex === NO_ACT) return add && !!target && target === owner;
-          const a = acts.get(actHex);
-          return !!a && a.kind === (add ? "add" : "remove") && a.target === target;
+          const ok = actHex === NO_ACT ? add && !!target && target === owner : (a => !!a && a.kind === (add ? "add" : "remove") && a.target === target)(acts.get(actHex));
+          // (A refusal carries what it saw: the act known or not, what it allows, whom the member is.)
+          if (!ok) misses.push({ act: actHex.slice(0, 8), known: acts.has(actHex), acts: acts.size, allows: acts.get(actHex) ?? null, add, target: target?.slice(12, 20) ?? `unmapped ${targetHex.slice(0, 8)}`, mapped: byMember.size });
+          return ok;
         },
       };
     }
@@ -109,7 +130,8 @@ export async function start(ctx) {
       const t = await feed();
       await t.settled;
       const c = await check();
-      let pending = t.rows().filter(x => x.value).map(x => bytes(x.value));
+      const read = await Promise.all(t.rows().filter(x => x.value).map(x => ctx.optional("members: an operation", opOf(x), () => null)));
+      let pending = read.filter(Boolean);
       const said = { applied: 0, waiting: 0, refused: [] };
       for (let round = 0; pending.length && round < 64; round++) {
         const next = [];
@@ -123,6 +145,7 @@ export async function start(ctx) {
         pending = next;
       }
       said.waiting = pending.length;
+      if (c.misses.length) said.misses = c.misses.slice(-3);
       await save();
       if (said.refused.length || said.waiting) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said.waiting} operation(s) waiting, ${said.refused.length} refused (${said.refused.slice(0, 2).join("; ")})` });
       return said;
