@@ -156,6 +156,8 @@ export async function start(ctx) {
     let roster = new Set(first ? [first] : []);
     let bans = new Set();
     let gone = new Set();
+    // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
+    let listWhole = false;
     function replay() {
       const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
       const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
@@ -180,10 +182,11 @@ export async function start(ctx) {
         // the acts' answers that never change as more are read (EVER listed, a proof's entry rule, who may be taken
         // out). WHOLE only when no act is named that is not here and the acts read decided (I6).
         const text = h => new TextDecoder().decode(new Uint8Array((String(h).match(/../g) ?? []).map(x => parseInt(x, 16))));
+        listWhole = !miss.length && t.state?.s === "present";
         keys.setList(sp.id, {
           roster: [...roster],
           owner,
-          whole: !miss.length && t.state?.s === "present",
+          whole: listWhole,
           gen: counted.length,
           check: {
             listed: did => gv.entry_listed(did),
@@ -400,6 +403,8 @@ export async function start(ctx) {
       // A person's member in the group (to remove them): one per DID.
       nodesOf: did => group.filter(m => m.did === did),
       // Brought current with the group (a member added or removed).
+      // THE LIST READ WHOLE (I6): what reconciling the space's keys waits for (`members`).
+      whole: () => listWhole,
       refresh: async () => {
         if (out) return widen();
         await learn(await g.ready());

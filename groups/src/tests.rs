@@ -71,26 +71,48 @@ fn a_member_added_reads_and_writes_with_the_maker() {
 }
 
 #[test]
-fn our_check_refuses_an_outsiders_operation_and_an_add_no_act_allows() {
+fn our_check_refuses_an_outsiders_operation_and_an_add_of_an_unlisted_account() {
     let (a, b, x) = (account(1), account(2), account(9));
-    let mut l = list(&[(&a, "did:a"), (&b, "did:b")]);
-    l.acts.insert([7; 32], (true, id(&b)));
+    let l = list(&[(&a, "did:a"), (&b, "did:b")]);
     let (mut ga, first) = Group::create(&SPACE, a.clone()).unwrap();
     // X (no listed account publishes its id) holds the operations and adds itself.
     let mut gx = Group::empty(&SPACE, x.clone());
     gx.merge(&first, &l);
     let evil = gx.add_member(&id(&x), &x.leaf_key(), &[7; 32]).unwrap().unwrap();
     assert!(matches!(ga.merge(&evil, &l), Merged::Refused(_)), "an outsider's operation");
-    // A's add of B naming an act that allows something else: refused; control — the act that allows it: taken.
+    // A (listed) adds C, whose card is known but whom the list does not name: refused, whatever act it names; control —
+    // C listed: taken (K7: an add of a listed account needs no act).
+    let c = account(3);
+    let mut unlisted = list(&[(&a, "did:a"), (&b, "did:b")]);
+    unlisted.accounts.insert(id(&c), "did:c".into());
     let mut ga2 = Group::empty(&SPACE, a.clone());
-    ga2.merge(&first, &l);
-    let wrong = ga.add_member(&id(&b), &b.leaf_key(), &[8; 32]).unwrap().unwrap();
-    assert!(matches!(ga2.merge(&wrong, &l), Merged::Refused(_)), "an add no act allows");
-    let mut l2 = list(&[(&a, "did:a"), (&b, "did:b")]);
-    l2.acts.insert([8; 32], (true, id(&b)));
+    ga2.merge(&first, &unlisted);
+    let add_c = ga.add_member(&id(&c), &c.leaf_key(), &[0; 32]).unwrap().unwrap();
+    assert!(matches!(ga2.merge(&add_c, &unlisted), Merged::Refused(_)), "an add of an account not listed");
+    let listed = list(&[(&a, "did:a"), (&b, "did:b"), (&c, "did:c")]);
     let mut ga3 = Group::empty(&SPACE, a.clone());
-    ga3.merge(&first, &l2);
-    assert_eq!(ga3.merge(&wrong, &l2), Merged::Applied, "control: with the act that allows it");
+    ga3.merge(&first, &listed);
+    assert_eq!(ga3.merge(&add_c, &listed), Merged::Applied, "control: listed, taken");
+}
+
+#[test]
+fn reconcile_places_the_list_and_takes_out_whom_an_act_put_out() {
+    let (a, b, c) = (account(1), account(2), account(3));
+    let cards: Vec<Card> = [(&a, "did:a"), (&b, "did:b"), (&c, "did:c")].iter().map(|(p, d)| (d.to_string(), id(p), *p.leaf_key().as_bytes())).collect();
+    let (mut ga, _) = Group::create(&SPACE, a.clone()).unwrap();
+    let mut listed: Vec<&str> = vec!["did:a", "did:b", "did:c"];
+    let r = ga.reconcile(&cards, &|d| listed.contains(&d), &Default::default(), &Default::default(), [5; 32]);
+    assert_eq!((r.added.len(), r.removed.len(), r.ops.len()), (2, 0, 3), "B and C added, one key change: {:?}", r.not);
+    assert_eq!(ga.members().len(), 3);
+    // Again: nothing to do, nothing sent.
+    assert!(ga.reconcile(&cards, &|d| listed.contains(&d), &Default::default(), &Default::default(), [6; 32]).ops.is_empty(), "the list placed: nothing");
+    // C off the list: without the act putting it out, left (nothing decided); with it, removed.
+    listed.retain(|d| *d != "did:c");
+    assert!(ga.reconcile(&cards, &|d| listed.contains(&d), &Default::default(), &Default::default(), [7; 32]).removed.is_empty(), "control: no act, not removed");
+    let outs = std::collections::BTreeMap::from([("did:c".to_string(), [4u8; 32])]);
+    let r = ga.reconcile(&cards, &|d| listed.contains(&d), &Default::default(), &outs, [8; 32]);
+    assert_eq!(r.removed, vec!["did:c".to_string()]);
+    assert_eq!(ga.members().len(), 2);
 }
 
 #[test]

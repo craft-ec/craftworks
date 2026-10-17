@@ -3,7 +3,7 @@
 // and moves its OPERATIONS: this device writes its own into the space's `pub-keyops` (one feed per device, public as
 // the operations are — a newcomer reads them before it holds any key), and every device's are merged — in any order,
 // THROUGH OUR CHECK (`craftworks_groups`: a listed account's signer; an add or a removal naming an act that allows
-// exactly it). K3: the operations travel and merge; content keys still come from MLS until K4.
+// exactly it). K4: a space's content keys are its tree's generations; K7: every space kept to its list here.
 //
 //   const g = (await ctx.require("members")).group(sp)
 //   await g.sync()                     // every device's operations merged; the tree saved
@@ -96,19 +96,30 @@ export async function start(ctx) {
       await r.refresh?.();
       const roster = r.roster();
       const owner = sp.governance?.owner ?? null;
-      const found = await Promise.all([...new Set([...roster, ...(owner ? [owner] : [])])].map(async d => [d, await memberOf(d)]));
+      // (Whom each act lets in or puts out, and each account's LATEST such act: what an add or a removal names.)
+      const moves = [];
+      for (const a of r.acts()) {
+        const mv = JSON.parse(glue.entry_move(JSON.stringify(a)) ?? "null");
+        if (mv) moves.push({ inn: mv[0], did: mv[1], act: await sha(a.id) });
+      }
+      // Cards of the listed AND of everyone an act moved (whom to take out is found by their card too).
+      const found = await Promise.all([...new Set([...roster, ...(owner ? [owner] : []), ...moves.map(m => m.did)])].map(async d => [d, await memberOf(d)]));
       for (const [d, m] of found) if (m.why) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${d.slice(12, 20)}… not mapped — ${m.why}` });
       const members = found.map(([, m]) => m).filter(m => !m.why);
       const byMember = new Map(members.map(m => [m.id, m.did]));
       // (Whom each act lets in or puts out: the replay's one rule — `gov::entry_move`, the node's too.)
-      const acts = new Map();
-      for (const a of r.acts()) {
-        const mv = JSON.parse(glue.entry_move(JSON.stringify(a)) ?? "null");
-        if (mv) acts.set(await sha(a.id), { kind: mv[0] ? "add" : "remove", target: mv[1] });
-      }
+      const acts = new Map(moves.map(m => [m.act, { kind: m.inn ? "add" : "remove", target: m.did }]));
+      const latest = inn => Object.fromEntries(moves.filter(m => m.inn === inn).map(m => [m.did, bytes(m.act)]));
       const misses = [];
       return {
         misses,
+        // For RECONCILING (`BeeGroup.reconcile`, the node's one plan): every card's member, who is listed now, the acts.
+        cards: members.map(m => [m.did, bytes(m.id), bytes(m.leaf)]),
+        listedNow: [...new Set([...roster, ...(owner ? [owner] : [])])],
+        ins: latest(true),
+        outs: latest(false),
+        whole: () => r.whole?.() ?? false,
+        owner,
         accountOf: memberHex => byMember.get(memberHex) ?? null,
         listed: did => roster.includes(did) || did === owner,
         allows: (actHex, add, targetHex) => {
@@ -165,7 +176,70 @@ export async function start(ctx) {
       return said;
     }
 
+    // THE BRIDGE (K7): every MLS epoch secret this device holds of the space, into its table `keys-history` (sealed with
+    // the newest epoch — a generation once the tree has one): whoever the tree places reads them and keeps them, so what
+    // was written before the move reads for a newcomer too. Each epoch once.
+    const BELOW = 2 ** 24;
+    async function bridge() {
+      const held = await ctx.optional("members: epochSecrets", auth.identity.epochSecrets(sp.idBytes, BELOW), () => []);
+      const t = await storage.table(space.tableOf(sp, "keys-history"), sp);
+      await t.settled;
+      const there = new Set(t.rows().filter(x => x.value).map(x => x.key));
+      let n = 0;
+      for (const [e, secret] of held) if (typeof e === "number" && e < BELOW && !there.has(`e${e}`)) (await t.put(`e${e}`, String(secret)), (n += 1));
+      return n;
+    }
+    // …and READ: the epochs the bridge carries, kept (`epochKeep`) — the storage reads the space's history with them.
+    async function crossBridge() {
+      const t = await storage.table(space.tableOf(sp, "keys-history"), sp);
+      await t.settled;
+      let n = 0;
+      for (const x of t.rows()) {
+        const e = Number(x.key.slice(1));
+        if (!x.value || !x.key.startsWith("e") || !Number.isInteger(e) || kept.has(`m${e}`)) continue;
+        await auth.identity.epochKeep(e, bytes(x.value), sp.idBytes);
+        kept.add(`m${e}`);
+        n += 1;
+      }
+      if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } }));
+      return n;
+    }
+
+    // RECONCILE (K7, on a page — the node does it with every page closed: K5): the tree made if the space has none (this
+    // account listed: it places itself, naming its act), then the one plan (`BeeGroup.reconcile`) from a WHOLE read of the
+    // list, its operations sent; the bridge written when this device holds MLS epochs, and crossed.
+    async function reconcileNow() {
+      const said = await syncNow();
+      const m = await me();
+      const c = await check();
+      const myDid = (await space.account())?.id;
+      const listed = c.listedNow.includes(myDid);
+      if (!g.placed() && !(await feed()).rows().some(x => x.value) && listed) {
+        const act = myDid === c.owner ? null : (c.ins[myDid] ?? null);
+        const [made, op] = G.BeeGroup.create(sp.idBytes, m.seed, act);
+        g = made;
+        await send(op);
+        await save();
+        said.made = true;
+      }
+      if (!c.whole()) return { ...said, short: "the list not read whole: nothing changed" };
+      if (g.placed()) {
+        const r = g.reconcile(c.cards, c.listedNow, c.ins, c.outs);
+        for (const op of r.ops) await send(op);
+        if (r.ops.length) await save();
+        said.added = r.added;
+        said.removed = r.removed;
+        if (r.not.length) said.not = r.not;
+        said.generations = await keepGenerations();
+        said.bridged = await ctx.optional("members: bridge", bridge(), () => 0);
+      }
+      said.crossed = await ctx.optional("members: crossBridge", crossBridge(), () => 0);
+      if (said.added?.length || said.removed?.length) ctx.log("members", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said.added.length} added, ${said.removed.length} removed — one key change` });
+      return said;
+    }
+
     const handle = {
+      reconcile: () => once(reconcileNow),
       sync: () => once(syncNow),
       create: () =>
         once(async () => {
@@ -205,5 +279,19 @@ export async function start(ctx) {
     return handle;
   }
 
-  return { group, me, memberOf };
+  // EVERY SPACE KEPT TO ITS LIST on this page (K7): each of this account's spaces (every kind — a server, a chat, a
+  // circle, a level group; never the account's own) reconciled now and then — its tree made if it has none, the bridge
+  // carried. (With every page closed, the node does it: K5.)
+  async function reconcileAll() {
+    if (!(await space.account())) return 0;
+    let n = 0;
+    for (const sp of (await space.mine.strict()).filter(s => s.kind !== "account")) {
+      const r = await ctx.optional(`members: reconcile ${sp.id.slice(0, 8)}`, group(sp).reconcile(), () => null);
+      if (r?.made || r?.added?.length || r?.removed?.length) n += 1;
+    }
+    return n;
+  }
+  (await ctx.require("lifecycle")).job("members reconcile", { every: 120e3, delay: 30e3, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => reconcileAll() });
+
+  return { group, me, memberOf, reconcileAll };
 }

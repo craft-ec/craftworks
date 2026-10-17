@@ -111,8 +111,13 @@ fn e(x: CgkaError) -> String {
 impl Group {
     /// A NEW group for `space`, made by `account` (placed as its first member).
     pub fn create(space: &[u8; 32], account: Account) -> Result<(Group, Vec<u8>), String> {
+        Group::create_by(space, account, &[0; 32])
+    }
+    /// A NEW tree made by a listed member placing itself, naming the act that let it in (K7: an existing space's tree,
+    /// made by whichever listed member opens it first — its owner names none).
+    pub fn create_by(space: &[u8; 32], account: Account, act: &[u8; 32]) -> Result<(Group, Vec<u8>), String> {
         let mut g = Group::empty(space, account);
-        let op = g.add_member(&g.account.id.0.to_bytes(), &g.account.leaf_key(), &[0; 32])?.ok_or("the maker could not place itself")?;
+        let op = g.add_member(&g.account.id.0.to_bytes(), &g.account.leaf_key(), act)?.ok_or("the maker could not place itself")?;
         Ok((g, op))
     }
     /// An empty replica of `space`'s group for `account` (it learns the tree from the group's operations).
@@ -232,6 +237,61 @@ impl Group {
     }
 }
 
+/// A LISTED ACCOUNT's member, from its card: `(DID, member id, first leaf key)`.
+pub type Card = (String, [u8; 32], [u8; 32]);
+
+/// WHAT RECONCILING DID (K7: page and node, the one plan): the accounts added, those removed (by the act putting them
+/// out), and the operations to send (one key change after them).
+#[derive(Debug, Default)]
+pub struct Reconciled {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub ops: Vec<Vec<u8>>,
+    /// Why one was not added or removed (the operation would not build).
+    pub not: Vec<String>,
+}
+
+impl Group {
+    /// RECONCILE the tree to the list (K7, the one plan — `members.reconcile` on a page, `keys_round` on a node): ADD each
+    /// card's member whose account is `listed` and the tree does not place, NAMING the act that let it in (`ins`: so the
+    /// add stays valid when a later act puts it out — every replay judges it by that act); REMOVE each placed member
+    /// whose account is not, by the act `outs` names (none: left — nothing decided without the act); then ONE key change
+    /// (`seed`: its randomness). Only from a WHOLE read of the list: the caller's guard.
+    pub fn reconcile(&mut self, cards: &[Card], listed: &dyn Fn(&str) -> bool, ins: &std::collections::BTreeMap<String, [u8; 32]>, outs: &std::collections::BTreeMap<String, [u8; 32]>, seed: [u8; 32]) -> Reconciled {
+        let placed = self.members();
+        let mut r = Reconciled::default();
+        for (did, id, leaf) in cards {
+            if placed.contains(id) || !listed(did) || r.added.contains(did) {
+                continue;
+            }
+            match self.add_member_raw(id, leaf, ins.get(did).unwrap_or(&[0; 32])) {
+                Ok(Some(op)) => (r.ops.push(op), r.added.push(did.clone())).1,
+                Ok(None) => {}
+                Err(why) => r.not.push(format!("{did}: not added — {why}")),
+            }
+        }
+        for id in &placed {
+            let Some((did, ..)) = cards.iter().find(|c| c.1 == *id) else { continue };
+            if listed(did) {
+                continue;
+            }
+            let Some(act) = outs.get(did) else { continue };
+            match self.remove_member(id, act) {
+                Ok(Some(op)) => (r.ops.push(op), r.removed.push(did.clone())).1,
+                Ok(None) => {}
+                Err(why) => r.not.push(format!("{did}: not removed — {why}")),
+            }
+        }
+        if !r.ops.is_empty() {
+            match self.rotate_seeded(seed) {
+                Ok(op) => r.ops.push(op),
+                Err(why) => r.not.push(format!("no key change — {why}")),
+            }
+        }
+        r
+    }
+}
+
 /// A generation's NUMBER (the storage's epoch, whose NEWEST — the highest — is written with): its update's DEPTH in the
 /// operations (a later generation is always deeper), and 3 bytes of its hash below it (concurrent ones at one depth).
 fn generation_number(depth: u64, h: &keyhive_crypto::digest::Digest<Signed<CgkaOperation>>) -> u64 {
@@ -247,10 +307,18 @@ fn admitted(op: &Signed<CgkaOperation>, check: &impl Check) -> Result<(), String
         return Err(format!("signed by {did}, not on the list"));
     }
     match &op.payload {
-        CgkaOperation::Add { added_id, authorization, .. } => match authorization {
-            CgkaAuthorization::Delegation(act) if check.allows(act, true, &added_id.0.to_bytes()) => Ok(()),
-            _ => Err("an add no act allows".into()),
-        },
+        // AN ADD: of an account the list names NOW (K7 — the tree only ever holds the list: any listed member places any
+        // listed account, itself included), or one its named act allows.
+        CgkaOperation::Add { added_id, authorization, .. } => {
+            let target = added_id.0.to_bytes();
+            if check.account_of(&target).is_some_and(|d| check.listed(&d)) {
+                return Ok(());
+            }
+            match authorization {
+                CgkaAuthorization::Delegation(act) if check.allows(act, true, &target) => Ok(()),
+                _ => Err("an add of an account not listed, no act allowing it".into()),
+            }
+        }
         CgkaOperation::Remove { id, authorization, .. } => match authorization {
             CgkaAuthorization::Revocation(act) if check.allows(act, false, &id.0.to_bytes()) => Ok(()),
             _ => Err("a removal no act allows".into()),
@@ -318,8 +386,9 @@ mod page {
     #[wasm_bindgen]
     impl BeeGroup {
         /// A new group for `space` made by this account: `[group, its first operation]`.
-        pub fn create(space: &[u8], member_seed: &[u8]) -> Result<js_sys::Array, JsValue> {
-            let (g, op) = Group::create(&b32(space)?, Account::of(&b32(member_seed)?)).map_err(err)?;
+        pub fn create(space: &[u8], member_seed: &[u8], act: Option<Vec<u8>>) -> Result<js_sys::Array, JsValue> {
+            let act = act.map(|a| b32(&a)).transpose()?.unwrap_or([0; 32]);
+            let (g, op) = Group::create_by(&b32(space)?, Account::of(&b32(member_seed)?), &act).map_err(err)?;
             Ok([JsValue::from(BeeGroup(g)), js_sys::Uint8Array::from(&op[..]).into()].into_iter().collect())
         }
         /// An empty replica of `space`'s group for this account.
@@ -370,6 +439,37 @@ mod page {
         pub fn seal(&mut self, reference: &[u8], plaintext: &[u8]) -> Result<js_sys::Array, JsValue> {
             let (sealed, op) = self.0.seal(b32(reference)?, plaintext, &mut rand::rngs::OsRng).map_err(err)?;
             Ok([JsValue::from(js_sys::Uint8Array::from(&sealed[..])), bytes(op)].into_iter().collect())
+        }
+        /// RECONCILE to the list (`Group::reconcile`, the node's too): `cards` `[[did, member, leaf]…]`, `listed` the DIDs
+        /// listed now, `ins`/`outs` `{ did: act }` (32 bytes each). `{ added, removed, ops, not }`.
+        pub fn reconcile(&mut self, cards: js_sys::Array, listed: js_sys::Array, ins: js_sys::Object, outs: js_sys::Object) -> Result<JsValue, JsValue> {
+            let cards: Vec<Card> = cards
+                .iter()
+                .filter_map(|c| {
+                    let c = js_sys::Array::from(&c);
+                    Some((c.get(0).as_string()?, b32(&js_sys::Uint8Array::new(&c.get(1)).to_vec()).ok()?, b32(&js_sys::Uint8Array::new(&c.get(2)).to_vec()).ok()?))
+                })
+                .collect();
+            let listed: Vec<String> = listed.iter().filter_map(|d| d.as_string()).collect();
+            let acts = |o: &js_sys::Object| -> std::collections::BTreeMap<String, [u8; 32]> {
+                js_sys::Object::entries(o)
+                    .iter()
+                    .filter_map(|e| {
+                        let e = js_sys::Array::from(&e);
+                        Some((e.get(0).as_string()?, b32(&js_sys::Uint8Array::new(&e.get(1)).to_vec()).ok()?))
+                    })
+                    .collect()
+            };
+            let mut seed = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut seed);
+            let r = self.0.reconcile(&cards, &|d| listed.iter().any(|l| l == d), &acts(&ins), &acts(&outs), seed);
+            let strs = |v: &[String]| -> js_sys::Array { v.iter().map(|s| JsValue::from(s.as_str())).collect() };
+            let out = js_sys::Object::new();
+            js_sys::Reflect::set(&out, &"added".into(), &strs(&r.added))?;
+            js_sys::Reflect::set(&out, &"removed".into(), &strs(&r.removed))?;
+            js_sys::Reflect::set(&out, &"not".into(), &strs(&r.not))?;
+            js_sys::Reflect::set(&out, &"ops".into(), &r.ops.iter().map(|o| JsValue::from(js_sys::Uint8Array::from(&o[..]))).collect::<js_sys::Array>())?;
+            Ok(out.into())
         }
         /// THE GENERATION TO WRITE WITH: `[number (decimal string), secret, operation or null]`.
         pub fn current(&mut self) -> Result<js_sys::Array, JsValue> {

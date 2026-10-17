@@ -203,9 +203,10 @@ so one move covers them all. (The account's own space is not a group of members:
 1. **A tree for every space.** A new space: made with it (`space.create`). An existing one (no operation in its
    `pub-keyops`): made by the first LISTED member whose page opens it — its own placement. Several at once: each places
    itself; the adds merge (no fork).
-2. **Our check's add rule, simplified:** an add is allowed when the account added is LISTED now (named act or none);
-   a removal still names the act that puts them out. (The tree may only ever hold the list: any listed member may place
-   any listed account — itself included; nobody unlisted.)
+2. **Our check's add rule:** an add is allowed when the account added is LISTED now, or the act it names lets it in;
+   reconciling always NAMES that act (a replay after a later removal judges the add by it — "listed now" alone would
+   refuse every past add of someone since put out, and the history would not replay: the K5 removal test caught it). A
+   removal names the act that puts them out. (Any listed member may place any listed account, itself included.)
 3. **One plan, page and node:** whom to add and remove (`groups::plan`: listed and card-named but not placed; placed
    but not listed, by the act that put them out) — the node's round and the page's `members.reconcile` both call it.
    The page reconciles when it opens a space and when its acts or cards change; the node with every page closed (K5).

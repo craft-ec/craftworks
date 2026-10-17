@@ -366,10 +366,10 @@ export function mount(ctx, el) {
   // THE BACKGROUND — on every page, AFTER it: started one at a time, each once the node is idle (the page's own reads
   // answered), never on a clock that lands among them. ACTIVITY (what is new: notified, whichever app is open);
   // UPKEEP (spaces told of, entered); FILE KEYS (every file on the key its access calls for); KEEP (this person's
-  // data kept on the network); VIDEO STUDIO (renditions still to make).
+  // data kept on the network); VIDEO STUDIO (renditions still to make); MEMBERS (every space's keys kept to its list).
   ctx.background("header: async", (async () => {
     const node = await ctx.require("node");
-    for (const name of ["activity", "upkeep", "file-keys", "keep", "video-studio"]) {
+    for (const name of ["activity", "upkeep", "members", "file-keys", "keep", "video-studio"]) {
       await node.idle();
       await ctx.background("header: ctx.require", ctx.require(name));
     }

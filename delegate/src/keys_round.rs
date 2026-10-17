@@ -106,53 +106,30 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         followed(h, &r.member, &r.space, "keys-not-placed", &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, pending.len(), why.join(" / "), r.reading.beekem.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
         return next_space(h, c, r);
     }
-    let latest = |inn: bool, did: &str| gov.counted.iter().rev().find(|a| craftworks_gov::entry_move(a).is_some_and(|(i, d)| i == inn && d == did)).and_then(|a| a.get("id")?.as_str().map(|id| <[u8; 32]>::from(sha2::Sha256::digest(id.as_bytes()))));
-    let mut adds = Vec::new();
-    for (did, id, leaf) in &r.reading.beekem {
-        if placed.contains(id) || !list.listed(did) {
-            continue;
-        }
-        let act = if *did == list.owner { latest(true, did).unwrap_or(NO_ACT) } else if let Some(a) = latest(true, did) { a } else { continue };
-        adds.push((did.clone(), *id, *leaf, act));
-    }
-    let mut removes = Vec::new();
-    for id in &placed {
-        let Some(did) = list.by_member.get(id) else { continue };
-        if list.listed(did) {
-            continue;
-        }
-        if let Some(act) = latest(false, did) {
-            removes.push((did.clone(), *id, act));
-        }
-    }
-    if adds.is_empty() && removes.is_empty() {
+    // THE ONE PLAN (`Group::reconcile`, the page's too): the listed placed, the put-out taken out by their act.
+    // (Each account's LATEST act letting it in / putting it out: what an add or a removal names.)
+    let acts = |inn: bool| -> BTreeMap<String, [u8; 32]> {
+        gov.counted
+            .iter()
+            .filter_map(|a| match craftworks_gov::entry_move(a)? {
+                (i, did) if i == inn => Some((did, <[u8; 32]>::from(sha2::Sha256::digest(a.get("id")?.as_str()?.as_bytes())))),
+                _ => None,
+            })
+            .collect()
+    };
+    let (ins, outs) = (acts(true), acts(false));
+    let due = r.reading.beekem.iter().any(|(d, id, _)| !placed.contains(id) && list.listed(d)) || placed.iter().any(|id| list.by_member.get(id).is_some_and(|d| !list.listed(d) && outs.contains_key(d)));
+    if !due {
         followed(h, &r.member, &r.space, "keys", &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), pending.len()));
         return next_space(h, c, r);
     }
     // (A delegate has no randomness of its own: a key change draws from upkeep's pool.)
     let Some(rand) = identity::upkeep_random(h) else {
-        followed(h, &r.member, &r.space, "keys-wait", &format!("{}: {} to add, {} to remove — no randomness yet (a page stirs the pool)", m.name, adds.len(), removes.len()));
+        followed(h, &r.member, &r.space, "keys-wait", &format!("{}: the tree is not the list — no randomness yet (a page stirs the pool)", m.name));
         return next_space(h, c, r);
     };
-    let mut ops = Vec::new();
-    for (did, id, leaf, act) in &adds {
-        match g.add_member_raw(id, leaf, act) {
-            Ok(Some(op)) => ops.push(op),
-            Ok(None) => {}
-            Err(why) => followed(h, &r.member, &r.space, "keys-add", &format!("{}: {}… not added — {why}", m.name, did.get(12..20).unwrap_or(did))),
-        }
-    }
-    for (did, id, act) in &removes {
-        match g.remove_member(id, act) {
-            Ok(Some(op)) => ops.push(op),
-            Ok(None) => {}
-            Err(why) => followed(h, &r.member, &r.space, "keys-remove", &format!("{}: {}… not removed — {why}", m.name, did.get(12..20).unwrap_or(did))),
-        }
-    }
-    match g.rotate_seeded(rand) {
-        Ok(op) => ops.push(op),
-        Err(why) => followed(h, &r.member, &r.space, "keys-rotate", &format!("{}: no key change — {why}", m.name)),
-    }
+    let done = g.reconcile(&r.reading.beekem, &|d| list.listed(d), &ins, &outs, rand);
+    let ops = done.ops;
     for (n, k) in g.generations() {
         identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
     }
@@ -162,13 +139,13 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         .map(|op| (hex(&sha2::Sha256::digest(op)).into_bytes(), Some(hex(op).into_bytes())))
         .collect();
     let large = ops.len() - rows.len();
-    let names = |v: Vec<&String>| v.iter().map(|d| d.get(12..20).unwrap_or(d).to_string()).collect::<Vec<_>>().join(", ");
+    let names = |v: &[String]| v.iter().map(|d| d.get(12..20).unwrap_or(d).to_string()).collect::<Vec<_>>().join(", ");
     followed(
         h,
         &r.member,
         &r.space,
         "keys-plan",
-        &format!("{}: {} added ({}), {} removed ({}), one key change{}", m.name, adds.len(), names(adds.iter().map(|a| &a.0).collect()), removes.len(), names(removes.iter().map(|a| &a.0).collect()), if large > 0 { format!(" — {large} operation(s) too large for a row: a page's") } else { String::new() }),
+        &format!("{}: {} added ({}), {} removed ({}), one key change{}{}", m.name, done.added.len(), names(&done.added), done.removed.len(), names(&done.removed), if large > 0 { format!(" — {large} operation(s) too large for a row: a page's") } else { String::new() }, if done.not.is_empty() { format!(" — {}", done.not.join("; ")) } else { String::new() }),
     );
     write(h, c, r, m, rows, false)
 }
