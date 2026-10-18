@@ -704,9 +704,10 @@ async fn main() -> Result<()> {
     // a lookup is ROUTED to the peers nearest a piece's address, never to the publisher; peers there that are full
     // refuse it or never keep it, and then nobody finds it (v401, 10-18: 219 of its pieces could not be found from
     // the owner's node while B held every one). A piece not found there is PLACED ELSEWHERE — its salt moved, its
-    // address with it — put again and asked again, up to FIND_ROUNDS times.
+    // address with it — put again and asked again, up to FIND_ROUNDS times (10-18: v404's auth, identity and members
+    // had all 9 pieces unfindable from the owner's node hours after a 4-round release: the page ran the version before).
     if let Ok(find_ws) = std::env::var("FIND_WS") {
-        const FIND_ROUNDS: u32 = 4;
+        const FIND_ROUNDS: u32 = 8;
         for round in 1..=FIND_ROUNDS {
             let ix: Vec<(usize, usize)> = all_ix.iter().copied().filter(|&(i, j)| !missing.contains(&cuts[i].2.pieces[j].address)).collect();
             let lost = {

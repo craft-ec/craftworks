@@ -277,7 +277,11 @@ export async function start(ctx) {
     if (Date.now() - (reported.get(key) ?? 0) < 3600e3) return false;
     reported.set(key, Date.now());
     const day = new Date().toISOString().slice(0, 10);
-    const v = String(ctx.siteV ?? ctx.shaOf?.("conversation") ?? "").slice(0, 12); // the site's manifest hash
+    // The site's manifest hash, and `~previous` when the version before it ran (its pieces not fetchable yet): kept —
+    // cut to 12 characters it was dropped, and a page on the previous version reported as the new one (10-18: the
+    // owner's login ran v403's code while every report named v404).
+    const [h, ran] = String(ctx.siteV ?? ctx.shaOf?.("conversation") ?? "").split("~");
+    const v = `${h.slice(0, 12)}${ran ? `~${ran}` : ""}`;
     // WHO reported (the account's id, its first 8 hex: reports from one account told apart, and its other reports
     // read together) — never more of it.
     const r = String((await space.account())?.id ?? "").replace(/^did:craftec:/, "").slice(0, 8) || null;
