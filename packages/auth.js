@@ -73,16 +73,47 @@ export async function start(ctx) {
   // may have been moved from an older one (a newer build slow to answer), and a key only a newer build got — a space's
   // later epoch — would otherwise be lost (seen: "no key here for epoch 17").
   async function retireEarlier(pin, movedFrom) {
-    for (const prior of ctx.identityPrior) {
+    // One earlier build: retired, its epoch keys this build lacks gathered — the handover's (`epochsOnly`), and every
+    // space's MLS epochs asked by number (`epochsFrom`: an earlier build's handover walked only the numbers just below
+    // its latest epoch — once a space's epochs were BeeKEM generations, its MLS epochs were left behind: v401 → v403,
+    // 10-18, a channel unreadable after the PIN).
+    const one = async prior => {
       const r = await id.retireFrom(prior, pin).catch(e => ({ said: e.message }));
       let keys = "";
       if (r.retired && prior !== movedFrom) {
         const k = await id.moveKeysFrom(prior, pin, { epochsOnly: true }).catch(e => ({ said: e.message }));
         keys = k.said ? `; its keys not read (${k.said})` : `; its keys gathered (${k.moved} account epoch(s), ${k.spaces} space(s))`;
       }
-      ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${r.retired ? `its upkeep retired${keys}` : r.silent ? "no answer (passed over)" : `stopped here (${r.said})`}` });
-      if (!r.retired && !r.silent) return;
+      if (r.retired) {
+        let kept = 0;
+        for (const sp of (await ctx.optional("auth: spaces", (await ctx.require("space")).mine.strict(), () => [])).filter(s => s.kind !== "account")) {
+          const e = await id.epochsFrom(prior, sp.idBytes, 2 ** 24).catch(e => ({ said: e.message }));
+          kept += e.kept ?? 0;
+        }
+        keys += `; ${kept} MLS epoch(s) of its spaces kept here`;
+      }
+      ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${r.retired ? `its upkeep retired${keys}` : r.silent ? "no answer" : `stopped here (${r.said})`}` });
+      return r;
+    };
+    // Newest first, up to the first that does not hold this PIN. A SILENT one (an overloaded or still loading build —
+    // exactly the one whose rounds must stop) is asked again by the fault policy, never passed over for good (10-18:
+    // v401's build, overloaded, answered nothing, and kept running its rounds on the owner's node after the login).
+    let silent = [];
+    for (const prior of ctx.identityPrior) {
+      const r = await one(prior);
+      if (r.silent) silent.push(prior);
+      else if (!r.retired) break;
     }
+    if (silent.length)
+      await fault
+        .attempt("earlier build", "retiring the earlier builds not answering yet", async () => {
+          const still = [];
+          for (const prior of silent) if ((await one(prior)).silent) still.push(prior);
+          silent = still;
+          if (silent.length) throw new fault.Fault("not-yet", `${silent.length} earlier build(s) not answering yet`, { d: { silent: silent.length } });
+          return null;
+        }, { policy: { "not-yet": { tries: 30, wait: () => 20000, report: "never" } } })
+        .catch(fault.absentOnly);
     // Keys gathered: what reads with them is read again.
     dispatchEvent(new CustomEvent("craftworks:keys"));
   }

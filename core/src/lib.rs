@@ -994,6 +994,13 @@ mod js {
                 .into_iter()
                 .collect())
         }
+        /// `[id, frames]` asking an EARLIER build (unlocked there) for a space's epoch secrets below `below`
+        /// (`EpochSecrets`): what a handover from it did not carry (10-18: its handover walked the numbers just below
+        /// the latest — once epochs were BeeKEM generations, the MLS ones were left behind).
+        pub fn frames_epoch_secrets_from(&mut self, prior: &str, space: &[u8], below: f64) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::EpochSecrets { space: b32(space)?, below: below as u64 }).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
+        }
         /// `[id, frames]` asking an earlier build for the PLACES its member signed as a witness (`HandoverWitnessed`).
         pub fn frames_handover_witnessed_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
             let (id, f) = self.0.frames_prior(prior, &Request::HandoverWitnessed { pin }).map_err(err)?;

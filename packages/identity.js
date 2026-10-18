@@ -238,6 +238,17 @@ export async function start(ctx) {
       const kept = w.length ? (await call(core.frames_witnessed_keep(w), "keeping its witnessed places"))?.witnessedKept ?? 0 : 0;
       return { retired: true, witnessed: kept };
     },
+    // A space's EPOCH SECRETS an earlier build holds (unlocked there first: `retireFrom`), below `below`, kept here when
+    // this build lacks them — the MLS epochs a handover from it left behind (10-18). How many kept, or why not.
+    epochsFrom: async (prior, space, below) => {
+      const e = (await askPrior(prior, core.frames_epoch_secrets_from(prior, space, below), "a space's earlier keys"))?.epochs;
+      if (!Array.isArray(e)) return { said: "no answer" };
+      const here = new Set(((await call(core.frames_epoch_secrets(space, below), "the space's earlier keys"))?.epochs ?? []).map(([n]) => n));
+      let kept = 0;
+      for (const [n, s] of e) if (typeof n === "number" && typeof s === "string" && !here.has(n)) (await call(core.frames_epoch_keep(n, new Uint8Array(s.match(/../g).map(b => parseInt(b, 16))), space), "keeping an earlier epoch's key"), (kept += 1));
+      if (kept) keysChanged(space)();
+      return { kept, there: e.length };
+    },
     handoverFrom: async (prior, pin) => (await askPrior(prior, core.frames_handover_from(prior, pin), "the member")) ?? { missing: true },
   };
 }
