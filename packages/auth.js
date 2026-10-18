@@ -61,7 +61,16 @@ export async function start(ctx) {
   // the member the PIN opens there is moved here, so an update never costs anyone their login.
   async function unlock(pin) {
     const r = await unlock_(pin);
-    if (r.unlocked) retireEarlier(pin, r.movedFrom ?? null);
+    // The EARLIER builds retired and their keys gathered BEFORE the login returns: a login loads the page again at
+    // once (`login`), which ended this work when it ran behind (10-18, fx: no earlier build retired, epoch 0 never
+    // recovered — the space's acts and channels unreadable after an update). Bounded: a build silent past it is left.
+    if (r.unlocked) {
+      let timer;
+      await Promise.race([
+        retireEarlier(pin, r.movedFrom ?? null).catch(e => ctx.log("earlier build", { what: `not finished: ${e?.message ?? e}` })),
+        new Promise(res => (timer = setTimeout(() => (ctx.log("earlier build", { what: "still working after 120 s: the rest left" }), res()), 120_000))),
+      ]).finally(() => clearTimeout(timer));
+    }
     return r;
   }
   // The EARLIER builds' upkeep for this member, retired (an empty mandate each): every build stays on the node and
