@@ -925,3 +925,31 @@ fn a_forgotten_member_s_upkeep_stops() {
     assert!(upkeep_members(&m).is_empty(), "not served any more");
     assert_eq!(upkeep_witness_mandate(&m, &public), None);
 }
+
+/// 10-18 (v401 → v403): a space's epochs are MLS epochs (small numbers) AND BeeKEM generations (depth × 2^24 + a
+/// hash part: sparse, far above them). The handover hands EVERY kept epoch — before, only the numbers just below the
+/// latest, so a member moved to the next build kept the newest generation alone and its channel did not read.
+/// Control: the old walk (`epochs_back(latest)`) reaches one of them.
+#[test]
+fn a_handover_carries_every_epoch_mls_and_generations_alike() {
+    let mut m = provisioned(APP);
+    let x = [0x52; 32];
+    let gens: Vec<u64> = vec![(3 << 24) | 0x0a0b0c, (5 << 24) | 0x010203, (9 << 24) | 0xffeedd];
+    assert_eq!(serve(&mut m, Request::MlsSave { space: Some(x), state: b"server x".to_vec(), epoch: 4, secret: [4; 32] }, APP), Answer::MlsSaved);
+    for e in 0..4u64 {
+        assert_eq!(serve(&mut m, Request::EpochKeep { space: Some(x), epoch: e, secret: [e as u8; 32] }, APP), Answer::MlsSaved);
+    }
+    for (i, g) in gens.iter().enumerate() {
+        assert_eq!(serve(&mut m, Request::EpochKeep { space: Some(x), epoch: *g, secret: [0x60 + i as u8; 32] }, APP), Answer::MlsSaved);
+    }
+    let Answer::HandedSpaces { spaces } = serve(&mut m, Request::HandoverSpaces { pin: ALICE_PIN.into() }, APP) else { panic!("handed") };
+    let handed: Vec<u64> = spaces[0].2.iter().map(|(e, _)| *e).collect();
+    let want: Vec<u64> = (0..=4u64).chain(gens.iter().copied()).collect();
+    assert_eq!(handed, want, "every MLS epoch and every generation");
+    // CONTROL: the old walk from the latest (the newest generation) reaches only it.
+    let old: Vec<u64> = (gens[2].saturating_sub(EPOCHS_BACK)..=gens[2]).filter(|e| want.contains(e)).collect();
+    assert_eq!(old, vec![gens[2]], "the old walk carried the newest generation alone");
+    // A later member's HISTORY (below an epoch) reaches every kept one below it, generations too.
+    let Answer::EpochSecrets { epochs } = serve(&mut m, Request::EpochSecrets { space: x, below: gens[1] + 1 }, APP) else { panic!("history") };
+    assert_eq!(epochs.iter().map(|(e, _)| *e).collect::<Vec<_>>(), (0..=4u64).chain([gens[0], gens[1]]).collect::<Vec<_>>());
+}

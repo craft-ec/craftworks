@@ -702,12 +702,33 @@ pub const EPOCHS_BACK: u64 = 4096;
 fn epochs_back(latest: u64) -> std::ops::RangeInclusive<u64> {
     latest.saturating_sub(EPOCHS_BACK)..=latest
 }
+
+/// Every epoch of a space (`None`: the account's) whose secret this member KEEPS: its index (each kept epoch named as
+/// it is kept) and, for what was kept before the index, the old ranges — below the latest, and from 0. (A walk of
+/// the numbers below the latest alone lost every key a handover should have carried once epochs became BeeKEM
+/// generations — sparse numbers far above an MLS epoch: v401 → v403, 10-18, a channel unreadable after the PIN.)
+pub fn kept_epochs<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> Vec<u64> {
+    let mut all: Vec<u64> = h.get_secret(&in_space(EPOCH_INDEX, m, space)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    if let Some(l) = latest_in(h, m, space) {
+        all.extend(epochs_back(l).filter(|e| secret_in(h, m, space, *e).is_some()));
+        all.extend((0..l.min(EPOCHS_BACK)).filter(|e| secret_in(h, m, space, *e).is_some()));
+    }
+    all.sort_unstable();
+    all.dedup();
+    all
+}
 pub fn keep_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: u64, secret: &[u8; 32]) -> bool {
     let latest = latest_in(h, m, &space);
     // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
     // walks before its group's state exists: it signs the log of the one it joins at).
+    let mut index: Vec<u64> = h.get_secret(&in_space(EPOCH_INDEX, m, &space)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    let new = !index.contains(&epoch);
+    if new {
+        index.push(epoch);
+    }
     note_space(h, m, &space)
         && h.set_secret(&[in_space(EPOCH, m, &space), epoch.to_be_bytes().to_vec()].concat(), secret)
+        && (!new || h.set_secret(&in_space(EPOCH_INDEX, m, &space), &bincode::serialize(&index).expect("a list encodes")))
         && (latest.is_some_and(|l| epoch <= l) || h.set_secret(&in_space(EPOCH_LATEST, m, &space), &epoch.to_be_bytes()))
 }
 
@@ -968,6 +989,8 @@ pub fn epoch_log_key(epoch_secret: &[u8; 32]) -> SigningKey {
 pub const MLS: &[u8] = b"identity_mls/";
 pub const EPOCH: &[u8] = b"identity_epoch/";
 pub const EPOCH_LATEST: &[u8] = b"identity_epoch_latest/";
+/// Every epoch kept, per space (`kept_epochs`): what a handover hands and a forget clears.
+pub const EPOCH_INDEX: &[u8] = b"identity_epoch_index/";
 /// `SPACES ‖ member` → the ids (32 bytes each) of the spaces other than the account whose group this member keeps.
 pub const SPACES: &[u8] = b"identity_spaces/";
 
@@ -1004,7 +1027,7 @@ fn latest_in<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> Opt
 /// (`Request::EpochSecrets`: its history).
 pub fn epochs_below<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], below: u64) -> Vec<(u64, [u8; 32])> {
     let space = Some(space);
-    (0..below.min(100_000)).filter_map(|e| secret_in(h, m, &space, e).map(|s| (e, s))).collect()
+    kept_epochs(h, m, &space).into_iter().filter(|e| *e < below).filter_map(|e| secret_in(h, m, &space, e).map(|s| (e, s))).collect()
 }
 
 fn secret_in<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>, epoch: u64) -> Option<[u8; 32]> {
@@ -1344,14 +1367,17 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             // The secrets first and the member last: a crash between leaves a member holding less, never keys nobody
             // can reach to forget.
             let mut ok = true;
-            for e in epochs_back(latest.unwrap_or(0)) {
+            let _ = latest;
+            for e in kept_epochs(h, &m, &None) {
                 ok &= h.set_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat(), &[]);
             }
+            ok &= h.set_secret(&in_space(EPOCH_INDEX, &m, &None), &[]);
             // Every other space's group too: its state and every epoch's secret.
             for sp in spaces_of(h, &m).into_iter().map(Some) {
-                for e in epochs_back(latest_in(h, &m, &sp).unwrap_or(0)) {
+                for e in kept_epochs(h, &m, &sp) {
                     ok &= h.set_secret(&[in_space(EPOCH, &m, &sp), e.to_be_bytes().to_vec()].concat(), &[]);
                 }
+                ok &= h.set_secret(&in_space(EPOCH_INDEX, &m, &sp), &[]);
                 ok &= h.set_secret(&in_space(EPOCH_LATEST, &m, &sp), &[]) && h.set_secret(&in_space(MLS, &m, &sp), &[]);
             }
             ok &= h.set_secret(&[SPACES, &m[..]].concat(), &[]);
@@ -1387,12 +1413,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 }
                 let m = a.public();
                 let latest = h.get_secret(&[EPOCH_LATEST, &m[..]].concat()).and_then(|b| b.try_into().ok()).map(u64::from_be_bytes);
-                let epochs = match latest {
-                    None => Vec::new(),
-                    Some(l) => epochs_back(l)
-                        .filter_map(|e| Some((e, h.get_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat())?.try_into().ok()?)))
-                        .collect(),
-                };
+                let _ = latest;
+                let epochs = kept_epochs(h, &m, &None)
+                    .into_iter()
+                    .filter_map(|e| Some((e, h.get_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat())?.try_into().ok()?)))
+                    .collect();
                 HandedKeys { mls: h.get_secret(&[MLS, &m[..]].concat()).filter(|s| !s.is_empty()), epochs }
             }
         },
@@ -1408,10 +1433,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     .into_iter()
                     .map(|id| {
                         let sp = Some(id);
-                        let epochs = match latest_in(h, &m, &sp) {
-                            None => Vec::new(),
-                            Some(l) => epochs_back(l).filter_map(|e| Some((e, secret_in(h, &m, &sp, e)?))).collect(),
-                        };
+                        let epochs = kept_epochs(h, &m, &sp).into_iter().filter_map(|e| Some((e, secret_in(h, &m, &sp, e)?))).collect();
                         (id, h.get_secret(&in_space(MLS, &m, &sp)).filter(|s| !s.is_empty()), epochs)
                     })
                     .collect();
@@ -1662,8 +1684,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     return None;
                 }
                 let m = a.public();
-                let latest = latest_in(h, &m, &space)?;
-                epochs_back(latest).rev().find_map(|e| {
+                kept_epochs(h, &m, &space).into_iter().rev().find_map(|e| {
                     let secret = secret_in(h, &m, &space, e)?;
                     let k = epoch_log_key(&secret);
                     matches!(&p.authority, Authority::One(v) if *v == k.verifying_key()).then_some(k)
