@@ -427,6 +427,14 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 keep(h, Some(&r));
                 return io;
             }
+            // A BEEKEM SPACE whose key operations read EMPTY (its feeds not found, or not answered): its operations did not
+            // read — never taken for an MLS space (10-18, live: a node's round went to the MLS catch-up of a BeeKEM space
+            // at epoch 149, whose log nobody writes, and stalled 33 times). Said with what the read noted; next round.
+            if r.reading.holds_generation() {
+                let notes = if r.reading.notes.is_empty() { "no feed noted".to_string() } else { r.reading.notes.join("; ") };
+                followed(h, &member, &r.space, "short", &format!("{}: its key operations read empty though it holds a BeeKEM generation ({notes}): not followed this round", m.name));
+                return next_space(h, &c, r);
+            }
             catch_up(h, &c, r, &m)
         }
         (Step::Keys { rows, mut waiting, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {

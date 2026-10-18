@@ -292,6 +292,10 @@ impl Group {
     }
 }
 
+/// The lowest generation NUMBER (depth 1): every generation is at or above it, every MLS epoch below — a key held at
+/// one says the space is on BeeKEM.
+pub const FIRST_GENERATION: u64 = 1 << 24;
+
 /// A generation's NUMBER (the storage's epoch, whose NEWEST — the highest — is written with): its update's DEPTH in the
 /// operations (a later generation is always deeper), and 3 bytes of its hash below it (concurrent ones at one depth).
 fn generation_number(depth: u64, h: &keyhive_crypto::digest::Digest<Signed<CgkaOperation>>) -> u64 {

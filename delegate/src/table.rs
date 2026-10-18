@@ -360,6 +360,11 @@ impl Reading {
         }
     }
 
+    /// Whether this read's member holds a key at a BeeKEM GENERATION (the space is on BeeKEM, whatever its feeds said).
+    pub fn holds_generation(&self) -> bool {
+        self.epochs.keys().any(|e| *e >= craftworks_groups::FIRST_GENERATION)
+    }
+
     /// Done: every tail asked read to its end.
     pub fn done(&self) -> bool {
         self.resolving.is_empty() && self.bag_read && self.waiting.is_empty() && self.jobs.iter().all(|j| j.rows.is_some())

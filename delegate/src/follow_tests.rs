@@ -656,3 +656,30 @@ fn k5_cards_a_round_are_bounded_and_not_asked_again() {
     assert!(logs_of(&r4) == 0, "after all were asked: none again ({}), {:?}", logs_of(&r4), w.said());
     assert!(merged(&b, &owner_ops(&w)).placed(), "B, who has a card, added meanwhile: {:?}", w.said());
 }
+
+/// 10-18, live: A BEEKEM SPACE whose key operations read EMPTY (its feeds not found from this node) is never taken for
+/// an MLS space — the round says its operations did not read, and does not go to the MLS catch-up (a node's round
+/// there waited on epoch 149's log, which nobody writes, and stalled 33 times). Control — a space with no generation
+/// held (MLS) and the same empty read: the MLS path, nothing said of BeeKEM.
+#[test]
+fn k5_a_beekem_space_whose_operations_read_empty_is_not_caught_up_as_mls() {
+    let b = person(0x55);
+    let mut w = bee_world(&[json!({ "act": "added", "did": b.id(), "at": 10 })], &b);
+    w.run();
+    let (n, _) = merged(&w.owner, &owner_ops(&w)).current_now().expect("a single head");
+    assert!(n >= groups::FIRST_GENERATION, "the node holds a generation ({n})");
+    // The owner device's `pub-keyops` not found from this node.
+    let name = table::table_name(&SPACE, "pub-keyops");
+    let mut o = data::Open::new(TAIL, &w.member, &name);
+    o.public = true;
+    assert!(w.net.st.remove(&o.id_bytes()).is_some(), "the feed was there");
+    w.run();
+    let said = w.said();
+    assert!(said.iter().any(|s| s.starts_with("short: ") && s.contains("read empty though it holds a BeeKEM generation")), "said: {said:?}");
+
+    // CONTROL: no generation held (an MLS space), the same empty read — the MLS path, nothing said of BeeKEM.
+    let mut c = world(&[], &[]);
+    c.run();
+    let said = c.said();
+    assert!(!said.iter().any(|s| s.contains("BeeKEM generation")), "said: {said:?}");
+}
