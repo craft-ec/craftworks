@@ -42,14 +42,9 @@ export async function mount(ctx, el) {
   addEventListener("pointerdown", e => !el.contains(e.target) && e.target !== open && slot()?.classList.remove("open"), { signal: ctx.signal });
   ctx.signal?.addEventListener("abort", () => open.remove());
   places.side(panel);
-  // The ☰ only where the panel has something to show; and while it does, the header leaves the app's entries to it
-  // (`sideNav`, on the page's own ctx: what the header reads).
-  const base = Object.getPrototypeOf(ctx);
+  // The ☰ only where the panel has something to show.
   const showing = () => {
-    const on = !!panel.childElementCount && !!panel.textContent.trim();
-    open.hidden = !on;
-    if (base.sideNav !== on) (base.sideNav = on), dispatchEvent(new CustomEvent("craftworks:actions"));
+    open.hidden = !(panel.childElementCount && panel.textContent.trim());
   };
   new MutationObserver(showing).observe(panel, { childList: true });
-  ctx.signal?.addEventListener("abort", () => base.sideNav && ((base.sideNav = false), dispatchEvent(new CustomEvent("craftworks:actions"))));
 }
