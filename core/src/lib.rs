@@ -227,9 +227,13 @@ impl Core {
                 | Request::HandoverSpaces { .. }
                 | Request::HandoverWitnessed { .. }
                 | Request::Unlock { .. }
+                // A space's EPOCH SECRETS (read only; answered to the session the PIN opened there): what a handover
+                // from that build left behind (10-18, v401 → v403: its handover walked only the numbers just below
+                // the latest — the MLS epochs stayed there).
+                | Request::EpochSecrets { .. }
         ) && !matches!(req, Request::UpkeepMandate { spaces, .. } if spaces.is_empty())
         {
-            return Err("an earlier build is asked only to hand a member over or to retire its upkeep".into());
+            return Err("an earlier build is asked only to hand a member over, to give a space's earlier keys, or to retire its upkeep".into());
         }
         let b32 = |s: &str| -> Result<[u8; 32], String> {
             bs58::decode(s)
@@ -4149,6 +4153,18 @@ mod tests {
         assert_eq!((a, b), (1, 2));
         assert!(!fa.is_empty());
         assert!(!c.frames_register_identity().unwrap().is_empty());
+    }
+
+    /// An earlier build is asked for a space's EPOCH SECRETS (10-18: what its handover left behind) — framed to it;
+    /// control: anything else (a grant, a lock) still refused there.
+    #[test]
+    fn an_earlier_build_is_asked_for_a_spaces_keys_and_nothing_else() {
+        let mut c = Core::new(b"\0asm\x01\0\0\0");
+        let prior = "AP3BuSjFrhJ45Fg7iTvsFb2ER8Hda3iXR3eXjTfrLvnQ:9gcqi8176H7WehFLSqsT1s6BZBxJD4DfX2X4g2Sma7r2";
+        let (_, f) = c.frames_prior(prior, &Request::EpochSecrets { space: [5; 32], below: 1 << 24 }).expect("a space's keys may be asked of an earlier build");
+        assert!(!f.is_empty());
+        assert!(c.frames_prior(prior, &Request::Lock).is_err(), "control: a lock is not asked of an earlier build");
+        assert!(c.frames_prior(prior, &Request::Grant { tables: vec!["x".into()] }).is_err(), "control: nor a grant");
     }
 
     #[test]
