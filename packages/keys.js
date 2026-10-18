@@ -1166,6 +1166,9 @@ export async function start(ctx) {
           return { opens, state: "held", epoch: s.epoch, removed: !!s.removed, members: s.members?.length ?? 0, keyHeld: !!k?.tableKey, why: k?.tableKey ? null : (k?.why ?? k?.refused ?? null) };
         })),
       lost: async () => JSON.parse((await spacekeys()).rows().find(r => r.key === `${at}~lost`)?.value ?? "[]"),
+      // Another branch's epoch keys, kept as LOST here (read with as alternates, never written with): what another
+      // device hands over the bridge (`members`).
+      keepLost: list => keepLostHere(list),
       // WHETHER THIS DEVICE HOLDS the group at all — its state row, the table read AGAIN from the network first: a
       // definite answer (`ready()` is null too while the table is still arriving — never a reason to ask for keys).
       holds: async () => {

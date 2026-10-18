@@ -225,8 +225,13 @@ export async function start(ctx) {
   const mergedNow = new Map(); // at → the merged table, once open
   let reopenedAt = 0;
   async function reopenAfterKeys() {
-    // UNREADABLE ones: read again IN PLACE — a table that opens now changes, and whoever reads it draws again.
-    for (const idHex of [...waiting]) ctx.background("storage: live.get", live.get(idHex)?.reread());
+    // UNREADABLE ones: read again IN PLACE — a table that opens now changes, and whoever reads it draws again. A space
+    // table first takes its space's alternates as they are NOW (another branch's keys a member handed over the bridge).
+    for (const idHex of [...waiting]) {
+      const t = live.get(idHex);
+      if (t?.sealing?.sp) await ctx.optional("storage: alternates", alternates(bytes(idHex), t.sealing.app, t.sealing.sp), () => 0);
+      ctx.background("storage: live.get", t?.reread());
+    }
     // A merged table's writer feeds that did not open: gathered again (merged in as they arrive).
     for (const m of mergedNow.values()) m.retryFailed?.();
     // Opened with NO KEY: left behind only when its key is held NOW (its key is set when it opens) — one still without

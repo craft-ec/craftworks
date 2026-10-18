@@ -209,14 +209,29 @@ export async function start(ctx) {
     // THE BRIDGE (K7): every MLS epoch secret this device holds of the space, into its table `keys-history` (sealed with
     // the newest epoch — a generation once the tree has one): whoever the tree places reads them and keeps them, so what
     // was written before the move reads for a newcomer too. Each epoch once.
+    // A FORKED epoch (MLS, before BeeKEM) has a key per branch: each one this device holds that the bridge does not
+    // carry yet goes as `a<epoch>~<its hash>` beside the `e<epoch>` row — what was written on any branch reads for
+    // everyone (10-18, live: rows on Ivvor's space sealed with "another branch's" key at epoch 143, unreadable to every
+    // member on the other branch, because the bridge carried one key per epoch).
     const BELOW = 2 ** 24;
+    const tagOf = async secret => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes(String(secret))))].slice(0, 6).map(b => b.toString(16).padStart(2, "0")).join("");
     async function bridge() {
       const held = await ctx.optional("members: epochSecrets", auth.identity.epochSecrets(sp.idBytes, BELOW), () => []);
+      const lost = await ctx.optional("members: lost", ctx.require("keys").then(k => k.group(sp).lost()), () => []);
       const t = await storage.table(space.tableOf(sp, "keys-history"), sp);
       await t.settled;
-      const there = new Set(t.rows().filter(x => x.value).map(x => x.key));
+      const rows = new Map(t.rows().filter(x => x.value).map(x => [x.key, x.value]));
       let n = 0;
-      for (const [e, secret] of held) if (typeof e === "number" && e < BELOW && !there.has(`e${e}`)) (await t.put(`e${e}`, String(secret)), (n += 1));
+      const carry = async (e, secret) => {
+        if (typeof e !== "number" || e >= BELOW || !secret) return;
+        const s = String(secret);
+        if (!rows.has(`e${e}`)) return (await t.put(`e${e}`, s), rows.set(`e${e}`, s), (n += 1));
+        if (rows.get(`e${e}`) === s) return;
+        const k = `a${e}~${await tagOf(s)}`;
+        if (!rows.has(k)) (await t.put(k, s), rows.set(k, s), (n += 1));
+      };
+      for (const [e, secret] of held) await carry(e, secret);
+      for (const l of lost) await carry(Number(l.epoch), l.secret);
       return n;
     }
     // …and READ: the epochs the bridge carries, kept (`epochKeep`) — the storage reads the space's history with them.
@@ -224,12 +239,24 @@ export async function start(ctx) {
       const t = await storage.table(space.tableOf(sp, "keys-history"), sp);
       await t.settled;
       let n = 0;
+      const alt = [];
       for (const x of t.rows()) {
+        // ANOTHER BRANCH's key of a forked epoch: kept as lost (an alternate to read with), never as the epoch's key.
+        if (x.value && x.key.startsWith("a") && !kept.has(x.key)) {
+          const e = Number(x.key.slice(1).split("~")[0]);
+          if (Number.isInteger(e)) alt.push({ epoch: e, secret: String(x.value) });
+          kept.add(x.key);
+          continue;
+        }
         const e = Number(x.key.slice(1));
         if (!x.value || !x.key.startsWith("e") || !Number.isInteger(e) || kept.has(`m${e}`)) continue;
         await auth.identity.epochKeep(e, bytes(x.value), sp.idBytes);
         kept.add(`m${e}`);
         n += 1;
+      }
+      if (alt.length) {
+        await (await ctx.require("keys")).group(sp).keepLost(alt);
+        n += alt.length;
       }
       if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } }));
       return n;
