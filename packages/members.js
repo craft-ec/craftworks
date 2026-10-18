@@ -55,7 +55,8 @@ export async function start(ctx) {
     const card = await directory.card(did, { fresh: true });
     if (!card) return { why: "no card" };
     const v = card.beekem ? JSON.parse(card.beekem) : null;
-    if (!v?.cred || !v?.leaf) return { why: `no member on its card (fields: ${Object.keys(card).join(",")})` };
+    // (No member on its card YET: the account has not opened a release since BeeKEM — it is added once it does.)
+    if (!v?.cred || !v?.leaf) return { why: card.beekem ? "its card's member does not read" : "no member on its card yet (not opened since BeeKEM)" };
     const c = JSON.parse(glue.credential_parts(bytes(v.cred)) ?? "null");
     if (!c) return { why: "its member credential does not read" };
     if (c.did !== did) return { why: `its credential names ${String(c.did).slice(0, 24)}` };
