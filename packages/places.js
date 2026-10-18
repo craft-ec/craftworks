@@ -137,7 +137,7 @@ export async function start(ctx) {
     const v = ctx.view(host, {
       read: async () => {
         const ps = await list();
-        const acts = (ctx.actions?.[ctx.route] ?? []).filter(a => !a.search);
+        const acts = ctx.actions?.[ctx.route] ?? [];
         runs = new Map(acts.filter(a => a.run && !a.href).map(a => [a.label, a.run]));
         const own = acts.map(entry);
         const app = own.length ? own : ps.filter(p => p.id === "" || p.id === "discover").map(p => ({ label: p.label, href: p.href, on: p.on, role: p.id === "discover" ? "discover" : "you" }));

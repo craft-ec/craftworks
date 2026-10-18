@@ -1,41 +1,17 @@
-// HEADER: a top bar like a Mac's menu bar. On the left: ⌂ (home), the SPACE you are in — its name opens the spaces panel,
-// every space you can go to (yours, your friends', those you follow) —, the CURRENT APP — a dropdown switching between the apps of that space
-// (its Home, and the apps it uses; Personal: the apps with a personal view) — and
-// that app's MENU — its sub-pages and actions; on the right: the app's ending actions (Account is the Settings app's). It changes with the app: on Home it reads
-// "Home"; in an app, the app's name (from the manifest's apps) and what the app put under its route in `ctx.actions`:
-// `{ label, href }` (a sub-page: a link; `on` when it is the one shown), `{ label, run }` (an action; `end`: at the
-// right), a search box, or a MENU (`{ label, menu: [{ label, href, on } | { label, run }] }`: a button opening a dropdown, closed
-// by a choice, a click outside or Escape). An app that changes them later says so with a `craftworks:actions` event. The app's own
-// component (the layout names it), so editing it is publishing the app, never the loader.
+// HEADER: a top bar like a Mac's menu bar. On the left: ⌂ (home) and the CURRENT APP's name; the search across every
+// app; on the right: notifications, mentions, background work. The app's MENU — its sub-pages and actions, what it put
+// under its route in `ctx.actions` — is the side panel's (`places-side`), never drawn here (owner 10-15: "remove the top
+// navigation and maintain only side navigation"; until 10-18 the header still drew it until the panel took it over —
+// the menu shown on top first, then moved to the side). The app's own component (the layout names it), so editing it is
+// publishing the app, never the loader.
 export function mount(ctx, el) {
   el.innerHTML = `
     <style>@layer components {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
         border-radius: var(--cw-radius-sm); max-width: 16em; min-width: 6em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      /* The app's own actions give way first (they scroll), never the space's name. */
-      .bar .actions { min-width: 0; overflow-x: auto; scrollbar-width: none; }
       .bar .name { font-weight: 600; }
-      .bar .name .drop > button { border: 0; background: none; font-weight: 700; padding: 2px var(--cw-space-2); }
-      .bar .actions { display: flex; gap: 10px; align-items: center; }
-      .bar .actions a[aria-current="page"] { background: var(--cw-pressed); }
-      .bar .actions a { color: inherit; text-decoration: none; padding: 2px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
-      .bar .actions a:hover { background: var(--cw-hover); }
-      .bar .end { display: flex; gap: 10px; margin-left: auto; }
-      .bar .end a:hover { background: var(--cw-hover); }
-      .bar .end { align-items: center; }
-      .bar .end a { color: inherit; text-decoration: none; padding: 2px var(--cw-space-2); border-radius: var(--cw-radius-sm); }
-      .bar .end a[aria-current="page"] { background: var(--cw-pressed); }
-      .bar .actions .search { padding: var(--cw-space-1) 10px; border-radius: var(--cw-radius-pill); width: 16em; }
-      .bar .drop { position: relative; }
-      .bar .drop > button { border: 1px solid var(--cw-line); border-radius: var(--cw-radius-sm); padding: 2px var(--cw-space-2); font-weight: 600;
-        max-width: 22em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .bar .drop .list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 60; min-width: 12em; display: grid; padding: var(--cw-space-1);
-        background: var(--cw-surface); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); box-shadow: var(--cw-shadow-lg); }
-      .bar .drop .list[hidden] { display: none; }
-      .bar .drop .list a, .bar .drop .list button { padding: 6px var(--cw-space-3); text-align: left; font: inherit; color: inherit; }
-      .bar .drop .list button { border-top: 1px solid var(--cw-line); border-radius: 0; margin-top: var(--cw-space-1); }
-      .bar .drop .list a[aria-current="page"] { font-weight: 600; }
+      .bar .end { margin-left: auto; }
       .bar .find { position: relative; }
       .bar .find > input { font: inherit; padding: 2px 10px; border-radius: var(--cw-radius-pill); border: 1px solid var(--cw-line); width: 14em; background: var(--cw-surface); color: inherit; }
       .bar .find .results { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; padding: var(--cw-space-1); width: min(28em, calc(100vw - 32px));
@@ -49,15 +25,12 @@ export function mount(ctx, el) {
       /* A PHONE: the search box shrinks to its icon and opens out while typed in; the header's buttons never wrap. */
       @media (max-width: 640px) { .bar .find > input { width: 2.4em; padding: 2px 6px; transition: width .15s; } .bar .find > input:focus { width: 11em; }
         .bar { gap: 8px; }
-        /* The app's own actions on a second row of their own, the whole width (the theme's --cw-bar is two rows here). */
+        /* The search on a second row of its own, the whole width (the theme's --cw-bar is two rows here). */
         .bar { flex-wrap: wrap; align-content: center; row-gap: 2px; height: auto; min-height: 48px; padding-block: 4px; }
         .bar::after { content: ""; order: 9; flex-basis: 100%; height: 0; }
-        .bar .actions { order: 10; flex: 1 1 0; } .bar .find { order: 11; }
-        /* Its own action ("+ Upload", "+ New paste") on that row too: the first row (home, space, app, the inbox) fits.
-           The tabs scroll in what is left, their edge faded while more are past it. */
-        .bar .end { order: 10; }
-        .bar .actions.more { mask-image: linear-gradient(to right, #000 80%, transparent); } }
-      .bar .inbox > button, .bar .end > *, .bar .actions > * { white-space: nowrap; }
+        .bar .find { order: 11; }
+      }
+      .bar .inbox > button { white-space: nowrap; }
       .bar .find, .bar .inbox, .bar .end { flex: 0 0 auto; }
       .bar .inbox { position: relative; }
       .bar .inbox .results { position: absolute; top: calc(100% + 4px); right: 0; z-index: 60; display: grid; padding: var(--cw-space-1); width: min(26em, calc(100vw - 32px));
@@ -73,7 +46,6 @@ export function mount(ctx, el) {
     }</style>
     <nav class="bar">
       <span class="name"></span>
-      <span class="actions"></span>
       <span class="end"></span>
       <span class="inbox" data-of="recent"><button type="button" class="cw-flat" title="Notifications">🔔</button><div class="results" hidden></div></span>
       <span class="inbox" data-of="mentions"><button type="button" class="cw-flat" title="Mentions">@</button><div class="results" hidden></div></span>
@@ -253,48 +225,6 @@ export function mount(ctx, el) {
     });
     addEventListener("mousedown", e => !out.hidden && !box.contains(e.target) && !e.target.closest?.(".cw-person") && close(), true);
   }
-  // A DROPDOWN: a button, and its list of links and actions (closed by a choice, a click outside or Escape).
-  const dropdown = (label, entries, item) => {
-    const list = Object.assign(document.createElement("div"), { className: "list", hidden: true });
-    list.setAttribute("role", "menu");
-    list.append(
-      ...entries.map(
-        // A link, or an action (a button: a `#` link is the loader's, never a click handler's).
-        m => item(m) ?? Object.assign(document.createElement("button"), { type: "button", textContent: m.label, onclick: () => m.run() }),
-      ),
-    );
-    // What is new in its entries (their `count`s): a badge on the closed menu too.
-    const total = entries.reduce((t, m) => t + (m.count || 0), 0);
-    const b = Object.assign(document.createElement("button"), { type: "button", className: "cw-flat", textContent: `${label} ▾` });
-    if (total) b.append(Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(total) }));
-    b.setAttribute("aria-haspopup", "menu");
-    const wrap = Object.assign(document.createElement("span"), { className: "drop" });
-    const close = () => {
-      list.hidden = true;
-      removeEventListener("click", outside, true);
-      removeEventListener("keydown", esc);
-    };
-    const outside = e => !wrap.contains(e.target) && close();
-    const esc = e => e.key === "Escape" && close();
-    b.onclick = () => {
-      if (!list.hidden) return close();
-      list.hidden = false;
-      addEventListener("click", outside, true);
-      addEventListener("keydown", esc);
-    };
-    list.onclick = e => e.target.closest("a, button") && close();
-    wrap.append(b, list);
-    return wrap;
-  };
-  const link = a => {
-    if (!a.href) return null;
-    const l = Object.assign(document.createElement("a"), { href: a.href, textContent: a.label });
-    // What is new in it (`activity`): its badge, as on its Home tile.
-    if (a.count) l.append(" ", Object.assign(document.createElement("span"), { className: "cw-badge", textContent: String(a.count) }));
-    if (a.on) l.setAttribute("aria-current", "page");
-    return l;
-  };
-
   // THE APP's NAME (ARCHITECTURE §1, "The desktop": no space dropdown, no app dropdown — apps are opened from Home, and
   // where an app is, its spaces, is the APP's to show: `places`, as its manifest says).
   function switcher() {
@@ -305,7 +235,7 @@ export function mount(ctx, el) {
   }
 
   // THE SPACE you are in: its name (logged in); a click opens the spaces panel. What is unread in your other spaces on it.
-  // THE HEADER's HEIGHT, as it is (two rows on a phone when the app has actions): what panels below it place by —
+  // THE HEADER's HEIGHT, as it is (two rows on a phone): what panels below it place by —
   // `--cw-bar-now`, never `--cw-bar` (the bar's own height: 10-15, measured while a remount had it collapsed, it wrote
   // `--cw-bar: 1px` and the bar locked itself at 1px — the header cut off). A detached bar (an older mount) stops.
   const barEl = el.querySelector(".bar");
@@ -316,52 +246,8 @@ export function mount(ctx, el) {
     });
     ro.observe(barEl);
   }
-  // The app's tabs: `more` while some are past the right edge (faded there, on a phone: there is more to scroll to).
-  const tabsEl = el.querySelector(".actions");
-  const more = () => tabsEl.classList.toggle("more", tabsEl.scrollLeft + tabsEl.clientWidth < tabsEl.scrollWidth - 1);
-  tabsEl.addEventListener("scroll", more, { passive: true });
-  if (typeof ResizeObserver === "function") new ResizeObserver(more).observe(tabsEl);
-  new MutationObserver(more).observe(tabsEl, { childList: true, subtree: true });
-  const draw = () => {
-    switcher();
-    const actions = el.querySelector(".actions");
-    // THE SIDE PANEL is the app's navigation where it shows (owner 10-15: "remove the top navigation and maintain only
-    // side navigation"): here, only its search boxes. Chat (no side panel) keeps its menu here.
-    const all = (ctx.actions[ctx.route] ?? []).filter(a => !ctx.sideNav || a.search);
-    const item = link;
-    el.querySelector(".end").replaceChildren(
-      // At the END (right): a link (a create page) or a button (Log out, Compose).
-      ...all.filter(a => a.end).map(a => item(a) ?? Object.assign(document.createElement("button"), { type: "button", className: "cw-flat", textContent: a.label, onclick: () => a.run() })),
-    );
-    actions.replaceChildren(
-      ...all.filter(a => !a.end).map(a => {
-        const link = item(a);
-        if (link) return link;
-        // A MENU: a button, and its dropdown.
-        if (a.menu) return dropdown(a.label, a.menu, item);
-        // A search box ({ search: fn, placeholder, value }) or a button ({ label, run, on }).
-        if (a.search) {
-          const input = document.createElement("input");
-          input.type = "search";
-          input.className = "search";
-          input.placeholder = a.placeholder ?? "Search";
-          input.value = a.value ?? "";
-          input.oninput = () => a.search(input.value);
-          return input;
-        }
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "cw-flat";
-        b.textContent = a.label;
-        if (a.on) b.setAttribute("aria-pressed", "true");
-        b.onclick = () => a.run();
-        return b;
-      }),
-    );
-  };
-  draw();
-  addEventListener("craftworks:route", draw);
-  addEventListener("craftworks:actions", draw);
+  switcher();
+  addEventListener("craftworks:route", switcher);
   addEventListener("craftworks:auth", () => switcher());
   // THE BACKGROUND — on every page, AFTER it: started one at a time, each once the node is idle (the page's own reads
   // answered), never on a clock that lands among them. ACTIVITY (what is new: notified, whichever app is open);
