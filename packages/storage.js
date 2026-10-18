@@ -656,6 +656,14 @@ export async function start(ctx) {
       }
     }
 
+    // ROWS UNDER AN EPOCH WHOSE KEY IS NOT HERE (`unkeyed`: read as absent — right for reading another's history,
+    // never for WRITING this one): nothing written, nothing flushed, until the key arrives. A flush rebuilds the tree from
+    // the rows this page reads, so it dropped every row it could not (10-18, fx: after an update that left epoch 0
+    // behind, a space's catalog was flushed with one row of six — its acts, board and keys unlisted, the space empty).
+    const sealedBelow = doing => {
+      const u = unkeyed.get(idHex);
+      if (u?.epochs.size) throw new Fault("sealed", `${app}: ${doing}, rows under epoch(s) ${[...u.epochs].join(", ")} not readable here yet`, { message: `${app}: ${doing} — part of it is sealed with a key this device does not hold yet; it is saved once the key arrives`, d: { app, epochs: [...u.epochs] } });
+    };
     // One write: prepared by the core, signed by the identity delegate with this tail's key, sent as one delta.
     async function write(key, value) {
       if (!(await allowed())) throw new Error(`this app may not change your “${app}”: allow it when your node asks`);
@@ -665,6 +673,7 @@ export async function start(ctx) {
       const now = await t.decided();
       if (now.s === "unknown") throw new Fault("not-yet", `${app}: not saved, its table not read yet`, { message: `${app}: not saved — your node has not answered whether it exists yet; try again in a moment`, d: { app } });
       if (now.s === "unreadable") throw new Fault("sealed", `${app}: not saved, its table unreadable here`, { message: `${app}: not saved — ${now.why}`, d: { app } });
+      sealedBelow("not saved");
       if (t.refuse) throw new Error(t.refuse);
       // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
       // can find.
@@ -834,6 +843,7 @@ export async function start(ctx) {
       return made;
     }
     async function flush() {
+      sealedBelow("not flushed");
       const t0 = performance.now();
       // ITS HISTORY: the root this flush replaces, and the log as it is BEFORE it (a flush drops the log).
       let was, prior;
