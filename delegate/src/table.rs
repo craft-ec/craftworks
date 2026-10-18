@@ -96,6 +96,10 @@ pub struct Reading {
     /// the keys round, never a short read.
     #[serde(default)]
     pub card_says: Vec<String>,
+    /// A CARDS-ONLY read in progress (`cards_of`): members' key logs and cards, nothing else (no catalogs, feeds or
+    /// writers) — what the node's keys round still needs, on top of the read it has.
+    #[serde(default)]
+    cards_only: bool,
     #[serde(default)]
     card_trees: Vec<([u8; 32], Vec<u8>, Vec<([u8; 32], Vec<u8>)>, Vec<([u8; 32], [u8; 32])>)>,
 }
@@ -212,6 +216,7 @@ impl Reading {
             writer_dids: Vec::new(),
             beekem: Vec::new(),
             card_says: Vec::new(),
+            cards_only: false,
             card_trees: Vec::new(),
         };
         (r, vec![Io::Get { id: bag, subscribe: false }])
@@ -234,6 +239,20 @@ impl Reading {
         (r, io)
     }
 
+    /// THE CARDS OF `dids` read on top of this read (its tables kept): each one's key log, then its card — its BeeKEM
+    /// member (`beekem`). Nothing else is asked (the node's keys round: only the accounts it has not learned yet, a few
+    /// a round — fx 10-18: re-reading everyone the list ever named each round asked past the node's per-round cap).
+    pub fn cards_of(&mut self, c: &Codes, dids: &[[u8; 32]]) -> Vec<Io> {
+        self.cards_only = true;
+        let mut io = Vec::new();
+        for did in dids {
+            let id = crate::upkeep::id_of(&c.idlog_hash, did);
+            self.resolving.push((*did, None, id, None));
+            io.push(Io::Get { id, subscribe: false });
+        }
+        io
+    }
+
     /// A member's key log, card or devices contract answered: their devices, once known; the bag once every member's are.
     /// Order (as `directory.devices`): the KEY LOG, then the CARD, then the DEVICES contract only where the card says
     /// the account has one (`devices`), or where nothing on the card counts — an absent contract is never searched for
@@ -243,7 +262,12 @@ impl Reading {
         let Some(log_state) = log else {
             // Their KEY LOG: its head names their data key — their card's address.
             let Some(st) = state.filter(|st| craftworks_idlog_contract::read(&did, st).is_some()) else {
-                self.notes.push(format!("{}: no key log", craftworks_account::did(&did)));
+                // (A cards-only read: an account with no key log has no member to learn — said, never a short read.)
+                if self.cards_only {
+                    self.card_says.push(format!("{}: no key log", craftworks_account::did(&did)));
+                } else {
+                    self.notes.push(format!("{}: no key log", craftworks_account::did(&did)));
+                }
                 self.resolving.remove(at);
                 return self.members_done(c);
             };
@@ -290,7 +314,12 @@ impl Reading {
                         None => self.card_says.push(format!("{}: its card's member does not check", name.get(12..20).unwrap_or(&name))),
                     },
                     Some(None) => self.card_says.push(format!("{}: no member on its card", name.get(12..20).unwrap_or(&name))),
+                    None if self.cards_only => self.card_says.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),
                     None => self.notes.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),
+                }
+                if self.cards_only {
+                    self.resolving.remove(at);
+                    return self.members_done(c);
                 }
                 let creds: Vec<Vec<u8>> = rows
                     .and_then(|r| r.get(b"nodes".as_slice()).cloned())
@@ -320,6 +349,10 @@ impl Reading {
         self.members_done(c)
     }
     fn members_done(&mut self, _c: &Codes) -> Vec<Io> {
+        // (A cards-only read asks nothing more: its tables were read already.)
+        if self.cards_only {
+            return Vec::new();
+        }
         if self.resolving.is_empty() {
             vec![Io::Get { id: self.bag.expect("set"), subscribe: false }]
         } else {

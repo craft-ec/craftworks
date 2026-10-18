@@ -257,3 +257,52 @@ fn a_later_generation_has_a_higher_number() {
         last = n;
     }
 }
+
+/// MEASURED (10-18, the v401 delegate's budget): what a node round does for one space — the tree rebuilt from every
+/// operation (`Group::empty` + merge all), then every generation derived — at sizes of the live spaces.
+#[test]
+#[ignore]
+fn cost_of_a_rebuild_round() {
+    use std::time::Instant;
+    for &(n, rounds) in &[(10usize, 3usize), (30, 3), (60, 3), (60, 10)] {
+        let mut rng = StdRng::seed_from_u64(n as u64);
+        let people: Vec<Account> = (0..n).map(|i| account(i as u8 + 1)).collect();
+        let mut l = List::default();
+        for (i, p) in people.iter().enumerate() {
+            l.accounts.insert(id(p), format!("did:{i}"));
+            l.listed.insert(format!("did:{i}"));
+        }
+        let (mut g0, first) = Group::create(&SPACE, people[0].clone()).unwrap();
+        let mut ops = vec![first];
+        for p in &people[1..] {
+            ops.push(g0.add_member(&id(p), &p.leaf_key(), &[0; 32]).unwrap().unwrap());
+        }
+        // Rotations by members in turn (each reconcile on a page makes one).
+        let mut reps: Vec<Group> = people.iter().map(|p| Group::empty(&SPACE, p.clone())).collect();
+        for _ in 0..rounds {
+            for (i, r) in reps.iter_mut().enumerate().take(n.min(8)) {
+                for op in &ops {
+                    r.merge(op, &l);
+                }
+                if r.placed() {
+                    ops.push(r.rotate(&mut rng).unwrap().0);
+                }
+                let _ = i;
+            }
+        }
+        let t = Instant::now();
+        let mut g = Group::empty(&SPACE, people[0].clone());
+        let mut pending = ops.clone();
+        for _ in 0..64 {
+            let before = pending.len();
+            pending.retain(|op| g.merge(op, &l) == Merged::Waiting);
+            if pending.is_empty() || pending.len() == before {
+                break;
+            }
+        }
+        let merged = t.elapsed();
+        let gens = g.generations().len();
+        let total = t.elapsed();
+        println!("{n} members, {} ops: rebuild {:?}, + {gens} generations {:?} (native)", ops.len(), merged, total);
+    }
+}

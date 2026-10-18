@@ -399,14 +399,31 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 if r.by_list {
                     return keys_round::reconcile(h, &c, r, &m, now_ms);
                 }
-                // READ AGAIN by everyone the list ever named (their cards: whom to add or take out; their feeds).
+                // THE CARDS STILL NEEDED: the accounts listed now whose member this node has not learned (kept per space:
+                // `keys_round::known`) — at most CARDS_A_ROUND, the rest next round; this read's tables kept. (Not
+                // everyone the list ever named, every round: fx 10-18, past the node's per-round cap, and on the live
+                // network the delegate out of time — the page's requests unanswered.)
                 let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, &c, r) };
-                let mut dids: Vec<[u8; 32]> = gov.ever_listed.iter().chain(gov.roster.iter()).chain(std::iter::once(&m.owner)).filter_map(|d| craftworks_account::did_bytes(d)).collect();
-                dids.sort();
-                dids.dedup();
-                let (reading, io) = Reading::of_members(&c.codes(), r.space, r.reading.epochs().clone(), &dids, &["acts", "pub-acts", "pub-keyops"]);
-                r.reading = reading;
+                let known = keys_round::known(h, &r.member, &r.space);
+                let asked = keys_round::asked(h, &r.member, &r.space);
+                let recently = |d: &str| asked.iter().any(|(k, t)| k == d && now_ms.saturating_sub(*t) < keys_round::ASK_AGAIN_MS);
+                let mut want: Vec<String> = gov
+                    .roster
+                    .iter()
+                    .chain(std::iter::once(&m.owner))
+                    .filter(|d| !known.iter().any(|(k, ..)| k == *d) && !r.reading.beekem.iter().any(|(k, ..)| k == *d) && !recently(d))
+                    .cloned()
+                    .collect();
+                want.sort();
+                want.dedup();
+                want.truncate(keys_round::CARDS_A_ROUND);
+                keys_round::asking(h, &r.member, &r.space, &want, now_ms);
+                let want: Vec<[u8; 32]> = want.iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
                 r.by_list = true;
+                if want.is_empty() {
+                    return keys_round::reconcile(h, &c, r, &m, now_ms);
+                }
+                let io = r.reading.cards_of(&c.codes(), &want);
                 keep(h, Some(&r));
                 return io;
             }

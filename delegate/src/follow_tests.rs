@@ -634,3 +634,25 @@ fn k5_a_card_kept_in_blocks_is_read_whole() {
     assert_eq!(owner_ops(&w).len(), before + 2, "B added from cards kept in blocks: {:?}", w.said());
     assert!(merged(&b, &owner_ops(&w)).placed());
 }
+
+/// fx 10-18: a space whose list names many accounts with NO card (gone; never made) — a round asks for at most
+/// CARDS_A_ROUND of their cards, the next for the rest, and none again within the hour. (Before: every round re-read
+/// everyone the list ever named — past the node's per-round cap, the delegate out of time on the live network.)
+#[test]
+fn k5_cards_a_round_are_bounded_and_not_asked_again() {
+    let b = person(0x55);
+    let gone: Vec<Person> = (0..20u8).map(|i| person(0x70 + i)).collect();
+    let mut acts = vec![json!({ "act": "added", "did": b.id(), "at": 10 })];
+    acts.extend(gone.iter().map(|p| json!({ "act": "added", "did": p.id(), "at": 11 })));
+    let mut w = bee_world(&acts, &b);
+    let logs_of = |asked: &[Io]| asked.iter().filter(|x| matches!(x, Io::Get { id: g, .. } if gone.iter().any(|p| *g == id(IDLOG, &p.did)))).count();
+    let r1 = w.run();
+    assert!(logs_of(&r1) <= 8, "round 1 asked {} key logs of the gone", logs_of(&r1));
+    let r2 = w.run();
+    let r3 = w.run();
+    let r4 = w.run();
+    let asked: usize = [&r2, &r3, &r4].iter().map(|r| logs_of(r)).sum::<usize>() + logs_of(&r1);
+    assert!(asked <= 20, "each asked once within the hour: {asked}");
+    assert!(logs_of(&r4) == 0, "after all were asked: none again ({}), {:?}", logs_of(&r4), w.said());
+    assert!(merged(&b, &owner_ops(&w)).placed(), "B, who has a card, added meanwhile: {:?}", w.said());
+}
