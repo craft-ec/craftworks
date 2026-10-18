@@ -70,6 +70,8 @@ export async function start(ctx) {
         retireEarlier(pin, r.movedFrom ?? null).catch(e => ctx.log("earlier build", { what: `not finished: ${e?.message ?? e}` })),
         new Promise(res => (timer = setTimeout(() => (ctx.log("earlier build", { what: "still working after 120 s: the rest left" }), res()), 120_000))),
       ]).finally(() => clearTimeout(timer));
+      // Its moves kept before the login reloads the page.
+      await life.keepNow().catch(e => ctx.log("earlier build", { what: `moves not kept: ${e?.message ?? e}` }));
     }
     return r;
   }
@@ -88,20 +90,30 @@ export async function start(ctx) {
     // 10-18, a channel unreadable after the PIN).
     const one = async prior => {
       const r = await id.retireFrom(prior, pin).catch(e => ({ said: e.message }));
-      let keys = "";
+      // Each outcome a lifecycle move of the build (reported, journaled): `retired` / `silent` / `not-here` / `stopped`.
+      const key = prior.split(":")[0];
+      const move = (event, d) => {
+        try {
+          life.transition("build", key, event, d);
+        } catch (e) {
+          ctx.log("earlier build", { what: `${key.slice(0, 12)}…: ${event} not recorded: ${e?.message ?? e}` });
+        }
+      };
+      move(r.retired ? "retired" : r.missing ? "not-here" : r.silent ? "silent" : "stopped", r.retired ? { witnessed: r.witnessed ?? 0 } : { why: r.said ?? null });
       if (r.retired && prior !== movedFrom) {
         const k = await id.moveKeysFrom(prior, pin, { epochsOnly: true }).catch(e => ({ said: e.message }));
-        keys = k.said ? `; its keys not read (${k.said})` : `; its keys gathered (${k.moved} account epoch(s), ${k.spaces} space(s))`;
+        move(k.said ? "keys-not-read" : "keys-gathered", k.said ? { why: k.said } : { epochs: k.moved, spaces: k.spaces });
       }
       if (r.retired) {
         let kept = 0;
+        let spaces = 0;
         for (const sp of (await ctx.optional("auth: spaces", (await ctx.require("space")).mine.strict(), () => [])).filter(s => s.kind !== "account")) {
           const e = await id.epochsFrom(prior, sp.idBytes, 2 ** 24).catch(e => ({ said: e.message }));
           kept += e.kept ?? 0;
+          spaces += 1;
         }
-        keys += `; ${kept} MLS epoch(s) of its spaces kept here`;
+        move("epochs-kept", { kept, spaces });
       }
-      ctx.log("earlier build", { what: `${prior.slice(0, 12)}…: ${r.retired ? `its upkeep retired${keys}` : r.silent ? "no answer" : `stopped here (${r.said})`}` });
       return r;
     };
     // Newest first, up to the first that does not hold this PIN. A SILENT one (an overloaded or still loading build —
@@ -111,7 +123,7 @@ export async function start(ctx) {
     for (const prior of ctx.identityPrior) {
       const r = await one(prior);
       if (r.silent) silent.push(prior);
-      else if (!r.retired) break;
+      else if (!r.retired && !r.missing) break;
     }
     if (silent.length)
       await fault

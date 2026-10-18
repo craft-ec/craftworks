@@ -647,6 +647,10 @@ export async function run(boot) {
       // (Its version named apart: `<served>~previous` — the reports say which ran.)
       ctx.siteV = `${ctx.siteV}~previous`;
       ctx.log("previous", { what: "this version's packages cannot be fetched yet: the one before runs, this one asked again" });
+      // A lifecycle STEP of the page (reported): which version this page runs is never a guess. (The previous code's
+      // own table may not know the step yet: then only the trace says it.)
+      const served = ctx.siteV.split("~")[0];
+      lifeOf()?.then(l => l?.transition("page", "page", "previous", { served })).catch(() => {});
     }
     // Each package's VERSION (its sha256, as the manifest names it): what a record of a critical action carries.
     ctx.shaOf = n => manifest?.packages?.[n]?.sha256 ?? null;

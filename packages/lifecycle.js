@@ -224,6 +224,27 @@ export async function start(ctx) {
         run: { from: ["BOOTING", "RESUMING", "HIDDEN", "RUNNING"], to: "RUNNING" },
         hide: { from: ["RUNNING", "RESUMING"], to: "HIDDEN" },
         update: { from: "*", to: "UPDATING" },
+        // THE VERSION BEFORE ran (this one's packages not fetchable in time from this node): reported — a page on the
+        // previous code once read in every report as the new one (10-18: the owner's login ran v403's code).
+        previous: { from: "*" },
+      },
+    },
+    // AN EARLIER IDENTITY BUILD on this node, as a login finds it (`auth`): RETIRED (its upkeep stopped; what it held
+    // of this account's keys gathered here — each a step), SILENT (not answering yet: asked again), NOT_HERE (this
+    // node never ran it: quiet, kept in the journal), STOPPED (it answered, and holds no member on this PIN: the walk
+    // ends there). 10-18: which builds a login retired was in no report.
+    build: {
+      initial: "UNKNOWN",
+      journal: true,
+      quiet: ["not-here"],
+      events: {
+        retired: { from: "*", to: "RETIRED" },
+        silent: { from: "*", to: "SILENT" },
+        "not-here": { from: "*", to: "NOT_HERE" },
+        stopped: { from: "*", to: "STOPPED" },
+        "keys-gathered": { from: "*" },
+        "keys-not-read": { from: "*" },
+        "epochs-kept": { from: "*" },
       },
     },
     // A BACKGROUND JOB (upkeep, sync, the usage flush, keeping): runs every `every` ms only while what it NEEDS holds;
@@ -259,6 +280,12 @@ export async function start(ctx) {
     } catch (e) {
       ctx.log("lifecycle", { what: `${batch.length} move(s) not kept in the journal: ${e?.message ?? e}` });
     }
+  }
+  // THE JOURNAL WRITTEN NOW (not 3 s later): before what reloads the page — a login loads it again as soon as the
+  // unlock returns, and the moves of its last 3 s were lost (10-18, fx: a login's `build` moves never in the journal).
+  async function keepNow() {
+    clearTimeout(flushing);
+    await flush();
   }
   // The journal's moves (`machine`; `key`: one process's), oldest first.
   // `fresh`: the table read again from the network first (a guard deciding by it — never a short read).
@@ -459,5 +486,5 @@ export async function start(ctx) {
 
   // How many of a machine's processes stand in `s` now (a save OWED: what an update waits for).
   const count = (machine, s) => [...states].filter(([k, v]) => k.startsWith(`${machine}|`) && v.s === s).length;
-  return { MACHINES, state, count, transition, become, on, snapshot, job, jobs, deleting, journal };
+  return { MACHINES, state, count, transition, become, on, snapshot, job, jobs, deleting, journal, keepNow };
 }

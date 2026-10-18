@@ -21,6 +21,8 @@ export async function start(ctx) {
     // No answer in time (the node still loading that build — a compile can take a minute): said so, never taken for
     // "it does not know this PIN".
     if (said.kind === "silent") return { silent: true };
+    // NOT ON THIS NODE (it never ran that build): said at once, and nothing to ask again.
+    if (said.kind === "delegate-missing") return { missing: true };
     return said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer ?? null : null;
   }
   const node = await ctx.require("node");
@@ -227,6 +229,7 @@ export async function start(ctx) {
     // answered nothing, so no try was counted there).
     retireFrom: async (prior, pin) => {
       const u = await askPrior(prior, core.frames_unlock_from(prior, pin), "a session");
+      if (u?.missing) return { missing: true, said: "not on this node" };
       if (!u?.unlocked) return { silent: !!u?.silent || !u, said: u?.silent || !u ? "no answer" : u?.wrongPin ? "not a member there" : JSON.stringify(u) };
       const m = await askPrior(prior, core.frames_retire_upkeep_from(prior), "retiring its upkeep");
       // TAKEN: its upkeep answer — or one in its own build's layout (an earlier build's fields differ: answered, not
