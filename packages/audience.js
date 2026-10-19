@@ -26,7 +26,7 @@ export function withWrite(meta, write) {
 }
 
 export async function start(ctx) {
-  const [items, space] = await Promise.all(["items", "space"].map(n => ctx.require(n)));
+  const [items, space, node] = await Promise.all(["items", "space", "node"].map(n => ctx.require(n)));
   const h = (tag, props = {}, ...kids) => {
     const e = Object.assign(document.createElement(tag), props);
     e.append(...kids.filter(k => k != null && k !== false));
@@ -66,7 +66,7 @@ export async function start(ctx) {
       if (sel.value !== "list:new") return void (was = sel.value);
       const picked = await choosePeople(sp, r, me);
       if (!picked?.length) return void (sel.value = was);
-      const id = [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");
+      const id = node.newHex(6);
       await r.act({ act: "list", list: id, people: picked });
       const o = h("option", { value: `list:${id}`, textContent: `🔐 ${picked.map(d => directory.shown(d)).join(", ").slice(0, 60)}` });
       sel.querySelector('option[value="list:new"]').before(o);

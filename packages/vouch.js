@@ -13,8 +13,8 @@ export async function start(ctx) {
   const BUDGET = 10;
   const TABLE = "vouches";
   const EPOCH = Core.standing_epoch(); // a vouch's registry is its height's epoch
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  const bytes = (await ctx.require("node")).bytes;
+  const hexOf = (await ctx.require("node")).hex;
   let mineOpen = null;
   const mine = () => (mineOpen ??= space.account.strict().then(me => directory.publicOf.strict(me.id, TABLE)));
   // A table's rows as signed items (rows from before signing — not items — are left out).

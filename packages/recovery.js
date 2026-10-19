@@ -17,8 +17,8 @@ export async function start(ctx) {
   const TAIL = "card";
   const ROW = "recovery";
   const MIN = 12;
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const bytes = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+  const hexOf = (await ctx.require("node")).hex;
+  const bytes = (await ctx.require("node")).bytes;
 
   const mine = async () => {
     const me = await space.account.strict();

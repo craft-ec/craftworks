@@ -7,7 +7,7 @@
 //   settings.open(server, { tab: "members", channels })   // a dialog
 //   settings.render(host, server, { tab, left })          // the same, as a PAGE (the Settings app's)
 export async function start(ctx) {
-  const [roles, moderation, conversation, directory, theme] = await Promise.all(["roles", "moderation", "conversation", "directory", "theme"].map(n => ctx.require(n)));
+  const [roles, moderation, conversation, directory, theme, node] = await Promise.all(["roles", "moderation", "conversation", "directory", "theme", "node"].map(n => ctx.require(n)));
   const style = document.createElement("style");
   style.textContent = `@layer apps {
 
@@ -59,7 +59,7 @@ export async function start(ctx) {
 
   // What a composed role may carry, in words.
   const PERM_NAMES = { post: "Post", invite: "Invite people", channels: "Make and change channels", moderate: "Moderate (hide anything)", remove: "Remove and ban people", apps: "Manage apps and rules", roles: "Manage roles" };
-  const newRoleId = () => [...crypto.getRandomValues(new Uint8Array(6))].map(b => b.toString(16).padStart(2, "0")).join("");
+  const newRoleId = () => node.newHex(6);
   const TABS = [
     ["overview", "Overview"],
     ["members", "Members & roles"],

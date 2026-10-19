@@ -27,14 +27,12 @@ export async function start(ctx) {
   const [storage, space] = await Promise.all(["storage", "space"].map(n => ctx.require(n)));
   core.set_sealed_code(await ctx.require("sealed-wasm"));
   core.set_piece_code(await ctx.require("piece-wasm"));
-  const INLINE_MAX = 64 * 1024;
-  const GEN = 16;
-  const EXTRA = 8;
-  const MAX_LISTED = 32;
+  // (The files constants: the `files` crate's.)
+  const { inlineMax: INLINE_MAX, gen: GEN, extra: EXTRA } = JSON.parse(glue.file_constants());
   const GENS_IN_FLIGHT = 6;
   const SLICE = 4 * 1024 * 1024;
-  const hex = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const hex = (await ctx.require("node")).hex;
+  const bytes = (await ctx.require("node")).bytes;
   const b64 = b => btoa(Array.from(b, c => String.fromCharCode(c)).join(""));
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 

@@ -22,7 +22,7 @@
 //   studio.progress(ref) -> { stage, p, done, of } | null          // a video still being made (the uploader's devices)
 //   studio.MANIFEST   // its type: "application/vnd.craftworks.video+json"
 export async function start(ctx) {
-  const [files, storage, space, items, kinds] = await Promise.all(["files", "storage", "space", "items", "kinds"].map(n => ctx.require(n)));
+  const [files, storage, space, items, kinds, node] = await Promise.all(["files", "storage", "space", "items", "kinds", "node"].map(n => ctx.require(n)));
   const MANIFEST = "application/vnd.craftworks.video+json";
 
   let loading = null;
@@ -213,7 +213,7 @@ export async function start(ctx) {
     return { ...ref, ...(posterUrl ? { preview: posterUrl } : {}), duration, width: track.displayWidth, height: track.displayHeight };
   }
 
-  const videoId = async key => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...new TextEncoder().encode("craftworks video id"), ...key.match(/../g).map(x => parseInt(x, 16))])))].map(x => x.toString(16).padStart(2, "0")).join("");
+  const videoId = async key => node.hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...new TextEncoder().encode("craftworks video id"), ...node.bytes(key)]))));
   // AUDIO (a song, a podcast, an audiobook): ONE rendition — AAC, which every browser plays — as a fragmented MP4
   // (streamed and seekable as a video is), its COVER (embedded, or none) and its TAGS (title, artist, album …) kept.
   async function makeAudio(M, file, input, { space, pub, keepOriginal, say }) {

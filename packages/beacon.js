@@ -17,7 +17,7 @@ export async function start(ctx) {
   if (!cfg.params) return { status: () => ({ off: true }), onHeight: () => () => {}, sealed: async () => { throw new Error("no beacon on this site"); } };
   const [node, code, glueJs, stepWasm] = await Promise.all(["node", "beacon-wasm", "beacon-step-glue", "beacon-step-wasm"].map(n => ctx.require(n)));
   const { core, glue, ask } = node;
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const bytes = (await ctx.require("node")).bytes;
   const params = bytes(cfg.params);
   const id = glue.CraftworksCore.beacon_id(code, params);
   const idBytes = bytes(id);

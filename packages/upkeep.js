@@ -165,7 +165,7 @@ export async function start(ctx) {
     const [{ glue }, bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode] = await Promise.all(["node", "bag-wasm", "tail-wasm", "idlog-wasm", "sealed-wasm", "piece-wasm", "block-wasm", "devices-wasm"].map(n => ctx.require(n)));
     const Core = glue.CraftworksCore;
     const id = Core.bag_id(bagCode, Core.inbox_address(me.idBytes));
-    const bytes = new Uint8Array(id.match(/../g).map(x => parseInt(x, 16)));
+    const bytes = (await ctx.require("node")).bytes(id);
     const r = await auth.identity.upkeepWatch(bytes).catch(e => ({ refused: e.message }));
     // The contracts it writes (their code) and reads: handed over when they are not the ones it holds — the Sealed,
     // Piece and Block contracts too (it re-keys a space's files with no page open).

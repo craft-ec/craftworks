@@ -38,7 +38,7 @@ export async function start(ctx) {
   // A row as a VERSION, and the MERGE of feeds: its own package.
   const feed = await ctx.require("feed-glue");
   await feed.default({ module_or_path: await ctx.require("feed-wasm") });
-  const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+  const { bytes, hex } = await ctx.require("node");
   const QUIET_MS = 60000; // a tail with rows flushes after this long with no write
   const enc = new TextEncoder();
   const dec = new TextDecoder();
@@ -115,7 +115,7 @@ export async function start(ctx) {
   // member sees it on Members & roles without asking for a log. Cleared when it reads after all.
   const problems = new Map(); // space id (hex) → Map(what → when)
   const problemKinds = new Map(); // `${space}|${what}` → its kind
-  const spaceKey = x => (!x ? null : typeof x === "string" ? x : [...x].map(b => b.toString(16).padStart(2, "0")).join(""));
+  const spaceKey = x => (!x ? null : typeof x === "string" ? x : hex(x));
   // What settles WHY a read fails (into the report, so it can be resolved from the report alone — never a key, never
   // content): the epoch the failure names; whether this page holds that epoch's key for the table; the group's epoch
   // here and whether removed; the other branches' epochs it keeps keys of.
@@ -1027,7 +1027,7 @@ export async function start(ctx) {
   async function currentWriters(sp) {
     const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
     const st = await keys.group(sp).ready.strict();
-    const byte = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+    const byte = bytes;
     // (Each credential read by the one reader — `identity::read_credential`, its signature checked.)
     const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ m, c: JSON.parse(glue.credential_parts(byte(m.cred)) ?? "null") })).filter(x => x.c).map(({ m, c }) => ({ key: m.key, index: m.index, did: c.did, signer: c.owner }));
     const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
@@ -1091,7 +1091,7 @@ export async function start(ctx) {
           const watched = new Set();
           const each = () => {
             for (const m of members.filter(m => m.cred)) {
-              const d = glue.credential_did(new Uint8Array(m.cred.match(/../g).map(x => parseInt(x, 16))));
+              const d = glue.credential_did(bytes(m.cred));
               if (!watched.has(d)) watched.add(d), directory.onDevices(d, fn);
             }
           };
@@ -1553,7 +1553,7 @@ export async function start(ctx) {
   }
 
   // A table's NETWORK ADDRESS (its contract id, hex): this node's own feed of it — what others ask for to read it.
-  const hexOf = id => (id ? [...id].map(b => b.toString(16).padStart(2, "0")).join("") : null);
+  const hexOf = id => (id ? hex(id) : null);
   const addressOf = async name => hexOf((await ownTables()).find(t => t.app === name)?.id);
   // EACH SPACE's tables this node writes — its catalog there, and every table it lists — read as `describe` reads the
   // account's (the Storage page; opened, so "Keep all now" keeps them too).

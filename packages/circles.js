@@ -80,7 +80,7 @@ export async function start(ctx) {
     }
   }
 
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  const hexOf = (await ctx.require("node")).hex;
   const credTable = (owner, token) => ctx.require("directory").then(d => d.credTable(owner, token));
   // ISSUED: each of the relation's people holds one; anyone no longer one, theirs cleared.
   async function issue(people, me, which, want) {

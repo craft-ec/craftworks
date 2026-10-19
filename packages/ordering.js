@@ -22,7 +22,7 @@
 export async function start(ctx) {
   const storage = await ctx.require("storage");
   // The core: the one ranking (`turn`) and the one row rule of an ordered log (`rules`).
-  const { glue } = await ctx.require("node");
+  const { glue, newHex } = await ctx.require("node");
 
   // THE ONE ORDER of a position's entries (`rules::ordering::order`, the node's too): lowest first, each once — entries
   // gathered from several places (an epoch log and its door) merged here.
@@ -43,7 +43,7 @@ export async function start(ctx) {
         return order(t.rows().filter(r => r.value && r.key.startsWith(p)).map(r => r.value));
       };
       const at = n => entriesAt(n)[0];
-      const tag = () => [...crypto.getRandomValues(new Uint8Array(6))].map(x => x.toString(16).padStart(2, "0")).join("");
+      const tag = () => newHex(6);
       return {
         from(n) {
           const out = [];

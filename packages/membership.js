@@ -20,7 +20,7 @@ export async function start(ctx) {
   const { core } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
   const MEMBERS = space.tables.members;
-  const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+  const bytes = (await ctx.require("node")).bytes;
 
   // WHO BELONGS: gathered from the members feeds, then the rule of the space's governance.
   let cache = null;
@@ -94,8 +94,7 @@ export async function start(ctx) {
   // The account's devices' CREDENTIALS (bytes), as its group holds them — but `except` (a group index).
   async function credentials(except = null) {
     const st = await keys.ready.strict();
-    const hex = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-    return (st?.members ?? []).filter(m => m.cred && m.index !== except).map(m => hex(m.cred));
+    return (st?.members ?? []).filter(m => m.cred && m.index !== except).map(m => bytes(m.cred));
   }
 
   // REMOVE a node (by its index in the group) — with the account's recovery WORDS (owner 10-09: a removed or stolen

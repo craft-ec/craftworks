@@ -24,7 +24,7 @@ const base58 = hex => {
 export async function start(ctx) {
   const { Fault } = await ctx.require("fault");
   const { core, ask, get: nodeGet } = await ctx.require("node");
-  const bytes = hex => new Uint8Array(hex.match(/../g).map(b => parseInt(b, 16)));
+  const bytes = (await ctx.require("node")).bytes;
 
   // What this page did: blocks read, and how many of them were rebuilt from their group.
   const stats = { read: 0, rebuilt: 0 };

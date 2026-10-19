@@ -79,7 +79,7 @@ export async function start(ctx) {
   };
   // A member's credential (hex): `CWMB ‖ did ‖ signer ‖ writer ‖ MLS key ‖ signature` (the identity's format; MLS
   // checked the signature when it admitted it).
-  const newId = () => [...crypto.getRandomValues(new Uint8Array(8))].map(x => x.toString(16).padStart(2, "0")).join("");
+  const newId = () => node.newHex(8);
 
   const spaces = new Map();
   const outside = new Map();
@@ -184,7 +184,7 @@ export async function start(ctx) {
         // THE LIST every entry of the space's keys is checked against (`keys`: `mls::entry_ok` — the node's `GovList`):
         // the acts' answers that never change as more are read (EVER listed, a proof's entry rule, who may be taken
         // out). WHOLE only when no act is named that is not here and the acts read decided (I6).
-        const text = h => new TextDecoder().decode(new Uint8Array((String(h).match(/../g) ?? []).map(x => parseInt(x, 16))));
+        const text = h => new TextDecoder().decode(node.bytes(h));
         // THE ONE RULE (`guards::list_whole`, the node's too): no act named and not here, no listed member's devices
         // unread, the list's own tables read.
         const feeds = t.state?.s === "present" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];

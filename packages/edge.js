@@ -25,7 +25,7 @@ function pinsOver(t) {
   const set = (ref, on) => (on ? t.put(ref, JSON.stringify({ at: Date.now() })) : t.remove(ref));
   return { has, refs, set, onChange: t.onChange };
 }
-function labelsOver(t) {
+function labelsOver(t, newHex) {
   const parse = v => {
     try {
       return JSON.parse(v) ?? {};
@@ -52,7 +52,7 @@ function labelsOver(t) {
   const refs = (id, prefix = "") => assigned().filter(a => a.id === id && a.ref.startsWith(prefix)).map(a => a.ref);
   const find = name => list().find(l => l.name.localeCompare(name.trim(), undefined, { sensitivity: "base" }) === 0);
 
-  const newId = () => `${Date.now().toString(36)}${[...crypto.getRandomValues(new Uint8Array(3))].map(b => b.toString(16).padStart(2, "0")).join("")}`;
+  const newId = () => `${Date.now().toString(36)}${newHex(3)}`;
   async function create(name) {
     name = name.trim().slice(0, 50);
     if (!name) throw new Error("a label needs a name");
@@ -115,6 +115,7 @@ function prefsOver(t) {
 }
 export async function start(ctx) {
   const storage = await ctx.require("storage");
+  const { newHex } = await ctx.require("node");
 
   let pinsOpen = null;
   function pins() {
@@ -124,7 +125,7 @@ export async function start(ctx) {
 
   let labelsOpen = null;
   function labels() {
-    return (labelsOpen ??= storage.table("tags").catch(e => ((labelsOpen = null), Promise.reject(e))).then(labelsOver));
+    return (labelsOpen ??= storage.table("tags").catch(e => ((labelsOpen = null), Promise.reject(e))).then(t => labelsOver(t, newHex)));
   }
 
   let peopleOpen = null;

@@ -41,7 +41,7 @@ export async function start(ctx) {
   const [space, keys, directory, index, content, storage, node] = await Promise.all(["space", "keys", "directory", "index", "content", "storage", "node"].map(n => ctx.require(n)));
   // The core: the one place each rule and guard is (`rules`, through the core).
   const glueOf = () => node.glue;
-  const bytesOf = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const bytesOf = node.bytes;
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
   // ─── MEMBERSHIP (FOUNDATION "Members and keys", the design of 10-17) ───
@@ -450,7 +450,7 @@ export async function start(ctx) {
   // bag the code names holds what the space is (sealed by the code: whoever holds the code reads it). Who holds it
   // ENTERS by itself, its entry carrying the code's PROOF for its own DID (`gov::join_proof`: seen, it lets nobody
   // else in) — the uses counted from the `join` acts.
-  const hex4 = () => [...crypto.getRandomValues(new Uint8Array(2))].map(x => x.toString(16).padStart(2, "0")).join("");
+  const hex4 = () => node.newHex(2);
   const codeOf = text => String(text ?? "").trim().toLowerCase().replace(/[^0-9a-f]/g, "").replace(/(.{4})(?=.)/g, "$1-");
   async function createInvite(sp, { days = 7, uses = 0 } = {}) {
     const r = await (await ctx.require("roles")).of(sp);
@@ -790,7 +790,7 @@ export async function start(ctx) {
   // MAIL.
   const MAIL = "mail";
   const MONTH = 30 * 24 * 3600 * 1000;
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+  const hexOf = (await ctx.require("node")).hex;
   const newId = () => hexOf(crypto.getRandomValues(new Uint8Array(8)));
   const { glue } = await ctx.require("node");
   // Kept mail is private: the account's table `mailbox` (not `mail`: that name is the public tail's).

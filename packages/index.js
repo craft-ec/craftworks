@@ -29,7 +29,7 @@ export async function start(ctx) {
   const Core = glue.CraftworksCore;
   const enc = new TextEncoder();
   const dec = new TextDecoder();
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const bytes = (await ctx.require("node")).bytes;
   const didBytes = did => (typeof did === "string" ? glue.did_bytes(did) : did);
 
   // Drop an item (bytes) into the bag at `address`: a PUT the hosts merge.

@@ -26,7 +26,7 @@ export async function start(ctx) {
   }
   const me = async () => space.me.strict();
   const place = async sp => (shared(sp) ? { spaces: [sp] } : { people: [await me()] });
-  const hex = b => [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, "0")).join("");
+  const hex = (await ctx.require("node")).hex;
   // A FILE's id: its own (its first index root; an inline file's own hash) — the same file listed twice is one entry.
   const fidOf = async ref => ref.id ?? ref.root ?? hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ref.inline ?? ""))).slice(0, 32);
   const clean = f => `/${String(f ?? "").split("/").map(x => x.trim()).filter(Boolean).join("/")}`;

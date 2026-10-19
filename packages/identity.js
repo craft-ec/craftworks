@@ -38,7 +38,7 @@ export async function start(ctx) {
     const said = await ask(p.frames, s => (s.kind === "put" && s.key === p.id) || s.kind === "refused", what, 60000);
     if (said.kind !== "put") throw new Error(`the node refused ${what} (${said.said})`);
     // Written here: the door's copy is the old one — read again on the next ask.
-    if (p.idBytes) node.changed([...p.idBytes].map(x => x.toString(16).padStart(2, "0")).join(""));
+    if (p.idBytes) node.changed(node.hex(p.idBytes));
   }
   const get = (id, what) => node.read(id, what);
   const codes = () => Promise.all(["idlog-wasm", "register-wasm", "devices-wasm"].map(n => ctx.require(n)));
@@ -130,7 +130,7 @@ export async function start(ctx) {
   // space's tables follow only their own (10-15: one space's history walk, 43 keys kept, had every other space read
   // its writers again on each).
   const keysChanged = space => r => {
-    if (r?.mlsSaved) dispatchEvent(new CustomEvent("craftworks:keys", { detail: space?.length ? { space: [...space].map(x => x.toString(16).padStart(2, "0")).join("") } : {} }));
+    if (r?.mlsSaved) dispatchEvent(new CustomEvent("craftworks:keys", { detail: space?.length ? { space: node.hex(space) } : {} }));
     return r;
   };
   const call = async ([id, frames], what, ms) => {
@@ -211,7 +211,7 @@ export async function start(ctx) {
     // `{ epochsOnly }`: an OLDER build's keys GATHERED (the member came from another): only the epoch secrets this
     // build lacks — never its group state, which may be older than the one held here (a group rolled back).
     moveKeysFrom: async (prior, pin, { epochsOnly = false } = {}) => {
-      const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+      const bytes = node.bytes;
       // One group into this build: every epoch's secret, then its state with the newest one.
       const keepGroup = async (mls, epochs, space) => {
         for (const [e, secret] of epochs) await call(core.frames_epoch_keep(e, bytes(secret), space), "keeping an epoch's key");
@@ -248,7 +248,7 @@ export async function start(ctx) {
       if (!Array.isArray(e)) return { said: "no answer" };
       const here = new Set(((await call(core.frames_epoch_secrets(space, below), "the space's earlier keys"))?.epochs ?? []).map(([n]) => n));
       let kept = 0;
-      for (const [n, s] of e) if (typeof n === "number" && typeof s === "string" && !here.has(n)) (await call(core.frames_epoch_keep(n, new Uint8Array(s.match(/../g).map(b => parseInt(b, 16))), space), "keeping an earlier epoch's key"), (kept += 1));
+      for (const [n, s] of e) if (typeof n === "number" && typeof s === "string" && !here.has(n)) (await call(core.frames_epoch_keep(n, node.bytes(s), space), "keeping an earlier epoch's key"), (kept += 1));
       if (kept) keysChanged(space)();
       return { kept, there: e.length };
     },

@@ -58,8 +58,8 @@ export async function start(ctx) {
   const tables = Object.freeze(JSON.parse(glue.account_tables()));
 
   const SPACES = "spaces";
-  const hex = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const hex = (await ctx.require("node")).hex;
+  const bytes = (await ctx.require("node")).bytes;
   // A space's own table: the identity's rule for names is 1–32 of a–z 0–9 - _.
 
   // WHO is here: the logged-in person's id, or null for a GUEST (a public page opened by anyone). The one way every

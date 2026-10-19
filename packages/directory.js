@@ -46,7 +46,7 @@ export async function start(ctx) {
   const auth = await ctx.require("auth");
   const storage = await ctx.require("storage");
   const space = await ctx.require("space");
-  const { core, glue } = await ctx.require("node");
+  const { core, glue, bytes } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
   const CARD = "card";
 
@@ -181,7 +181,7 @@ export async function start(ctx) {
     const creds = (st?.members ?? []).map(m => m.cred).filter(Boolean).sort();
     // And into the account's DEVICES contract (a grow-only set: the union is kept) — where readers count them.
     const me = await auth.check();
-    const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))))).then(() => true, e => (ctx.failed("card", e, `the account's devices: ${e.message}`), false)) : false;
+    const put = me && creds.length ? await auth.identity.addDevices(me.didBytes, creds.map(bytes)).then(() => true, e => (ctx.failed("card", e, `the account's devices: ${e.message}`), false)) : false;
     // Said on the card once the contract is put: what readers check before looking it up.
     if (put && !read(t).hasDevices) await t.put("devices", "1");
     if (!creds.length || JSON.stringify(creds) === JSON.stringify(read(t).nodes.slice().sort())) return;
@@ -249,7 +249,7 @@ export async function start(ctx) {
           // means. Here only the reading: their key log, their card, their devices contract when the step asks.
           await keysOf(did);
           const c = await card(did, { fresh });
-          const creds = c ? (c.nodes ?? []).map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)))) : null;
+          const creds = c ? (c.nodes ?? []).map(bytes) : null;
           const devicesCode = await ctx.require("devices-wasm");
           const step = asked => JSON.parse(core.account_devices_step(devicesCode, idlogCode, didBytes(did), creds, !!c?.hasDevices, asked));
           let s = step(false);

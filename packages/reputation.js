@@ -10,7 +10,7 @@ export async function start(ctx) {
   const [node, vouch, idlogCode] = await Promise.all(["node", "vouch", "idlog-wasm"].map(n => ctx.require(n)));
   const { core, glue } = node;
   const Core = glue.CraftworksCore;
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const bytes = (await ctx.require("node")).bytes;
   const MAX = 400; // accounts read at most
   const KEEP = 10 * 60 * 1000; // a crawl kept this long
   let last = null; // { at, items, result }

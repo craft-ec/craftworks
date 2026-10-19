@@ -55,8 +55,8 @@ export async function start(ctx) {
     if (!(await auth.identity.readKeyLog(did))) throw new Error("the account's key log is not on the network");
     return core.idlog_state(idlogCode, did);
   };
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+  const hexOf = (await ctx.require("node")).hex;
+  const bytes = (await ctx.require("node")).bytes;
   const escrowKey = e => `e/${String(e).padStart(12, "0")}`;
   const parse = e => JSON.parse(e);
 

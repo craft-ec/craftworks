@@ -49,7 +49,9 @@ export async function run(boot) {
   const STUCK_MS = 20000;
   const VISIT_EVERY_MS = 5 * 60000;
   const t00 = performance.now();
-  const visit = { pid: [...crypto.getRandomValues(new Uint8Array(3))].map(x => x.toString(16).padStart(2, "0")).join(""), n: 0, boot: null, routes: [], faults: {}, reconnects: 0, sentAt: 0, sentRoutes: 0 };
+  // (The loader's one hex: it runs before the page's packages, whose `node` holds the shared one.)
+  const hex = buf => [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
+  const visit = { pid: hex(crypto.getRandomValues(new Uint8Array(3))), n: 0, boot: null, routes: [], faults: {}, reconnects: 0, sentAt: 0, sentRoutes: 0 };
   addEventListener("craftworks:node-back", () => visit.reconnects++);
   async function sendVisit() {
     if (!manifest || visit.routes.length === visit.sentRoutes) return;
@@ -234,7 +236,6 @@ export async function run(boot) {
     return racingParts;
   }
 
-  const hex = buf => [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, "0")).join("");
 
   // A PIECE never changes (its address is its content's): the browser's copy is used when it has one — a reload asks
   // the node for nothing it already holds. The package's hash is checked after decoding anyway; a mismatch asks the
@@ -570,7 +571,7 @@ export async function run(boot) {
       const out = [];
       for (const site of [stack.appSite(), stack.loaderSite()].filter(Boolean)) {
         const id = node.glue.CraftworksCore.id_bytes(site);
-        node.changed([...id].map(x => x.toString(16).padStart(2, "0")).join(""));
+        node.changed(hex(id));
         const kind = await node.read(id, "getting the newest", { ms: 60000 }).then(got => (got ? "got" : "get-failed"), e => `failed: ${ctx.say(e)}`);
         ctx.log("newest", { what: `${site.slice(0, 8)}…: ${kind}` });
         out.push({ site, kind });

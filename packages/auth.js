@@ -11,7 +11,7 @@
 //   several. Registering makes the recovery words and shows them ONCE; no node keeps them.
 export async function start(ctx) {
   const id = await ctx.require("identity");
-  const { glue } = await ctx.require("node");
+  const { glue, hex, bytes: hexBytes } = await ctx.require("node");
   // THE SESSION's lifecycle (FOUNDATION.md §3: `session`): recorded here (shadow — nothing gated on it yet).
   const life = await ctx.require("lifecycle");
   const fault = await ctx.require("fault");
@@ -232,11 +232,3 @@ export async function start(ctx) {
   };
 }
 
-
-function hexBytes(h) {
-  return new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
-}
-
-function hex(b) {
-  return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-}

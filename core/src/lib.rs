@@ -4036,6 +4036,21 @@ mod js {
         })
         .to_string())
     }
+    /// HEX — the one implementation (`identity::hex` / `unhex`, every crate's) for every package of the page.
+    #[wasm_bindgen]
+    pub fn hex_of(b: &[u8]) -> String {
+        hex(b)
+    }
+    /// Bytes from hex (whole bytes of hex digits only; anything else refused).
+    #[wasm_bindgen]
+    pub fn bytes_of(h: &str) -> Result<Vec<u8>, JsValue> {
+        craftworks_identity::unhex(h).ok_or_else(|| err(format!("not hex: {:?}", h.chars().take(16).collect::<String>())))
+    }
+    /// The FILES constants the page uses (`files`'s): `{ inlineMax, gen, extra }`.
+    #[wasm_bindgen]
+    pub fn file_constants() -> String {
+        json!({ "inlineMax": craftworks_files::INLINE_MAX, "gen": craftworks_files::GEN, "extra": craftworks_files::EXTRA }).to_string()
+    }
     /// A generation's STORE, rateless (`files::store_next`, the node's too): "done", "failed", "wait", or the `j` to
     /// mint and put next.
     #[wasm_bindgen]

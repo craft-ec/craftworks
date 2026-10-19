@@ -64,7 +64,8 @@ export async function start(ctx) {
     return (await records()).rows().map(read).filter(Boolean);
   }
   // Its record, by the table's contract id (a space's feed and the account's table may share a name).
-  const idOf = t => [...t.id].map(b => b.toString(16).padStart(2, "0")).join("");
+  const hexOf = (await ctx.require("node")).hex;
+  const idOf = t => hexOf(t.id);
   // ONE table kept — within LIMIT: a table whose blocks the network lost can take any time to load or ask; past it, it
   // is said so and left due (tried again later), never holding up the tables after it.
   const LIMIT = 120000;
@@ -288,7 +289,7 @@ export async function start(ctx) {
   }
   async function keepAssigned(a) {
     let timer;
-    const bytes = h => new Uint8Array(h.match(/../g).map(b => parseInt(b, 16)));
+    const bytes = (await ctx.require("node")).bytes;
     const out = await Promise.race([files.keepAt(bytes(a.key), a.size), new Promise((_, no) => (timer = setTimeout(() => no(new Error(`not kept in ${WATCH_LIMIT / 60000} min: tried again later`)), WATCH_LIMIT)))])
       .catch(e => ({ error: e?.message ?? String(e) }))
       .finally(() => clearTimeout(timer));

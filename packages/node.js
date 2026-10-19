@@ -8,6 +8,12 @@ export async function start(ctx) {
   await glue.default({ module_or_path: await ctx.require("core-wasm") });
   ctx.log("core started", { what: "wire framing (wasm)" });
 
+  // HEX (`identity::hex`, every crate's and every package's): bytes ↔ lower-case hex.
+  const hex = b => glue.hex_of(b instanceof Uint8Array ? b : new Uint8Array(b));
+  const bytes = h => glue.bytes_of(String(h));
+  // A fresh random id: `n` random bytes as hex (every package's new ids).
+  const newHex = n => hex(crypto.getRandomValues(new Uint8Array(n)));
+
   // The node that served this page — at its own origin, so a gateway on https (try.freenet.org) is reached over wss —
   // unless `?node=` names another on this machine.
   const other = ctx.params.get("node");
@@ -287,7 +293,7 @@ export async function start(ctx) {
     const no = notThere.get(idHex);
     if (no && Date.now() - no < forget) return Promise.resolve({ kind: "get-failed", id: idHex });
     if (!oneGets.has(idHex)) {
-      const [, frames] = core.frames_get(new Uint8Array(idHex.match(/../g).map(b => parseInt(b, 16))));
+      const [, frames] = core.frames_get(bytes(idHex));
       const p = ctx
         .optional("node: get", slot(() => ask(frames, match ?? (x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex), what, WAIT.ask), { urgent }), () => ({ kind: "get-failed", id: idHex, waited: true }))
         .then(a => (a.kind === "get-failed" && !a.waited && notThere.set(idHex, Date.now()), a))
@@ -298,7 +304,7 @@ export async function start(ctx) {
   }
 
   async function read(id, what, { absent = false, ms = 30000 } = {}) {
-    const hexId = [...id].map(x => x.toString(16).padStart(2, "0")).join("");
+    const hexId = hex(id);
     const said = await contract(hexId, what, { frames: () => core.frames_follow(id)[1], match: s => (s.kind === "got" || s.kind === "get-failed") && s.id === hexId, ms });
     if (said.held) return true;
     if (said.kind !== "got" && absent) core.not_there(id);
@@ -308,5 +314,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { core, glue, ask, within, get, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
+  return { hex, bytes, newHex, core, glue, ask, within, get, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
 }

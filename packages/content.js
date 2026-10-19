@@ -33,11 +33,12 @@
 const HISTORY = 20;
 export async function start(ctx) {
   const storage = await ctx.require("storage");
+  const { newHex } = await ctx.require("node");
   const space = await ctx.require("space");
   // An item's ID SORTS BY TIME (phase 3, Reads): `t` ‖ its time (ms, base 36, 9 places) ‖ 8 random hex — so a table read
   // backwards from its end gives the newest first ("latest N", then older pages). `t` sorts after the random hex ids from
   // before and the reactions' `r-` keys: a scan of `t…` is the items made since.
-  const newId = (at = Date.now()) => `t${Math.floor(at).toString(36).padStart(9, "0")}${[...crypto.getRandomValues(new Uint8Array(4))].map(x => x.toString(16).padStart(2, "0")).join("")}`;
+  const newId = (at = Date.now()) => `t${Math.floor(at).toString(36).padStart(9, "0")}${newHex(4)}`;
 
   // Any conversation names its `messages` table and the `scope` (space) it lives in: a channel, its server; a direct
   // conversation, itself.

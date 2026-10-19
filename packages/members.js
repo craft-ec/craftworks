@@ -16,8 +16,8 @@ export async function start(ctx) {
   const { glue } = node;
   const G = await ctx.require("groups-glue");
   await G.default({ module_or_path: await ctx.require("groups-wasm") });
-  const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-  const bytes = h => new Uint8Array((String(h).match(/../g) ?? []).map(x => parseInt(x, 16)));
+  const hexOf = node.hex;
+  const bytes = node.bytes;
   const sha = async text => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
 
   // THIS ACCOUNT's member (one per account: every device derives it from the account's member seed) — its card says
@@ -194,7 +194,7 @@ export async function start(ctx) {
     // everyone (10-18, live: rows on Ivvor's space sealed with "another branch's" key at epoch 143, unreadable to every
     // member on the other branch, because the bridge carried one key per epoch).
     const BELOW = 2 ** 24;
-    const tagOf = async secret => [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes(String(secret))))].slice(0, 6).map(b => b.toString(16).padStart(2, "0")).join("");
+    const tagOf = async secret => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes(String(secret)))).slice(0, 6));
     async function bridge() {
       const held = await ctx.optional("members: epochSecrets", auth.identity.epochSecrets(sp.idBytes, BELOW), () => []);
       const lost = await ctx.optional("members: lost", ctx.require("keys").then(k => k.group(sp).lost()), () => []);
