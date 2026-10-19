@@ -688,7 +688,7 @@ export async function start(ctx) {
         return core.tail_prepare(id, enc.encode(key), v);
       }, "saving to");
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
-      if (core.tail_pending(id) >= Core.flush_at()) await flush().catch(e => ctx.failed("flush failed", e, `${app}: ${e.message}`));
+      if (Core.flush_due(core.tail_pending(id))) await flush().catch(e => ctx.failed("flush failed", e, `${app}: ${e.message}`));
       t.absent = false;
       st = { s: "present" };
       whenQuiet();
@@ -768,7 +768,7 @@ export async function start(ctx) {
         n += 1;
       }
       if (n) ctx.log("sealed", { what: `${app}: rows under an older key, sealed over in ${n} step(s)` });
-      if (reseal || core.tail_pending(id) >= Core.flush_at()) await flush();
+      if (reseal || Core.flush_due(core.tail_pending(id))) await flush();
     }
 
     // KEEP (phase 4, Lifecycle): the table's ASSET — every block its current tree reaches, in its groups — each block
@@ -945,18 +945,13 @@ export async function start(ctx) {
   const placeOf = (cat, n) => {
     if (!decidedCatalog(cat)) return "unknown";
     const r = (plain(cat) ? cat.rows() : own(cat)).find(x => x.key === n && x.value);
-    if (!r) return "unlisted";
-    try {
-      const v = JSON.parse(r.value);
-      return v?.n === 1 ? "none" : v?.b === 1 ? "blinded" : "listed";
-    } catch {
-      return "listed";
-    }
+    // (`data::catalog_place`, the node's too.)
+    return r ? Core.catalog_place(r.value) : "unlisted";
   };
   // NOTE a table's place in a catalog this account writes, the one writer of it: "blinded", "none" or "listed".
   const notePlace = (cat, n, p) => {
     if (placeOf(cat, n) === p) return Promise.resolve();
-    const v = JSON.stringify({ at: Date.now(), ...(p === "listed" ? {} : { b: 1 }), ...(p === "none" ? { n: 1 } : {}) });
+    const v = Core.catalog_value(p, Date.now());
     return plain(cat) ? cat.put(n, v) : versioned(cat, n, v, own(cat).find(r => r.key === n)?.id);
   };
   // A write to a feed, as a VERSION replacing `after` (the id of the version current where it is written).
@@ -986,7 +981,7 @@ export async function start(ctx) {
   async function listInDirectory(key) {
     const d = await directory();
     if (d.rows().some(r => r.key === key)) return;
-    await d.put(key, JSON.stringify({ at: Date.now(), b: 1 })); // made new: at its blinded name
+    await d.put(key, Core.catalog_value("blinded", Date.now())); // made new: at its blinded name
   }
 
   // A WRITER's CATALOG feed: the tables it has a feed of. Known to exist once the directory lists its node.

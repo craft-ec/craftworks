@@ -118,7 +118,7 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
                 Ok(data::Step::Ready(rs)) => craftworks_feed::merge(&[(me, &rs)]).get(t.as_bytes()).map(|row| row.id),
                 _ => None,
             };
-            let env = craftworks_feed::envelope((me, cat_o.writer.seq() + 1), current, Some(br#"{"b":1}"#));
+            let env = craftworks_feed::envelope((me, cat_o.writer.seq() + 1), current, Some(&data::catalog_value(data::Place::Blinded, None)));
             let step = cat_o.prepare_row(t.as_bytes(), &env).ok_or("the catalog would not take the row")?;
             io.push(signed(h, member, &mut cat_o, step)?);
             r.took_own(c, &me, "tables", &cat_name, cat_o.state(), cat.map(|(_, b)| b).unwrap_or_default());
@@ -131,7 +131,7 @@ pub fn rows<H: Host>(h: &mut H, member: &[u8; 32], c: &Codes, r: &mut Reading, n
     let mut o = feed_open(c, r, &me, name, &label, feed);
     // DUE A FLUSH first: its blocks PUT and confirmed, then (the next call: the same flush, made again) the step
     // naming its root.
-    if o.pending_rows() + rows.len() > data::FLUSH_AT {
+    if data::flush_due(o.pending_rows(), rows.len()) {
         if !create {
             return Err(format!("its feed of {name} is due a flush: a page does it (its tree blocks would stay on this node)"));
         }

@@ -28,6 +28,46 @@ fn hex(b: &[u8]) -> String {
 /// and every reader re-reads the whole tail), the tree holds the rest.
 pub const FLUSH_AT: usize = 32;
 
+/// Whether a FLUSH is due (page and node): a tail is never left holding `FLUSH_AT` rows — `adding`: the rows about to be
+/// written (the node asks before it writes), or 0 (the page asks after).
+pub fn flush_due(pending: usize, adding: usize) -> bool {
+    pending + adding >= FLUSH_AT
+}
+
+/// A table's PLACE in its writer's catalog (page and node read and write it one way): `Listed` (found by its name),
+/// `Blinded` (at its blinded name), `None` (listed, never made).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Place {
+    Listed,
+    Blinded,
+    None,
+}
+/// A catalog row's place (anything not a place: `Listed`, by its name).
+pub fn catalog_place(v: &[u8]) -> Place {
+    let o: serde_json::Value = serde_json::from_slice(v).unwrap_or_default();
+    if o["n"] == 1 {
+        Place::None
+    } else if o["b"] == 1 {
+        Place::Blinded
+    } else {
+        Place::Listed
+    }
+}
+/// A catalog row for `place`, noted `at` (ms) when given.
+pub fn catalog_value(place: Place, at: Option<u64>) -> Vec<u8> {
+    let mut o = serde_json::Map::new();
+    if let Some(at) = at {
+        o.insert("at".into(), at.into());
+    }
+    if place != Place::Listed {
+        o.insert("b".into(), 1.into());
+    }
+    if place == Place::None {
+        o.insert("n".into(), 1.into());
+    }
+    serde_json::Value::Object(o).to_string().into_bytes()
+}
+
 /// The tail's own row naming the ROOT's parity blocks (the root's group of one, `engine::repair::root_parity`): the
 /// root is the one block no parent's group covers, so its parity ids ride beside the root, in the tail, where a
 /// reader missing the root still finds them. Hidden from the rows; never written into the tree.
@@ -1001,6 +1041,17 @@ pub enum Send {
 
 #[cfg(test)]
 mod tests {
+    /// One catalog place rule, page and node: written and read back; a row that is no place is listed by its name.
+    #[test]
+    fn catalog_places_round_trip() {
+        for p in [super::Place::Listed, super::Place::Blinded, super::Place::None] {
+            assert_eq!(super::catalog_place(&super::catalog_value(p, Some(5))), p);
+            assert_eq!(super::catalog_place(&super::catalog_value(p, None)), p);
+        }
+        assert_eq!(super::catalog_place(b"not json"), super::Place::Listed);
+        assert_eq!(super::catalog_value(super::Place::Blinded, None), br#"{"b":1}"#.to_vec(), "the node's row, as before");
+        assert!(super::flush_due(super::FLUSH_AT - 1, 1) && !super::flush_due(super::FLUSH_AT - 2, 1) && super::flush_due(super::FLUSH_AT, 0));
+    }
     use super::*;
     use craftec_register_contract::wire::Params;
     use craftec_register_contract::wire::Signed as S;

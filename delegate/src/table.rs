@@ -437,11 +437,12 @@ impl Reading {
                         None => None,
                     };
                     let Some(v) = listed.get(t.as_bytes()) else { continue };
-                    let place: serde_json::Value = serde_json::from_slice(v).unwrap_or(serde_json::Value::Null);
-                    if place["n"] == 1 {
+                    // (`data::catalog_place`, the page's too.)
+                    let place = data::catalog_place(v);
+                    if place == data::Place::None {
                         continue; // listed, never made
                     }
-                    let label = if place["b"] == 1 && !by_name(&self.space, &t) { identity::blind_name(&identity::space_table_key(&self.space, &t), &t) } else { t.clone() };
+                    let label = if place == data::Place::Blinded && !by_name(&self.space, &t) { identity::blind_name(&identity::space_table_key(&self.space, &t), &t) } else { t.clone() };
                     io.extend(self.ask(c, j.owner, &t, label, Purpose::Feed { cap }));
                 }
                 io

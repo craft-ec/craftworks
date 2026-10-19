@@ -2108,6 +2108,29 @@ mod js {
         pub fn flush_at() -> u32 {
             data::FLUSH_AT as u32
         }
+        /// Whether a flush is due after a write (`data::flush_due`, the node's too).
+        pub fn flush_due(pending: u32) -> bool {
+            data::flush_due(pending as usize, 0)
+        }
+        /// A catalog row's PLACE (`data::catalog_place`, the node's too): "listed", "blinded" or "none".
+        pub fn catalog_place(v: &str) -> String {
+            match data::catalog_place(v.as_bytes()) {
+                data::Place::Listed => "listed",
+                data::Place::Blinded => "blinded",
+                data::Place::None => "none",
+            }
+            .into()
+        }
+        /// A catalog row for a place ("listed", "blinded", "none"), noted `at` (ms).
+        pub fn catalog_value(place: &str, at: f64) -> Result<String, JsValue> {
+            let p = match place {
+                "listed" => data::Place::Listed,
+                "blinded" => data::Place::Blinded,
+                "none" => data::Place::None,
+                _ => return Err(err(format!("no place {place:?}"))),
+            };
+            Ok(String::from_utf8(data::catalog_value(p, Some(at as u64))).expect("JSON"))
+        }
 
         /// FLUSH an open table. `{ need: [Block contract ids] }` to GET first; or `{ params, seq, valueHash, puts:
         /// [[name, frames]] }`: send every put and see each accepted, THEN sign and `tail_commit` as for a write.
