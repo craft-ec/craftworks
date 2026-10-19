@@ -93,22 +93,21 @@ export async function start(ctx) {
       await (await state()).put(at, h);
       savedHex = h;
     };
-    // An operation in a row (its SHA-256 the key); one too large for a row (a row holds 64 KB: a worst-case rotation from
-    // ~270 members) as a PUBLIC file of the space, the row naming it — read back and checked against the key.
-    const ROW = 60000;
+    // An operation in a row, or one too large for a row as a PUBLIC file of the space the row names — read back and
+    // checked against the key (`members::keyop_*`, the node's too).
     const send = async op => {
-      const key = hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", op)));
-      const hex = hexOf(op);
-      if (hex.length <= ROW) return (await feed()).put(key, hex);
+      const key = glue.keyop_key(op);
+      if (glue.keyop_inline(op)) return (await feed()).put(key, hexOf(op));
       const files = await ctx.require("files");
       const ref = await files.put(new Blob([op]), { space: sp, public: true, app: "members" });
       return (await feed()).put(key, JSON.stringify({ file: ref }));
     };
     const opOf = async row => {
-      if (!row.value.startsWith("{")) return bytes(row.value);
-      const ref = JSON.parse(row.value).file;
-      const got = new Uint8Array(await (await (await ctx.require("files")).get(ref)).arrayBuffer());
-      return hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", got))) === row.key ? got : null;
+      const r = JSON.parse(glue.keyop_row(row.value) ?? "null");
+      if (!r) return null;
+      if (r.op !== undefined) return bytes(r.op);
+      const got = new Uint8Array(await (await (await ctx.require("files")).get(r.file)).arrayBuffer());
+      return glue.keyop_file_ok(row.key, got) ? got : null;
     };
 
     // OUR CHECK, from the list (`roles`: its roster, owner, acts) and its accounts' cards.

@@ -2375,6 +2375,30 @@ mod js {
             Err(why) => json!({ "why": why }).to_string(),
         }
     }
+    /// A space's KEY OPERATIONS' rows (`members::keyop_*`, the node's too): an operation's row key (hex).
+    #[wasm_bindgen]
+    pub fn keyop_key(op: &[u8]) -> String {
+        craftworks_rules::members::keyop_key(op)
+    }
+    /// Whether an operation goes in its row (else as a public file the row names).
+    #[wasm_bindgen]
+    pub fn keyop_inline(op: &[u8]) -> bool {
+        craftworks_rules::members::keyop_inline(op)
+    }
+    /// A row's value: JSON `{ op: hex }` or `{ file: ref }`, or undefined (not a key operation's row).
+    #[wasm_bindgen]
+    pub fn keyop_row(value: &str) -> Option<String> {
+        use craftworks_rules::members::KeyopRow;
+        craftworks_rules::members::keyop_row(value).map(|r| match r {
+            KeyopRow::Op(op) => json!({ "op": hex(&op) }),
+            KeyopRow::File(f) => json!({ "file": f }),
+        }.to_string())
+    }
+    /// A file's bytes taken as its row's operation: only when they hash to the row's key.
+    #[wasm_bindgen]
+    pub fn keyop_file_ok(key: &str, bytes: &[u8]) -> bool {
+        craftworks_rules::members::keyop_file_ok(key, bytes)
+    }
     /// WHETHER AN ACCOUNT's CARD IS READ NOW (`members::card_due`, the node's too): `at` < 0: never read; `ok`: it named
     /// a member.
     #[wasm_bindgen]

@@ -9,7 +9,6 @@
 //!      putting it out); then ONE key change. No turns: several nodes doing it at once merge.
 //!   5. WRITTEN into this member's own `pub-keyops` (`write::rows`).
 
-use craftworks_identity::unhex;
 use std::collections::BTreeMap;
 
 use craftworks_groups::{Account, Check, Group, ListCheck};
@@ -70,8 +69,6 @@ fn learn<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(Strin
     all.into_iter().map(|(d, id, leaf, _)| (d, id, leaf)).collect()
 }
 
-/// The largest operation a row carries (hex): a larger one is a page's to write as a file (the row names it).
-const ROW: usize = 60000;
 /// No act names the owner's own placement (its tree's first operation).
 
 
@@ -98,7 +95,15 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         ..ListCheck::default()
     };
     // 1–2. THE OPERATIONS merged through our check, in any order (one ahead of its predecessors offered again).
-    let ops: Vec<Vec<u8>> = r.reading.rows("pub-keyops").values().filter_map(|row| unhex(&row.value)).collect();
+    // (`members::keyop_row`, the page's too. An operation stored as a FILE is not read here — the node fetches no files:
+    // a page's to merge; said.)
+    use craftworks_rules::members::{keyop_row, KeyopRow};
+    let rows: Vec<KeyopRow> = r.reading.rows("pub-keyops").values().filter_map(|row| keyop_row(std::str::from_utf8(&row.value).ok()?)).collect();
+    let as_files = rows.iter().filter(|x| matches!(x, KeyopRow::File(_))).count();
+    if as_files > 0 {
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_OPS_UNREAD, &format!("{}: {as_files} key operation(s) stored as files — a page merges them (the node reads no files)", m.name));
+    }
+    let ops: Vec<Vec<u8>> = rows.into_iter().filter_map(|x| if let KeyopRow::Op(o) = x { Some(o) } else { None }).collect();
     // (`Group::merge_all`: the one loop, the page's too.)
     let merged = g.merge_all(&ops, &list);
     let (refused, waiting) = (merged.refused.len(), merged.waiting);
@@ -146,8 +151,9 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     }
     let rows: Vec<(Vec<u8>, Option<Vec<u8>>)> = ops
         .iter()
-        .filter(|op| 2 * op.len() <= ROW)
-        .map(|op| (hex(&sha2::Sha256::digest(op)).into_bytes(), Some(hex(op).into_bytes())))
+        // (`members::keyop_*`, the page's too.)
+        .filter(|op| craftworks_rules::members::keyop_inline(op))
+        .map(|op| (craftworks_rules::members::keyop_key(op).into_bytes(), Some(hex(op).into_bytes())))
         .collect();
     let large = ops.len() - rows.len();
     let names = |v: &[String]| v.iter().map(|d| d.get(12..20).unwrap_or(d).to_string()).collect::<Vec<_>>().join(", ");

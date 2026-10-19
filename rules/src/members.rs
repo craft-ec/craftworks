@@ -116,6 +116,36 @@ pub fn publishes_info(me: &str, owner: &str, followers: &[String], epoch: u64) -
     (0..INFO_PUBLISHERS).contains(&k)
 }
 
+/// A space's KEY OPERATIONS (`pub-keyops`, page and node one format): a row per operation, keyed by its SHA-256 (hex);
+/// its value the operation (hex) — or, one too large for a row (a row holds 64 KB: a worst-case rotation from ~270
+/// members), `{ "file": <ref> }`, a public file of the space whose bytes hash to the key.
+pub const KEYOP_ROW: usize = 60000;
+pub fn keyop_key(op: &[u8]) -> String {
+    use sha2::Digest;
+    craftworks_identity::hex(sha2::Sha256::digest(op))
+}
+/// Whether an operation goes in its row (else as a file the row names).
+pub fn keyop_inline(op: &[u8]) -> bool {
+    2 * op.len() <= KEYOP_ROW
+}
+/// A row's operation, or the file it names.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KeyopRow {
+    Op(Vec<u8>),
+    File(serde_json::Value),
+}
+pub fn keyop_row(value: &str) -> Option<KeyopRow> {
+    if value.starts_with('{') {
+        let f = serde_json::from_str::<serde_json::Value>(value).ok()?.get("file")?.clone();
+        return Some(KeyopRow::File(f));
+    }
+    craftworks_identity::unhex(value).map(KeyopRow::Op)
+}
+/// A file's bytes taken as its row's operation: only when they hash to the row's key.
+pub fn keyop_file_ok(key: &str, bytes: &[u8]) -> bool {
+    keyop_key(bytes) == key
+}
+
 /// An account's CARD (its group member) as read: kept an hour, then read again — a changed card is seen within it.
 pub const CARD_KEEP_MS: u64 = 3_600_000;
 /// An account with NO card or a refused one (gone; not opened since BeeKEM): asked again after ten minutes — never
@@ -132,6 +162,16 @@ pub fn card_due(last: Option<(u64, bool)>, now_ms: u64) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_keyop_row_is_its_op_or_the_file_it_names() {
+        use super::*;
+        let op = vec![1u8, 2, 3];
+        assert!(keyop_inline(&op) && !keyop_inline(&vec![0; KEYOP_ROW / 2 + 1]));
+        assert_eq!(keyop_row(&craftworks_identity::hex(&op)), Some(KeyopRow::Op(op.clone())));
+        assert_eq!(keyop_row(r#"{"file":{"r":"x"}}"#), Some(KeyopRow::File(serde_json::json!({ "r": "x" }))));
+        assert_eq!(keyop_row("zz"), None);
+        assert!(keyop_file_ok(&keyop_key(&op), &op) && !keyop_file_ok(&keyop_key(&op), &[9]));
+    }
     #[test]
     fn a_card_is_read_again_by_what_it_read() {
         use super::*;
