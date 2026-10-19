@@ -332,21 +332,30 @@ impl Driver {
     }
 }
 
-/// NO BUILD DROPPED (checked BEFORE anything is sent): every build the live version knows — its own (`identity_build`)
-/// and every one it asks (`identity_prior`) — is in this one's history, or is this build. (v403, 10-18: release
-/// worktrees start from the COMMITTED history, which never holds the builds earlier releases appended — v401's build left
-/// out; the owner's login moved from an older build, every key since lost, v401's build never retired.)
-fn no_build_dropped(contracts: &Path, built: &Path) -> Result<()> {
+/// NO BUILD DROPPED (BEFORE anything is sent): every build the live version knows — its own (`identity_build`) and every
+/// one it asks (`identity_prior`) — is taken into this one's history, so the LIVE MANIFEST is the one owner of which
+/// builds hold members, and a tree's copied history file only adds to it. (v403, 10-18: a release worktree started from
+/// the committed history and left v401's build out; 10-20: v409's build, appended only in its own release worktree, was
+/// missing from main's copy, and a candidate read every v409 member's PIN as wrong.)
+fn take_live_builds(contracts: &Path, built: &Path) -> Result<()> {
     let Ok(dir) = std::env::var("PREVIOUS_SITE") else { return Ok(()) };
     let this_build = delegate_id(&read(&built.join("identity.wasm"))?);
-    let history: Vec<String> = std::fs::read_to_string(contracts.join("identity-history")).unwrap_or_default().lines().map(str::to_string).filter(|l| !l.is_empty()).collect();
+    let file = contracts.join("identity-history");
+    let mut history: Vec<String> = std::fs::read_to_string(&file).unwrap_or_default().lines().map(str::to_string).filter(|l| !l.is_empty() && *l != this_build).collect();
     let live: serde_json::Value = serde_json::from_slice(&read(&Path::new(&dir).join("manifest.json"))?).context("PREVIOUS_SITE: manifest.json")?;
-    let known: Vec<String> = live["identity_build"].as_str().map(String::from).into_iter().chain(live["identity_prior"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from))).collect();
-    let dropped: Vec<&String> = known.iter().filter(|b| **b != this_build && !history.contains(b)).collect();
-    if !dropped.is_empty() {
-        bail!("identity: {} build(s) the live version knows are not in contracts/identity-history ({}): every member in them would be lost — take the full history (main's working copy)", dropped.len(), dropped.iter().map(|b| &b[..12.min(b.len())]).collect::<Vec<_>>().join(", "));
+    // Oldest first: `identity_prior` is newest first, and the live build is the newest of all.
+    let mut known: Vec<String> = live["identity_prior"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(String::from)).collect();
+    known.reverse();
+    known.extend(live["identity_build"].as_str().map(String::from));
+    let mut taken = 0;
+    for b in known {
+        if b != this_build && !history.contains(&b) {
+            history.push(b);
+            taken += 1;
+        }
     }
-    println!("identity: every build the live version knows is in this one's history ({})", known.len());
+    std::fs::write(&file, history.join("\n") + "\n").context("writing contracts/identity-history")?;
+    println!("identity: every build the live version knows is in this one's history ({taken} taken from the live manifest)");
     Ok(())
 }
 
@@ -376,8 +385,8 @@ async fn main() -> Result<()> {
     let [ws, root] = a.as_slice() else { bail!("usage: publish-craftworks <ws_url> <craftworks_root>") };
     probe::node::allowed_port(ws)?;
     let app = PathBuf::from(root);
-    // (Before anything is sent: a release that would drop a build stops here.)
-    no_build_dropped(&app.join("contracts"), &app.join("packages/build"))?;
+    // (Before anything is sent: every build the live version knows joins this one's history.)
+    take_live_builds(&app.join("contracts"), &app.join("packages/build"))?;
     let contracts = app.join("contracts");
     // The contract code and the frozen signer, exactly the bytes contracts/SHA256SUMS names: a different signer is a
     // different identity, a different contract a different address.

@@ -17,7 +17,12 @@ F=u$(date +%H%M)
 pub "$OLD" "$OUT/pub-old.log"
 UP_PHASE=old perl -e 'alarm 2400; exec @ARGV' node "$here/upgrade.mjs" "${F}a" > "$OUT/old.log" 2>&1
 grep -E "^[0-9:]+ ([1-3] |   dm|FAILED)" "$OUT/old.log" | cut -c1-300
-pub "$NEW" "$OUT/pub-new.log"
+# The candidate takes every identity build the site before it knows, as a release does (PREVIOUS_SITE; 10-20: v409's
+# build missing from a copied history, and every v409 member's PIN read as wrong).
+site=$(grep -oE "OPEN: /v1/contract/web/[^/]+" "$OUT/pub-old.log" | head -1 | sed 's|.*/||')
+bash "$here/../previous-site.sh" "http://127.0.0.1:17691/v1/contract/web/$site" "$OUT/previous" > /dev/null || { echo "GATE: the site before could not be read"; exit 1; }
+PREVIOUS_SITE="$OUT/previous" pub "$NEW" "$OUT/pub-new.log"
+grep -E "^identity: every build" "$OUT/pub-new.log"
 echo "before the new phase: $(fails | tr '\n' ' ')"
 UP_PHASE=new perl -e 'alarm 2400; exec @ARGV' node "$here/upgrade.mjs" "${F}b" > "$OUT/new.log" 2>&1
 grep -E "^[0-9:]+ ([4-9] |   [AB] rec|FAILED|RESULT)" -A12 "$OUT/new.log" | grep -vE "^\s+\[|journal" | cut -c1-400 | head -80
