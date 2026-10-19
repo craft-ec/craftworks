@@ -239,13 +239,16 @@ export async function start(ctx) {
       const ok = [...(stored[g] ?? [])];
       const sent = Array.from(core.file_encode(key, size, g, plain, EXTRA, burn)).filter(f => !have.has(f[0]));
       await Promise.all(sent.map(f => putOne(f, `${name}: generation ${g}`).then(y => y && ok.push([f[0], f[3]]))));
-      // RATELESS: a fragment not stored is replaced by a new one, not waited on.
-      let next = Math.max(k + EXTRA, ...ok.map(x => x[0] + 1));
-      while (ok.length < k + EXTRA && next < MAX_LISTED) {
-        const f = core.file_mint(key, size, g, plain, next++, burn);
+      // RATELESS (`files::store_next`, the node's too): a fragment not stored is replaced by a new one, not waited on.
+      let next = Math.max(k + EXTRA, ...ok.map(x => x[0] + 1), ...sent.map(f => f[0] + 1));
+      for (;;) {
+        const s = glue.file_store_next(size, g, ok.length, next, 0);
+        if (s === "done") break;
+        if (s === "failed") throw new Error(`${name}: generation ${g} could not be stored (${ok.length} of the ${k} it needs)`);
+        next = s + 1;
+        const f = core.file_mint(key, size, g, plain, s, burn);
         if (await putOne(f, `${name}: generation ${g}, fragment ${f[0]}`)) ok.push([f[0], f[3]]);
       }
-      if (ok.length < k) throw new Error(`${name}: generation ${g} could not be stored (${ok.length} of the ${k} it needs)`);
       stored[g] = ok.sort((a, b) => a[0] - b[0]);
       record();
       sentBytes += plain.length;

@@ -326,9 +326,40 @@ fn open_index(key: &[u8; 32], hash: &[u8; 32], state: &[u8]) -> Result<Vec<u8>, 
         .map_err(|_| Error::Forged)
 }
 
-/// THE INDEX TREE for a file whose fragments `stored[g]` are stored: its pieces (leaves, inner levels, the root) and
-/// the root's hash — the reference's. Each piece at `hashed_address` of its hash. Put it LAST: a file reads once its
-/// index is there.
+/// A generation's STORE, RATELESS (page and node one rule): fragments `0 .. k + EXTRA` sent first; each one not stored
+/// replaced by a NEW one (the next `j`, minted), never waited on, until `k + EXTRA` are stored or `MAX_LISTED` were
+/// tried — stored with at least `k`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreNext {
+    /// Mint and put fragment `j`.
+    Mint(u8),
+    /// Wait for what is out.
+    Wait,
+    Done,
+    /// Fewer than `k` stored, nothing left to try.
+    Failed,
+}
+/// `stored`: how many were stored; `next`: the next `j` not tried; `out`: puts not answered yet.
+pub fn store_next(plan: &Plan, g: u64, stored: usize, next: usize, out: usize) -> StoreNext {
+    let (k, want) = (plan.k(g), plan.k(g) + EXTRA);
+    if stored >= want {
+        StoreNext::Done
+    } else if stored + out >= want {
+        StoreNext::Wait
+    } else if next < MAX_LISTED {
+        StoreNext::Mint(next as u8)
+    } else if out > 0 {
+        StoreNext::Wait
+    } else if stored >= k {
+        StoreNext::Done
+    } else {
+        StoreNext::Failed
+    }
+}
+
+/// THE INDEX TREE for a file whose fragments `stored[g]` are stored: its pieces (leaves, inner levels, the root LAST)
+/// and the root's hash — the reference's. Each piece at `hashed_address` of its hash. Put after every fragment, and the
+/// ROOT after the rest of it (page and node): a file reads once its root is there, and then all of it is.
 pub fn index_hashed(key: &[u8; 32], plan: &Plan, stored: &[Listed]) -> (Vec<Piece>, [u8; 32]) {
     let seal = |level: u8, n: u64, b: &[u8]| seal_index_h(key, &[&[level][..], &n.to_be_bytes()].concat(), b);
     assert_eq!(stored.len() as u64, plan.gens);

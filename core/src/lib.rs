@@ -4036,6 +4036,18 @@ mod js {
         })
         .to_string())
     }
+    /// A generation's STORE, rateless (`files::store_next`, the node's too): "done", "failed", "wait", or the `j` to
+    /// mint and put next.
+    #[wasm_bindgen]
+    pub fn file_store_next(size: f64, g: f64, stored: u32, next: u32, out: u32) -> JsValue {
+        use craftworks_files::StoreNext;
+        match craftworks_files::store_next(&craftworks_files::Plan::of(size as u64), g as u64, stored as usize, next as usize, out as usize) {
+            StoreNext::Mint(j) => JsValue::from(j),
+            StoreNext::Wait => JsValue::from_str("wait"),
+            StoreNext::Done => JsValue::from_str("done"),
+            StoreNext::Failed => JsValue::from_str("failed"),
+        }
+    }
     /// THE INDEX WALK (`files::Root`, the node's too). The leaf listing generation `g` and its place there:
     /// `[leaf, slot]`.
     #[wasm_bindgen]

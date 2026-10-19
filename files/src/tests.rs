@@ -430,3 +430,18 @@ fn a_reads_rounds_ask_again_only_what_did_not_come_back() {
     e.add(frags[0].0, &frags[0].1.state).unwrap();
     assert!(e.not_there().is_empty());
 }
+
+/// A generation's STORE, rateless (`store_next`, page and node): one not stored is replaced by the next `j`, never
+/// waited on; done at k + EXTRA, or with k once MAX_LISTED were tried; failed below k.
+#[test]
+fn a_store_replaces_what_was_not_stored() {
+    let plan = Plan::of(4 * 1024 * 1024);
+    let k = plan.k(0);
+    let want = k + EXTRA;
+    assert_eq!(store_next(&plan, 0, want, want, 0), StoreNext::Done);
+    assert_eq!(store_next(&plan, 0, want - 2, want, 2), StoreNext::Wait, "enough out to reach it");
+    assert_eq!(store_next(&plan, 0, want - 1, want, 0), StoreNext::Mint(want as u8), "one refused: the next j");
+    assert_eq!(store_next(&plan, 0, k, MAX_LISTED, 0), StoreNext::Done, "every j tried, k stored");
+    assert_eq!(store_next(&plan, 0, k - 1, MAX_LISTED, 1), StoreNext::Wait);
+    assert_eq!(store_next(&plan, 0, k - 1, MAX_LISTED, 0), StoreNext::Failed);
+}

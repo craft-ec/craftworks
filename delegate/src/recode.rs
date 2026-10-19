@@ -18,6 +18,9 @@ use crate::upkeep::{Code, Io};
 
 /// A fragment of the generation being read, kept here until decoded: `REKEY_FRAG ‖ j`.
 const FRAG: &[u8] = b"identity_upkeep/rekey/frag/";
+/// The generation being stored, decoded: kept until it is stored (a fragment not stored is replaced by a new one minted
+/// from it).
+const PLAIN: &[u8] = b"identity_upkeep/rekey/plain";
 
 fn sha(b: &[u8]) -> [u8; 32] {
     sha2::Sha256::digest(b).into()
@@ -46,10 +49,11 @@ enum Phase {
     /// Generation g's fragments asked (`round` of `files::ASK_ROUNDS`): those still out, those held (each in a secret of
     /// its own), those that came back empty.
     Fragments { g: u64, out: Vec<(u8, [u8; 32])>, held: Vec<u8>, empty: Vec<u8>, round: usize },
-    /// Generation g's new pieces put: `(contract id, j, hash)` still unanswered, and the stored ones.
-    Putting { g: u64, out: Vec<([u8; 32], u8, [u8; 32])>, ok: Vec<(u8, [u8; 32])> },
-    /// Its index put: ids unanswered.
-    Index { out: Vec<[u8; 32]>, refused: bool },
+    /// Generation g's new pieces put: `(contract id, j, hash)` still unanswered, the stored ones, and the next `j` not
+    /// tried (`files::store_next`, the page's too).
+    Putting { g: u64, out: Vec<([u8; 32], u8, [u8; 32])>, ok: Vec<(u8, [u8; 32])>, next: usize },
+    /// Its index put: ids unanswered; its ROOT `(address, state)` held back until the rest is stored.
+    Index { out: Vec<[u8; 32]>, refused: bool, root: Option<([u8; 32], Vec<u8>)> },
     Done,
 }
 
@@ -216,8 +220,10 @@ impl Recode {
         let plan = self.plan();
         if g >= plan.gens {
             // Every generation stored: the INDEX, last.
-            let (pieces, root) = files::index_hashed(&self.new_key, &plan, &self.stored);
+            let (mut pieces, root) = files::index_hashed(&self.new_key, &plan, &self.stored);
             self.root = Some(root);
+            // The ROOT after the rest (`files::index_hashed`: it is last).
+            let last = pieces.pop().ok_or("an index with no root")?;
             let mut out = Vec::new();
             let mut io = Vec::new();
             for p in pieces {
@@ -225,7 +231,12 @@ impl Recode {
                 out.push(id);
                 io.push(Io::Put { code: Code::Piece, params: p.address.to_vec(), state: live(&self.burn, &p) });
             }
-            self.phase = Phase::Index { out, refused: false };
+            let held = (last.address, live(&self.burn, &last));
+            if io.is_empty() {
+                self.phase = Phase::Index { out: vec![crate::upkeep::id_of(piece_hash, &held.0)], refused: false, root: None };
+                return Ok(vec![Io::Put { code: Code::Piece, params: held.0.to_vec(), state: held.1 }]);
+            }
+            self.phase = Phase::Index { out, refused: false, root: Some(held) };
             return Ok(io);
         }
         if (g as usize) >= self.listed.len() {
@@ -270,14 +281,16 @@ impl Recode {
         }
         let plain = d.plain().map_err(|e| format!("part {}: {e:?}", g + 1))?;
         let pieces = files::encode(&self.new_key, &plan, g, &plain, files::EXTRA);
+        h.set_secret(PLAIN, &plain);
         let mut out = Vec::new();
         let mut io = Vec::new();
-        for (j, p) in pieces {
+        for (j, p) in &pieces {
             let id = crate::upkeep::id_of(piece_hash, &p.address);
-            out.push((id, j, p.hash()));
-            io.push(Io::Put { code: Code::Piece, params: p.address.to_vec(), state: live(&self.burn, &p) });
+            out.push((id, *j, p.hash()));
+            io.push(Io::Put { code: Code::Piece, params: p.address.to_vec(), state: live(&self.burn, p) });
         }
-        self.phase = Phase::Putting { g, out, ok: Vec::new() };
+        let next = pieces.iter().map(|(j, _)| *j as usize + 1).max().unwrap_or(0);
+        self.phase = Phase::Putting { g, out, ok: Vec::new(), next };
         Ok(io)
     }
 
@@ -363,35 +376,55 @@ impl Recode {
     }
     fn put_<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], id: [u8; 32], ok: bool) -> Result<Vec<Io>, String> {
         match self.phase.clone() {
-            Phase::Putting { g, mut out, ok: mut stored } => {
+            Phase::Putting { g, mut out, ok: mut stored, mut next } => {
                 let Some(at) = out.iter().position(|(w, _, _)| *w == id) else { return Ok(Vec::new()) };
                 let (_, j, hash) = out.remove(at);
                 if ok {
                     stored.push((j, hash));
                 }
-                if !out.is_empty() {
-                    self.phase = Phase::Putting { g, out, ok: stored };
-                    return Ok(Vec::new());
+                // RATELESS (`files::store_next`, the page's too): one not stored replaced by a new one.
+                let plan = self.plan();
+                match files::store_next(&plan, g, stored.len(), next, out.len()) {
+                    files::StoreNext::Wait => {
+                        self.phase = Phase::Putting { g, out, ok: stored, next };
+                        Ok(Vec::new())
+                    }
+                    files::StoreNext::Mint(j) => {
+                        let plain = h.get_secret(PLAIN).ok_or("the part being stored is not held")?;
+                        let p = files::mint(&self.new_key, &plan, g, &plain, j);
+                        let id = crate::upkeep::id_of(piece_hash, &p.address);
+                        out.push((id, j, p.hash()));
+                        next = j as usize + 1;
+                        let io = vec![Io::Put { code: Code::Piece, params: p.address.to_vec(), state: live(&self.burn, &p) }];
+                        self.phase = Phase::Putting { g, out, ok: stored, next };
+                        Ok(io)
+                    }
+                    files::StoreNext::Failed => Err(format!("part {} could not be stored ({} of the {} it needs)", g + 1, stored.len(), plan.k(g))),
+                    files::StoreNext::Done => {
+                        h.set_secret(PLAIN, &[]);
+                        stored.sort();
+                        self.stored.push(stored);
+                        self.ask_gen(h, piece_hash, g + 1)
+                    }
                 }
-                if stored.len() < self.plan().k(g) {
-                    return Err(format!("part {} could not be stored ({} of the {} it needs)", g + 1, stored.len(), self.plan().k(g)));
-                }
-                stored.sort();
-                self.stored.push(stored);
-                self.ask_gen(h, piece_hash, g + 1)
             }
-            Phase::Index { mut out, refused } => {
+            Phase::Index { mut out, refused, root } => {
                 let Some(at) = out.iter().position(|w| *w == id) else { return Ok(Vec::new()) };
                 out.remove(at);
                 let refused = refused || !ok;
-                if out.is_empty() {
-                    if refused {
-                        return Err("its index could not be stored".into());
-                    }
-                    self.phase = Phase::Done;
-                } else {
-                    self.phase = Phase::Index { out, refused };
+                if !out.is_empty() {
+                    self.phase = Phase::Index { out, refused, root };
+                    return Ok(Vec::new());
                 }
+                if refused {
+                    return Err("its index could not be stored".into());
+                }
+                // The rest stored: its ROOT now.
+                if let Some((address, state)) = root {
+                    self.phase = Phase::Index { out: vec![crate::upkeep::id_of(piece_hash, &address)], refused: false, root: None };
+                    return Ok(vec![Io::Put { code: Code::Piece, params: address.to_vec(), state }]);
+                }
+                self.phase = Phase::Done;
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
