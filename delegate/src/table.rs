@@ -107,18 +107,6 @@ pub struct Reading {
     card_trees: Vec<([u8; 32], Vec<u8>, Vec<([u8; 32], Vec<u8>)>, Vec<([u8; 32], [u8; 32])>)>,
 }
 
-/// A card's BEEKEM MEMBER (`{ cred, leaf }`, hex): its credential names this account and is signed by its DATA key (the
-/// key log's head — the page's `members.memberOf`, the same check). `(member id, leaf key)`.
-fn beekem_member(did: &[u8; 32], data_key: &[u8; 32], v: &[u8]) -> Option<([u8; 32], [u8; 32])> {
-    let j: serde_json::Value = serde_json::from_slice(v).ok()?;
-    let b = |s: &str| -> Option<Vec<u8>> { (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect() };
-    let (d, owner, _, member) = identity::read_credential(&b(j["cred"].as_str()?)?)?;
-    if d != *did || owner != *data_key {
-        return None;
-    }
-    Some((member.try_into().ok()?, b(j["leaf"].as_str()?)?.try_into().ok()?))
-}
-
 pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -313,9 +301,10 @@ impl Reading {
                 };
                 let marked = rows.as_ref().and_then(|r| r.get(b"devices".as_slice())).is_some_and(|v| v.as_slice() == b"1");
                 match rows.as_ref().map(|r| r.get(b"beekem".as_slice())) {
-                    Some(Some(v)) => match beekem_member(&did, &log.head().data, v) {
-                        Some(m) => self.beekem.push((name.clone(), m.0, m.1)),
-                        None => self.card_says.push(format!("{}: its card's member does not check", name.get(12..20).unwrap_or(&name))),
+                    // (`account::beekem_member`, the page's too.)
+                    Some(Some(v)) => match craftworks_account::beekem_member(&did, &log.head().data, v) {
+                        Ok(m) => self.beekem.push((name.clone(), m.0, m.1)),
+                        Err(why) => self.card_says.push(format!("{}: {why}", name.get(12..20).unwrap_or(&name))),
                     },
                     Some(None) => self.card_says.push(format!("{}: no member on its card", name.get(12..20).unwrap_or(&name))),
                     None if self.cards_only => self.card_says.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),

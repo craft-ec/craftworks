@@ -54,15 +54,11 @@ export async function start(ctx) {
     // (FRESH: a card just written elsewhere — a member being added — is read as it is now, not as last seen.)
     const card = await directory.card(did, { fresh: true });
     if (!card) return { why: "no card" };
-    const v = card.beekem ? JSON.parse(card.beekem) : null;
     // (No member on its card YET: the account has not opened a release since BeeKEM — it is added once it does.)
-    if (!v?.cred || !v?.leaf) return { why: card.beekem ? "its card's member does not read" : "no member on its card yet (not opened since BeeKEM)" };
-    const c = JSON.parse(glue.credential_parts(bytes(v.cred)) ?? "null");
-    if (!c) return { why: "its member credential does not read" };
-    if (c.did !== did) return { why: `its credential names ${String(c.did).slice(0, 24)}` };
-    const dk = await directory.dataKey(did);
-    if (dk !== c.owner) return { why: `its credential is signed by ${String(c.owner).slice(0, 12)}, the data key is ${String(dk).slice(0, 12)}` };
-    return { did, id: c.member, leaf: v.leaf };
+    if (!card.beekem) return { why: "no member on its card yet (not opened since BeeKEM)" };
+    // THE CHECK (`account::beekem_member`, the node's too).
+    const m = JSON.parse(glue.beekem_member(glue.did_bytes(did), (await directory.dataKey(did)) ?? "", card.beekem));
+    return m.why ? { why: m.why } : { did, id: m.id, leaf: m.leaf };
   }
 
   const groups = new Map();

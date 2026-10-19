@@ -2353,6 +2353,16 @@ mod js {
         let p = craftworks_rules::rekey::plan(salt, &strs("out"), &strs("members"), &strs("gone"), &strs("banned"), &rows, &|app| anyone.iter().any(|a| a == app), v["me"].as_str().unwrap_or(""), v["now"].as_u64().unwrap_or(0));
         Ok(json!({ "rotate": p.rotate, "due": p.due.iter().map(|d| json!({ "id": d.id, "pub": d.public, "rank": d.rank, "wait": d.wait, "moved": d.moved })).collect::<Vec<_>>() }).to_string())
     }
+    /// AN ACCOUNT's BEEKEM MEMBER from its card (`account::beekem_member`, the node's too): its DID, its data key (hex),
+    /// the card's `beekem` value → JSON `{ id, leaf }` (hex) or `{ why }`.
+    #[wasm_bindgen]
+    pub fn beekem_member(did: &[u8], data_key: &str, value: &str) -> String {
+        let (Ok(did), Some(dk)) = (<[u8; 32]>::try_from(did), unhex32(data_key)) else { return json!({ "why": "its key log not read" }).to_string() };
+        match craftworks_account::beekem_member(&did, &dk, value.as_bytes()) {
+            Ok((id, leaf)) => json!({ "id": hex(&id), "leaf": hex(&leaf) }).to_string(),
+            Err(why) => json!({ "why": why }).to_string(),
+        }
+    }
     /// AN EPOCH's DOOR ENTRIES (`members::door_entries`, the node's too): JSON items → JSON `[entry]`.
     #[wasm_bindgen]
     pub fn door_entries(items: &str, epoch: f64) -> String {

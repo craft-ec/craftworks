@@ -476,6 +476,25 @@ pub fn writers(members: &[(String, Vec<[u8; 32]>)], departed: &[(String, String)
     out.into_values().collect()
 }
 
+/// AN ACCOUNT's BEEKEM MEMBER from its card (page and node): the card's `beekem` value (`{ cred, leaf }`, hex) — its
+/// credential names this DID and is signed by its DATA key (its key log's head). `(member id, leaf key)`, or why not.
+pub fn beekem_member(did: &[u8; 32], data_key: &[u8; 32], value: &[u8]) -> Result<([u8; 32], [u8; 32]), String> {
+    let j: serde_json::Value = serde_json::from_slice(value).map_err(|_| "its card's member does not read".to_string())?;
+    let b = |s: &str| -> Option<Vec<u8>> { (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect() };
+    let (Some(cred), Some(leaf)) = (j["cred"].as_str().and_then(b), j["leaf"].as_str().and_then(b)) else { return Err("its card's member does not read".into()) };
+    let (d, owner, _, member) = read_credential(&cred).ok_or("its member credential does not read")?;
+    if d != *did {
+        return Err(format!("its credential names {}", did_short(&d)));
+    }
+    if owner != *data_key {
+        return Err("its credential is not signed by its data key".into());
+    }
+    Ok((member.try_into().map_err(|_| "its member id does not read")?, leaf.try_into().map_err(|_| "its leaf key does not read")?))
+}
+fn did_short(d: &[u8; 32]) -> String {
+    did(d).get(12..20).unwrap_or_default().to_string()
+}
+
 /// WHOSE DEVICES a space's tables are read from (page and node): its group's members, and its OWNER — the owner's
 /// acts always count, in the group or not (10-19: the node added the owner, the page did not).
 pub fn reading_dids(group: &[String], owner: Option<&str>) -> Vec<String> {
@@ -514,6 +533,21 @@ fn unhex32(h: &str) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
+    /// THE CARD's MEMBER (page and node): taken when its credential names the DID and is signed by its data key; why
+    /// not otherwise.
+    #[test]
+    fn beekem_member_checks_the_did_and_the_data_key() {
+        let (did, other) = ([7u8; 32], [8u8; 32]);
+        let data = [5u8; 32];
+        let dk = ed25519_dalek::SigningKey::from_bytes(&data).verifying_key().to_bytes();
+        let cred = credential(&did, &[1u8; 32], &[2u8; 32], &data);
+        let v = |c: &[u8]| serde_json::json!({ "cred": c.iter().map(|b| format!("{b:02x}")).collect::<String>(), "leaf": "33".repeat(32) }).to_string();
+        assert!(beekem_member(&did, &dk, v(&cred).as_bytes()).is_ok());
+        assert!(beekem_member(&other, &dk, v(&cred).as_bytes()).unwrap_err().contains("names"));
+        assert!(beekem_member(&did, &[9; 32], v(&cred).as_bytes()).unwrap_err().contains("data key"));
+        assert!(beekem_member(&did, &dk, b"{}").is_err());
+    }
+
     /// THE WRITERS A TABLE IS READ FROM: listed devices only; every device on a blind bag; a public table also the
     /// open list's writers; never this device. And the owner always among whose devices are read.
     #[test]
