@@ -9,7 +9,9 @@ OLD=${OLD:?the live release tree}; NEW=${NEW:?the candidate tree}; FX_LOG=${FX_L
 OUT=${OUT:-${TMPDIR:-/tmp}/craftworks-upgrade}; mkdir -p "$OUT"
 WS='ws://127.0.0.1:17691/v1/contract/command?encodingProtocol=native'
 CHROME=${CHROME:-$(ls -d ~/Library/Caches/ms-playwright/chromium_headless_shell-*/*/chrome-headless-shell | tail -1)}; export CHROME
-pub() { (cd "$1" && CRAFTWORKS_TOKEN=off lockf -t 600 /tmp/craftworks-realnet.lock "$1/target/debug/publish-craftworks" "$WS" "$1" > "$2" 2>&1); echo "publish $(basename "$1"): $? $(grep -E '^site craftworks' "$2")"; }
+# A publish that FAILS stops the gate: a phase run on the site left from before tests nothing (10-19: a candidate too
+# large to publish, and the gate passed on the old code).
+pub() { (cd "$1" && CRAFTWORKS_TOKEN=off lockf -t 600 /tmp/craftworks-realnet.lock "$1/target/debug/publish-craftworks" "$WS" "$1" > "$2" 2>&1); local rc=$?; echo "publish $(basename "$1"): $rc $(grep -E '^site craftworks' "$2")"; [ "$rc" = 0 ] || { echo "GATE: publishing $(basename "$1") failed: $(tail -1 "$2")"; exit 1; }; }
 fails() { for d in "$FX_LOG" "$FY_LOG"; do f=$(ls -t "$d"/freenet.*.log | grep -v error | head -1); echo "$(basename "$(dirname "$d")") failed=$(grep -c 'Delegate operation failed' "$f") park=$(grep -c PARK_WORK_BUDGET "$f") cap=$(grep -c MAX_NETWORK_CONTRACT_OPS_PER_PARK "$f")"; done; }
 F=u$(date +%H%M)
 pub "$OLD" "$OUT/pub-old.log"

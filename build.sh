@@ -59,6 +59,12 @@ cargo build -q --release -p craftworks-delegate --target wasm32-unknown-unknown 
 cargo build -q --release -p probe --bin import-gate
 # Every custom section but the MANIFEST (`freenet-manifest`: the delegate's wake-ups) removed.
 wasm-tools strip -d '^(name|producers|target_features|\.debug.*|linking|reloc\..*|component-type.*)$' "$target/wasm32-unknown-unknown/release/craftworks_delegate.wasm" -o packages/build/identity.wasm
+# SIZE-OPTIMISED as every page wasm (10-19: 3,540,671 B, past a package's 36 data pieces of 96 KiB — the release would
+# not publish). Only the features Rust's wasm target already emits: nothing the node's runtime does not run.
+wasm-opt -Os --enable-bulk-memory --enable-bulk-memory-opt --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-multivalue --enable-reference-types packages/build/identity.wasm -o packages/build/identity.opt.wasm
+[ -s packages/build/identity.opt.wasm ] || { echo "wasm-opt wrote nothing for the identity delegate" >&2; exit 1; }
+mv packages/build/identity.opt.wasm packages/build/identity.wasm
+wasm-tools objdump packages/build/identity.wasm | grep -q 'custom "freenet-manifest"' || { echo "the identity delegate lost its freenet-manifest (its wake-ups)" >&2; exit 1; }
 "$target/release/import-gate" packages/build/identity.wasm
 # AND nothing imported but the node's own modules (`freenet_*`): the gate above names only what the node defines and
 # let a wasm-bindgen placeholder import through (a crate's JS bindings linked in) — a delegate that never instantiates.
