@@ -128,6 +128,7 @@ export async function start(ctx) {
     // devices → the DID. Members who left stay known (what they wrote is still theirs): learned from the group as it
     // was when seen, and from the removals that name them.
     const writers = new Map();
+    let devicesUnread = [];
     let group = [];
     let left = false;
     let lastSaid = null;
@@ -160,7 +161,6 @@ export async function start(ctx) {
     let gone = new Set();
     // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
     let listWhole = false;
-    let devicesUnread = [];
     function replay() {
       const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
       const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
