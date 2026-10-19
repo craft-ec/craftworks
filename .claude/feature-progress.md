@@ -2788,3 +2788,13 @@ branch set-aside/anchor-10-17 (not main).
 - [x] K7 (10-18, fx v866): EVERY SPACE onto BeeKEM (every kind is a space; the account's own stays as it is). A tree made with a new space and by the first listed member opening an old one; ONE plan `Group::reconcile` (page binding and node) — adds NAME the act that let them in ("listed now" alone broke replay after a removal: the K5 test caught it), removals the act putting them out; the page reconciles every 2 min (`members` started with the background services); THE BRIDGE: MLS epoch secrets into `keys-history` (sealed with the newest epoch), crossed by whoever the tree places. fx: A made a space (tree), listed B → A's page added B; B read a row written after at once and the first channel (MLS epoch 0, before the tree) through the bridge in 94 s. OPEN: Ivvor's live space moves when a member's page opens it after the release. REPORTED (10-18): every key step a `group` lifecycle move — page keys-tree-made/-reconciled/-in-step(quiet)/-short/-refused/-waiting/-unmapped/-bridged/-crossed, node follow-keys-* (before, the node's new steps were no event: relaying one threw); each said once per change. INTERMITTENT, cause NOT confirmed: 1 of 5 fx runs left B unplaced 10 min (its `pub-keyops` opened with 0 feeds, A's never opened); a public table's skipped writers now retried as the open writers list changes; 2 of 2 runs passed after (4 of 5 overall) — not proof; the journal now says each run's steps.
 - [ ] K8 the MLS group layer and its entry machinery removed (group-check enforces).
 Each phase: built, tested with controls, proven on fx, committed. Not decided: the upstream report (owner's say).
+
+## RELEASED v409 (10-19) — page and node on one implementation
+- Code a2f42a8 (main, pushed), built in tmp/release41; identity (delegate) c73a8b4e7b41ad83 (2,907,772 B, wasm-opt'd).
+  site craftworks version 409, loader version 54; previous carried (79 entries).
+- Gate: the upgrade test v408 → candidate PASS ×3 (old build retired, DM and rows read, fx/fy failed=0).
+- Delivery (find-check through the owner's node): 142 packages, UNREBUILDABLE 0 (1135 of 1386 pieces).
+- Wren on B: unlocked, D3ya6/3tBtbu retired, reads Craftworks (general), writes and reads a row. Ivvor's New Space's
+  `tables` unreadable (no key) — known before this release (health reports, 3 accounts); its repair is D6.
+- What moved: the duplicates inventory (.claude/duplicates-inventory-2026-10-19.md) worked through. Open: the node's
+  rounds as transition tables (a redesign, not a copy).
