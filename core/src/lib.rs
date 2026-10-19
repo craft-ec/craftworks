@@ -2347,6 +2347,20 @@ mod js {
     pub fn file_salt_parse(v: &str) -> Option<String> {
         craftworks_rules::rekey::parse_salt(v).map(|(s, n, removals)| json!({ "s": hex(&s), "n": n, "removals": removals }).to_string())
     }
+    /// A KEY ROW WRITTEN (`rules::rekey::key_row_write`, the node's too): `[key, value]` for its fields (JSON).
+    #[wasm_bindgen]
+    pub fn file_key_row_write(id: &str, fields: &str, at: f64) -> Result<Vec<String>, JsValue> {
+        let f = serde_json::from_str(fields).map_err(|e| err(format!("fields: {e}")))?;
+        let (k, v) = craftworks_rules::rekey::key_row_write(id, &f, at as u64);
+        Ok(vec![k, v])
+    }
+    /// A FILE's REFERENCE (`rules::rekey::file_ref`, the node's too): JSON.
+    #[wasm_bindgen]
+    #[allow(clippy::too_many_arguments)]
+    pub fn file_ref(id: &str, in_space: Option<String>, key: &[u8], root: &str, burn: &str, size: f64, name: &str, kind: &str) -> Result<String, JsValue> {
+        let b = |h: &str, what: &str| craftworks_identity::unhex32(h).ok_or_else(|| err(format!("{what}: 32 bytes of hex")));
+        Ok(craftworks_rules::rekey::file_ref(id, in_space.as_deref(), &b32(key)?, &b(root, "root")?, &b(burn, "burn")?, size as u64, name, kind).to_string())
+    }
     /// A KEY ROW (`rules::rekey::parse_key_row`, the node's too): JSON of its fields with `id`, or undefined.
     #[wasm_bindgen]
     pub fn file_key_row(key: &str, value: &str) -> Option<String> {

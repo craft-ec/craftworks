@@ -452,10 +452,10 @@ fn next_due<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> 
 
 /// A re-keyed row written (its page progress cleared in the same step), then its old pieces burned.
 fn write_row<H: Host>(h: &mut H, c: &Held, r: Round, due: &Task, row: &str, burn: Option<([u8; 32], Vec<[u8; 32]>, String)>, now_ms: u64) -> Vec<Io> {
-    let mut v: serde_json::Map<String, serde_json::Value> = serde_json::from_str(row).unwrap_or_default();
-    v.insert("at".into(), now_ms.into());
+    // (`rekey::key_row_write`, the page's too.)
+    let (k, v) = craftworks_rules::rekey::key_row_write(&due.id, &serde_json::from_str(row).unwrap_or_default(), now_ms);
     let rows = vec![
-        (format!("k/{}", due.id).into_bytes(), Some(serde_json::Value::Object(v).to_string().into_bytes())),
+        (k.into_bytes(), Some(v.into_bytes())),
         (format!("p/{}", due.id).into_bytes(), None),
     ];
     write_step(h, c, r, rows, After::Row { burn }, false)

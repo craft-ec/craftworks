@@ -66,6 +66,23 @@ pub fn parse_salt(v: &str) -> Option<([u8; 32], i64, usize)> {
     Some((hex32(o["s"].as_str()?)?, o["n"].as_i64().unwrap_or(0), o["removals"].as_u64().unwrap_or(0) as usize))
 }
 
+/// A KEY ROW WRITTEN (page and node, `parse_key_row`'s other half): `k/<id>` → its fields, noted `at` (ms).
+pub fn key_row_write(id: &str, fields: &serde_json::Map<String, serde_json::Value>, at: u64) -> (String, String) {
+    let mut v = fields.clone();
+    v.remove("id");
+    v.insert("at".into(), at.into());
+    (format!("k/{id}"), serde_json::Value::Object(v).to_string())
+}
+
+/// A FILE's REFERENCE (page and node): what a put gives and an item or a key-operation row names — its id (its first
+/// root), the space it is listed in (none: the account's own), its key and root, its pieces' burn hash, its size, name
+/// and type.
+#[allow(clippy::too_many_arguments)]
+pub fn file_ref(id: &str, in_space: Option<&str>, key: &[u8; 32], root: &[u8; 32], burn: &[u8; 32], size: u64, name: &str, kind: &str) -> serde_json::Value {
+    let h = craftworks_identity::hex;
+    serde_json::json!({ "id": id, "in": in_space, "key": h(key), "root": h(root), "b": h(burn), "size": size, "name": name, "type": kind })
+}
+
 /// A KEY ROW of `files` (`k/<id>`, page and node): its fields with `id`, when it names a `key` and a `root` (non-empty).
 pub fn parse_key_row(key: &str, value: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
     let id = key.strip_prefix("k/")?;
@@ -84,6 +101,18 @@ mod tests {
 
     fn row(id: &str, n: i64, public: bool) -> Row {
         Row { id: id.into(), n, public, app: "drive".into(), moved: 0 }
+    }
+    #[test]
+    fn a_key_row_written_reads_back() {
+        let mut f = serde_json::Map::new();
+        f.insert("id".into(), "x".into());
+        f.insert("key".into(), "aa".into());
+        f.insert("root".into(), "bb".into());
+        let (k, v) = key_row_write("x", &f, 7);
+        let back = parse_key_row(&k, &v).expect("reads back");
+        assert_eq!((back["id"].as_str(), back["key"].as_str(), back["at"].as_u64()), (Some("x"), Some("aa"), Some(7)));
+        let r = file_ref("x", None, &[1; 32], &[2; 32], &[0; 32], 9, "n", "t");
+        assert_eq!((r["key"].as_str().map(str::len), r["in"].is_null(), r["size"].as_u64()), (Some(64), true, Some(9)));
     }
     #[test]
     fn salts_and_key_rows_parse_one_way() {

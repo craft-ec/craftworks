@@ -94,9 +94,10 @@ export async function start(ctx) {
     const r = (await table(sp)).rows().find(x => x.key === `k/${id}` && x.value);
     return r ? parseRow(r) : null;
   }
+  // (`rules::rekey::key_row_write`, the node's too.)
   const setRow = async (sp, row) => {
-    const { id, ...v } = row;
-    await (await table(sp)).put(`k/${id}`, JSON.stringify({ ...v, at: Date.now() }));
+    const [k, v] = glue.file_key_row_write(row.id, JSON.stringify(row), Date.now());
+    await (await table(sp)).put(k, v);
   };
   const inOf = sp => (shared(sp) ? sp.id : null);
   const spaceOf = async id => (id ? ((await space.mine()).find(s => s.id === id) ?? undefined) : null);
@@ -161,7 +162,8 @@ export async function start(ctx) {
     const id = root;
     // The row keeps the BURN SECRET (`x`): whoever re-keys the file later burns these pieces with it.
     if (!(await ctx.optional("files: rowOf", rowOf(sp, id), () => null))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
-    return { id, in: inOf(sp), key: keyHex, root, b: hex(burn), size, name, type };
+    // (`rules::rekey::file_ref`, the node's too.)
+    return JSON.parse(glue.file_ref(id, inOf(sp) ?? undefined, key, root, hex(burn), size, name, type));
   }
 
   // The KEY a file would have (public: its content alone; otherwise with its space's salt) — without storing it: what
