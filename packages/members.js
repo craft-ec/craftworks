@@ -191,20 +191,9 @@ export async function start(ctx) {
       await t.settled;
       const c = await check();
       const read = await Promise.all(t.rows().filter(x => x.value).map(x => ctx.optional("members: an operation", opOf(x), () => null)));
-      let pending = read.filter(Boolean);
-      const said = { applied: 0, waiting: 0, refused: [] };
-      for (let round = 0; pending.length && round < 64; round++) {
-        const next = [];
-        for (const op of pending) {
-          const r = g.merge(op, c);
-          if (r === "applied") said.applied += 1;
-          else if (r === "waiting") next.push(op);
-          else said.refused.push(r.slice(9, 80));
-        }
-        if (next.length === pending.length) break;
-        pending = next;
-      }
-      said.waiting = pending.length;
+      // (`Group::merge_all`: the one loop, the node's too.)
+      const said = g.merge_all(read.filter(Boolean), c);
+      said.refused = said.refused.map(w => w.slice(0, 71));
       said.generations = await keepGenerations();
       if (c.misses.length) said.misses = c.misses.slice(-3);
       await save();

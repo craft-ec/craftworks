@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use craftworks_groups::{Account, Check, Group, Merged};
+use craftworks_groups::{Account, Check, Group};
 use craftworks_identity::{self as identity, Host, Mandate};
 use sha2::Digest;
 
@@ -116,26 +116,11 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
             .collect(),
     };
     // 1–2. THE OPERATIONS merged through our check, in any order (one ahead of its predecessors offered again).
-    let mut pending: Vec<Vec<u8>> = r.reading.rows("pub-keyops").values().filter_map(|row| unhex(&row.value)).collect();
-    let mut refused = 0;
-    let mut why: Vec<String> = Vec::new();
-    for _ in 0..64 {
-        let before = pending.len();
-        pending.retain(|op| match g.merge(op, &list) {
-            Merged::Applied => false,
-            Merged::Waiting => true,
-            Merged::Refused(w) => {
-                refused += 1;
-                if why.len() < 2 {
-                    why.push(w.chars().take(80).collect());
-                }
-                false
-            }
-        });
-        if pending.is_empty() || pending.len() == before {
-            break;
-        }
-    }
+    let ops: Vec<Vec<u8>> = r.reading.rows("pub-keyops").values().filter_map(|row| unhex(&row.value)).collect();
+    // (`Group::merge_all`: the one loop, the page's too.)
+    let merged = g.merge_all(&ops, &list);
+    let (refused, waiting) = (merged.refused.len(), merged.waiting);
+    let why: Vec<String> = merged.refused.iter().take(2).map(|w| w.chars().take(80).collect()).collect();
     // 3. THE GENERATIONS: the space's epochs on this node.
     for (n, k) in g.generations() {
         identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
@@ -147,7 +132,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         return next_space(h, c, r);
     }
     if !g.placed() {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NOT_PLACED, &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, pending.len(), why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NOT_PLACED, &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, waiting, why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
         return next_space(h, c, r);
     }
     // THE ONE PLAN (`Group::reconcile`, the page's too): the listed placed, the put-out taken out by their act.
@@ -164,7 +149,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let (ins, outs) = (acts(true), acts(false));
     let due = members.iter().any(|(d, id, _)| !placed.contains(id) && list.listed(d)) || placed.iter().any(|id| list.by_member.get(id).is_some_and(|d| !list.listed(d) && outs.contains_key(d)));
     if !due {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), pending.len()));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), waiting));
         return next_space(h, c, r);
     }
     // (A delegate has no randomness of its own: a key change draws from upkeep's pool.)

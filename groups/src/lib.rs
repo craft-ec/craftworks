@@ -74,6 +74,14 @@ pub trait Check {
     fn creator(&self) -> Option<String>;
 }
 
+/// What merging every operation did (`merge_all`).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct MergedAll {
+    pub applied: usize,
+    pub waiting: usize,
+    pub refused: Vec<String>,
+}
+
 /// What merging an operation did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Merged {
@@ -166,6 +174,26 @@ impl Group {
             Err(CgkaError::OutOfOrderOperation) => Merged::Waiting,
             Err(x) => Merged::Refused(e(x)),
         }
+    }
+
+    /// MERGE EVERY operation, in any order (page and node, one loop): each offered again while its predecessors arrive,
+    /// up to 64 rounds. How many applied, the ones still waiting, why each refused.
+    pub fn merge_all(&mut self, ops: &[Vec<u8>], check: &impl Check) -> MergedAll {
+        let mut out = MergedAll::default();
+        let mut pending: Vec<&Vec<u8>> = ops.iter().collect();
+        for _ in 0..64 {
+            let before = pending.len();
+            pending.retain(|op| match self.merge(op, check) {
+                Merged::Applied => (out.applied += 1, false).1,
+                Merged::Waiting => true,
+                Merged::Refused(w) => (out.refused.push(w), false).1,
+            });
+            if pending.is_empty() || pending.len() == before {
+                break;
+            }
+        }
+        out.waiting = pending.len();
+        out
     }
 
     /// ADD a member (its id, its first leaf key), authorized by the act `act`: the operation's bytes, or `None` if the
@@ -424,6 +452,16 @@ mod page {
         /// The member ids placed (hex).
         pub fn members(&mut self) -> js_sys::Array {
             self.0.members().iter().map(|m| JsValue::from(hex(m))).collect()
+        }
+        /// MERGE EVERY operation (`Group::merge_all`, the node's too): `{ applied, waiting, refused: [why] }`.
+        pub fn merge_all(&mut self, ops: js_sys::Array, check: js_sys::Object) -> Result<JsValue, JsValue> {
+            let ops: Vec<Vec<u8>> = ops.iter().map(|o| js_sys::Uint8Array::new(&o).to_vec()).collect();
+            let r = self.0.merge_all(&ops, &JsCheck(check));
+            let out = js_sys::Object::new();
+            js_sys::Reflect::set(&out, &"applied".into(), &(r.applied as f64).into())?;
+            js_sys::Reflect::set(&out, &"waiting".into(), &(r.waiting as f64).into())?;
+            js_sys::Reflect::set(&out, &"refused".into(), &r.refused.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
+            Ok(out.into())
         }
         /// MERGE an operation through our check: "applied", "waiting", or "refused: why".
         pub fn merge(&mut self, op: &[u8], check: js_sys::Object) -> String {
