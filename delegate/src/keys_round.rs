@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use craftworks_groups::{Account, Check, Group};
+use craftworks_groups::{Account, Check, Group, ListCheck};
 use craftworks_identity::{self as identity, Host, Mandate};
 use sha2::Digest;
 
@@ -57,38 +57,6 @@ fn learn<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(Strin
 /// The largest operation a row carries (hex): a larger one is a page's to write as a file (the row names it).
 const ROW: usize = 60000;
 /// No act names the owner's own placement (its tree's first operation).
-const NO_ACT: [u8; 32] = [0; 32];
-
-/// OUR CHECK, the list's — the page's `members.check()`, the same rule.
-struct List {
-    by_member: BTreeMap<[u8; 32], String>,
-    listed: Vec<String>,
-    owner: String,
-    /// sha256(act id) → (in?, the account).
-    acts: BTreeMap<[u8; 32], (bool, String)>,
-}
-impl Check for List {
-    fn account_of(&self, member: &[u8; 32]) -> Option<String> {
-        self.by_member.get(member).cloned()
-    }
-    fn listed(&self, did: &str) -> bool {
-        self.listed.iter().any(|d| d == did) || did == self.owner
-    }
-    fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
-        let Some(t) = self.by_member.get(target) else { return false };
-        if *act == NO_ACT {
-            return add && *t == self.owner;
-        }
-        self.acts.get(act).is_some_and(|(i, d)| *i == add && d == t)
-    }
-    fn creator(&self) -> Option<String> {
-        // The space's owner; with none, the lowest listed — the page's `members.check()` the same.
-        if !self.owner.is_empty() {
-            return Some(self.owner.clone());
-        }
-        self.listed.iter().min().cloned()
-    }
-}
 
 fn unhex(s: &[u8]) -> Option<Vec<u8>> {
     let s = std::str::from_utf8(s).ok()?;
@@ -105,7 +73,8 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let mut g = Group::empty(&r.space, Account::of(&seed));
     // Every member LEARNED, this read's added (a card read now replaces what was kept).
     let members = learn(h, &r.member, &r.space, &r.reading.beekem);
-    let list = List {
+    // OUR CHECK (`groups::ListCheck`, the page's too).
+    let list = ListCheck {
         by_member: members.iter().map(|(d, id, _)| (*id, d.clone())).collect(),
         listed: gov.roster.iter().cloned().collect(),
         owner: m.owner.clone(),
@@ -114,6 +83,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
             .iter()
             .filter_map(|a| Some((sha2::Sha256::digest(a.get("id")?.as_str()?.as_bytes()).into(), craftworks_gov::entry_move(a)?)))
             .collect(),
+        ..ListCheck::default()
     };
     // 1–2. THE OPERATIONS merged through our check, in any order (one ahead of its predecessors offered again).
     let ops: Vec<Vec<u8>> = r.reading.rows("pub-keyops").values().filter_map(|row| unhex(&row.value)).collect();

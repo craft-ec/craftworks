@@ -19,7 +19,6 @@ export async function start(ctx) {
   const hexOf = b => [...b].map(x => x.toString(16).padStart(2, "0")).join("");
   const bytes = h => new Uint8Array((String(h).match(/../g) ?? []).map(x => parseInt(x, 16)));
   const sha = async text => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))));
-  const NO_ACT = "00".repeat(32);
 
   // THIS ACCOUNT's member (one per account: every device derives it from the account's member seed) — its card says
   // it, for whoever adds it.
@@ -133,18 +132,14 @@ export async function start(ctx) {
       if (um && um !== lastUnmapped) life().then(l => l.transition("group", sp.id, "keys-unmapped", { why: um.slice(0, 300), n: unmapped.length }));
       lastUnmapped = um;
       const members = found.map(([, m]) => m).filter(m => !m.why);
-      const byMember = new Map(members.map(m => [m.id, m.did]));
-      // (Whom each act lets in or puts out: the replay's one rule — `gov::entry_move`, the node's too.)
-      const acts = new Map(moves.map(m => [m.act, { kind: m.inn ? "add" : "remove", target: m.did }]));
       const latest = inn => Object.fromEntries(moves.filter(m => m.inn === inn).map(m => [m.did, bytes(m.act)]));
-      const misses = [];
-      // THE ONE ACCOUNT that makes the tree (`groups::Check::creator`, the node's the same): the owner; none, the lowest
-      // listed DID.
+      // OUR CHECK (`groups::ListCheck`, the node's too): whose each member is, who is listed, which act allows what.
       const listedNow = [...new Set([...roster, ...(owner ? [owner] : [])])];
-      const creator = owner ?? [...listedNow].sort()[0] ?? null;
+      const list = new G.BeeList(members.map(m => [m.id, m.did]), listedNow, owner ?? "", moves.map(m => [m.act, m.inn, m.did]));
       return {
-        misses,
-        creator: () => creator,
+        list,
+        // THE ONE ACCOUNT that makes the tree (`Check::creator`): the owner; none, the lowest listed DID.
+        creator: () => owner ?? [...listedNow].sort()[0] ?? null,
         // For RECONCILING (`BeeGroup.reconcile`, the node's one plan): every card's member, who is listed now, the acts.
         cards: members.map(m => [m.did, bytes(m.id), bytes(m.leaf)]),
         listedNow,
@@ -152,15 +147,6 @@ export async function start(ctx) {
         outs: latest(false),
         whole: () => r.whole?.() ?? false,
         owner,
-        accountOf: memberHex => byMember.get(memberHex) ?? null,
-        listed: did => roster.includes(did) || did === owner,
-        allows: (actHex, add, targetHex) => {
-          const target = byMember.get(targetHex);
-          const ok = actHex === NO_ACT ? add && !!target && target === owner : (a => !!a && a.kind === (add ? "add" : "remove") && a.target === target)(acts.get(actHex));
-          // (A refusal carries what it saw: the act known or not, what it allows, whom the member is.)
-          if (!ok) misses.push({ act: actHex.slice(0, 8), known: acts.has(actHex), acts: acts.size, allows: acts.get(actHex) ?? null, add, target: target?.slice(12, 20) ?? `unmapped ${targetHex.slice(0, 8)}`, mapped: byMember.size });
-          return ok;
-        },
       };
     }
 
@@ -188,10 +174,10 @@ export async function start(ctx) {
       const c = await check();
       const read = await Promise.all(t.rows().filter(x => x.value).map(x => ctx.optional("members: an operation", opOf(x), () => null)));
       // (`Group::merge_all`: the one loop, the node's too.)
-      const said = g.merge_all(read.filter(Boolean), c);
+      const said = g.merge_all(read.filter(Boolean), c.list);
       said.refused = said.refused.map(w => w.slice(0, 71));
       said.generations = await keepGenerations();
-      if (c.misses.length) said.misses = c.misses.slice(-3);
+      said.misses = said.misses.slice(-3);
       await save();
       if (said.refused.length) life().then(l => l.transition("group", sp.id, "keys-refused", { why: said.refused.slice(0, 3).join("; "), n: said.refused.length, misses: JSON.stringify(said.misses ?? []).slice(0, 300) }));
       const w = said.waiting ? String(said.waiting) : "";

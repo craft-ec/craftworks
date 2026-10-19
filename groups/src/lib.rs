@@ -74,6 +74,41 @@ pub trait Check {
     fn creator(&self) -> Option<String>;
 }
 
+/// OUR CHECK FROM THE LIST (page and node, one implementation): whose each member id is (`by_member`, from their cards),
+/// who is listed (and the owner), and which act lets whom in or out (`acts`: sha256 of the act's id → (in?, DID)). A
+/// refusal is kept with what it saw (`misses`). 10-19: the page built this in JavaScript, the node as its own `List`.
+#[derive(Debug, Default)]
+pub struct ListCheck {
+    pub by_member: std::collections::BTreeMap<[u8; 32], String>,
+    pub listed: Vec<String>,
+    pub owner: String,
+    pub acts: std::collections::BTreeMap<[u8; 32], (bool, String)>,
+    pub misses: core::cell::RefCell<Vec<String>>,
+}
+impl Check for ListCheck {
+    fn account_of(&self, member: &[u8; 32]) -> Option<String> {
+        self.by_member.get(member).cloned()
+    }
+    fn listed(&self, did: &str) -> bool {
+        self.listed.iter().any(|d| d == did) || did == self.owner
+    }
+    fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
+        let t = self.by_member.get(target);
+        let ok = if *act == [0; 32] { add && t.is_some_and(|t| *t == self.owner) } else { self.acts.get(act).is_some_and(|(i, d)| *i == add && Some(d) == t) };
+        if !ok {
+            let hex8 = |b: &[u8]| b.iter().take(4).map(|x| format!("{x:02x}")).collect::<String>();
+            self.misses.borrow_mut().push(format!("act {} {} ({} acts), {} {}", hex8(act), if self.acts.contains_key(act) { "known" } else { "unknown" }, self.acts.len(), if add { "add" } else { "remove" }, t.map(|d| d.get(12..20).unwrap_or(d).to_string()).unwrap_or_else(|| format!("unmapped {}", hex8(target)))));
+        }
+        ok
+    }
+    fn creator(&self) -> Option<String> {
+        if !self.owner.is_empty() {
+            return Some(self.owner.clone());
+        }
+        self.listed.iter().min().cloned()
+    }
+}
+
 /// What merging every operation did (`merge_all`).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct MergedAll {
@@ -390,31 +425,30 @@ mod page {
     fn bytes(v: Option<Vec<u8>>) -> JsValue {
         v.map(|b| js_sys::Uint8Array::from(&b[..]).into()).unwrap_or(JsValue::NULL)
     }
-    struct JsCheck(js_sys::Object);
-    impl JsCheck {
-        fn call(&self, f: &str, args: &[JsValue]) -> JsValue {
-            let Ok(f) = js_sys::Reflect::get(&self.0, &f.into()).and_then(|f| f.dyn_into::<js_sys::Function>()) else { return JsValue::NULL };
-            let r = match args {
-                [] => f.call0(&self.0),
-                [a] => f.call1(&self.0, a),
-                [a, b, c] => f.call3(&self.0, a, b, c),
-                _ => return JsValue::NULL,
+    /// OUR CHECK (`ListCheck`, the node's too), built from the list: `byMember` `[[member hex, did]…]`, `listed` `[did…]`,
+    /// the owner, `acts` `[[act hash hex, in?, did]…]`.
+    #[wasm_bindgen]
+    pub struct BeeList(ListCheck);
+    #[wasm_bindgen]
+    impl BeeList {
+        #[wasm_bindgen(constructor)]
+        pub fn new(by_member: js_sys::Array, listed: js_sys::Array, owner: String, acts: js_sys::Array) -> Result<BeeList, JsValue> {
+            let h32 = |v: JsValue| -> Result<[u8; 32], JsValue> {
+                let s = v.as_string().ok_or_else(|| err("a hex string"))?;
+                let b: Option<Vec<u8>> = (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+                b32(&b.ok_or_else(|| err("hex"))?)
             };
-            r.unwrap_or(JsValue::NULL)
-        }
-    }
-    impl Check for JsCheck {
-        fn account_of(&self, member: &[u8; 32]) -> Option<String> {
-            self.call("accountOf", &[hex(member).into()]).as_string()
-        }
-        fn listed(&self, did: &str) -> bool {
-            self.call("listed", &[did.into()]).as_bool().unwrap_or(false)
-        }
-        fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
-            self.call("allows", &[hex(act).into(), add.into(), hex(target).into()]).as_bool().unwrap_or(false)
-        }
-        fn creator(&self) -> Option<String> {
-            self.call("creator", &[]).as_string()
+            let mut l = ListCheck { owner, ..ListCheck::default() };
+            for e in by_member.iter() {
+                let e = js_sys::Array::from(&e);
+                l.by_member.insert(h32(e.get(0))?, e.get(1).as_string().unwrap_or_default());
+            }
+            l.listed = listed.iter().filter_map(|d| d.as_string()).collect();
+            for e in acts.iter() {
+                let e = js_sys::Array::from(&e);
+                l.acts.insert(h32(e.get(0))?, (e.get(1).as_bool().unwrap_or(false), e.get(2).as_string().unwrap_or_default()));
+            }
+            Ok(BeeList(l))
         }
     }
 
@@ -453,19 +487,21 @@ mod page {
         pub fn members(&mut self) -> js_sys::Array {
             self.0.members().iter().map(|m| JsValue::from(hex(m))).collect()
         }
-        /// MERGE EVERY operation (`Group::merge_all`, the node's too): `{ applied, waiting, refused: [why] }`.
-        pub fn merge_all(&mut self, ops: js_sys::Array, check: js_sys::Object) -> Result<JsValue, JsValue> {
+        /// MERGE EVERY operation (`Group::merge_all`, the node's too) through OUR CHECK (`BeeList`, the node's too):
+        /// `{ applied, waiting, refused: [why], misses: [what a refusal saw] }`.
+        pub fn merge_all(&mut self, ops: js_sys::Array, list: &BeeList) -> Result<JsValue, JsValue> {
             let ops: Vec<Vec<u8>> = ops.iter().map(|o| js_sys::Uint8Array::new(&o).to_vec()).collect();
-            let r = self.0.merge_all(&ops, &JsCheck(check));
+            let r = self.0.merge_all(&ops, &list.0);
             let out = js_sys::Object::new();
             js_sys::Reflect::set(&out, &"applied".into(), &(r.applied as f64).into())?;
             js_sys::Reflect::set(&out, &"waiting".into(), &(r.waiting as f64).into())?;
             js_sys::Reflect::set(&out, &"refused".into(), &r.refused.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
+            js_sys::Reflect::set(&out, &"misses".into(), &list.0.misses.borrow().iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
             Ok(out.into())
         }
-        /// MERGE an operation through our check: "applied", "waiting", or "refused: why".
-        pub fn merge(&mut self, op: &[u8], check: js_sys::Object) -> String {
-            match self.0.merge(op, &JsCheck(check)) {
+        /// MERGE an operation through our check (`BeeList`): "applied", "waiting", or "refused: why".
+        pub fn merge(&mut self, op: &[u8], list: &BeeList) -> String {
+            match self.0.merge(op, &list.0) {
                 Merged::Applied => "applied".into(),
                 Merged::Waiting => "waiting".into(),
                 Merged::Refused(why) => format!("refused: {why}"),

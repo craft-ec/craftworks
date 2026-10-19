@@ -353,3 +353,21 @@ fn only_the_creators_root_is_taken_two_makers_one_tree() {
     assert!(matches!(gc.merge(&owners_root, &lc), Merged::Refused(_)), "control: the owner's root refused when it is not the creator");
     assert_eq!(gc.merge(&members_root, &lc), Merged::Applied);
 }
+
+/// OUR CHECK FROM THE LIST (`ListCheck`, page and node): an add allowed by the act that names the member's account; the
+/// owner's own placement by no act; the creator the owner (else the lowest listed); a refusal kept with what it saw.
+#[test]
+fn list_check_allows_by_the_act_and_keeps_what_a_refusal_saw() {
+    let (a, b) = ([1u8; 32], [2u8; 32]);
+    let mut l = ListCheck { owner: "did:o".into(), listed: vec!["did:b".into()], ..ListCheck::default() };
+    l.by_member.insert(a, "did:o".into());
+    l.by_member.insert(b, "did:b".into());
+    l.acts.insert([7; 32], (true, "did:b".into()));
+    assert!(l.allows(&[7; 32], true, &b), "the act letting B in");
+    assert!(!l.allows(&[7; 32], false, &b), "not a removal");
+    assert!(l.allows(&[0; 32], true, &a), "the owner's own placement, by no act");
+    assert!(!l.allows(&[0; 32], true, &b), "nobody else's");
+    assert_eq!(l.misses.borrow().len(), 2);
+    assert_eq!(l.creator().as_deref(), Some("did:o"));
+    assert_eq!(ListCheck { listed: vec!["did:z".into(), "did:c".into()], ..ListCheck::default() }.creator().as_deref(), Some("did:c"));
+}
