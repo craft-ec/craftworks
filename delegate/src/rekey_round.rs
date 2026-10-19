@@ -121,7 +121,7 @@ pub struct Held {
     pub(crate) bag: [u8; 32],
     sealed: [u8; 32],
     pub(crate) block: [u8; 32],
-    piece: [u8; 32],
+    pub(crate) piece: [u8; 32],
     pub(crate) idlog: [u8; 32],
     devices: [u8; 32],
 }

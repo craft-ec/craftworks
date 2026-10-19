@@ -50,7 +50,7 @@ pub enum Read {
 }
 
 /// A FILE READ, part by part.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileRead {
     slot: Vec<u8>,
     key: [u8; 32],
@@ -270,7 +270,7 @@ pub enum Wrote {
 }
 
 /// A FILE WRITTEN, part by part.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileWrite {
     slot: Vec<u8>,
     key: [u8; 32],
@@ -304,6 +304,12 @@ impl FileWrite {
     /// Its pieces stored per part (what an index lists).
     pub fn stored(&self) -> &[files::Listed] {
         &self.stored
+    }
+    pub fn key(&self) -> [u8; 32] {
+        self.key
+    }
+    pub fn size(&self) -> u64 {
+        self.size
     }
 
     /// Part `g` (its bytes): coded and PUT, the bytes kept until it is stored (a fragment not stored is replaced by

@@ -26,6 +26,8 @@ use crate::rekey_round::Held;
 /// K5: a BeeKEM space kept to its list by the node (its own file; a child, so it reads the round as upkeep does).
 #[path = "keys_round.rs"]
 mod keys_round;
+#[cfg(test)]
+pub(crate) use keys_round::ALL_AS_FILES;
 use crate::table::Reading;
 
 /// What upkeep asks of the network.
@@ -79,9 +81,18 @@ enum Step {
     Log { m: Moved },
     Commit { m: Moved },
     Next { m: Moved },
-    /// K5: a BeeKEM space's operations being written into this member's own `pub-keyops` (`rows` still to send;
-    /// `waiting`: the contracts whose answers come first; `blocks`: those were a flush's blocks).
-    Keys { rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, waiting: Vec<[u8; 32]>, blocks: bool },
+    /// K5: rows being written into this member's own feed of `table` — a BeeKEM space's operations (`pub-keyops`), or
+    /// the files written for them (`files`) — `rows` still to send; `waiting`: the contracts whose answers come first;
+    /// `blocks`: those were a flush's blocks.
+    Keys { table: String, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, waiting: Vec<[u8; 32]>, blocks: bool },
+    /// K5: a key operation stored as a FILE being read (`file_io::FileRead`, part by part); `rest`: the files still to
+    /// read `(key, reference)`.
+    KeyFileRead { key: String, read: crate::file_io::FileRead, parts: u64, rest: Vec<(String, String)> },
+    /// K5: a large key operation being stored as a FILE (`file_io::FileWrite`, the page's put); `left`: the large
+    /// operations still to store; `rows`: the `pub-keyops` rows so far.
+    KeyFileWrite { key: String, write: crate::file_io::FileWrite, left: Vec<String>, rows: Vec<(Vec<u8>, Option<Vec<u8>>)> },
+    /// The space's `files` table being read, to list the files written (`Round::listing`) in it.
+    ListFiles,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +116,12 @@ struct Round {
     /// cards — a newcomer is in no group yet).
     #[serde(default)]
     by_list: bool,
+    /// Key-operation files that did not read this round (not asked again until the next).
+    #[serde(default)]
+    files_unread: Vec<String>,
+    /// The files this round wrote, to list in the space's `files` table (`k/<id>` rows) once its operations are written.
+    #[serde(default)]
+    listing: Vec<(Vec<u8>, Option<Vec<u8>>)>,
 }
 
 pub const ROUND: &[u8] = b"identity_upkeep/round";
@@ -210,21 +227,27 @@ fn leaves(g: &craftworks_mls::Account, gov: Option<&craftworks_gov::Gov>, now_ms
         .collect()
 }
 
+/// A space's READERS: the epochs held here and whose devices are read (`account::reading_dids`, the page's too: the
+/// group's members and the owner). None: its group does not load here.
+pub(crate) fn readers<H: Host>(h: &H, member: &[u8; 32], m: &Mandate) -> Option<(std::collections::BTreeMap<u64, [u8; 32]>, Vec<[u8; 32]>)> {
+    let (_, epochs) = crate::rekey_round::space_of(h, member, m)?;
+    let g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state).ok()?;
+    let group: Vec<String> = leaves(&g, None, 0).into_iter().map(|l| l.did).collect();
+    let dids = craftworks_account::reading_dids(&group, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
+    Some((epochs, dids))
+}
+
 /// A space's round begun: its acts read, by its members' devices (the group's entries and its owner).
 fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: Vec<[u8; 32]>) -> Vec<Io> {
     while !rest.is_empty() {
         let space = rest.remove(0);
         let Some(m) = identity::upkeep_mandate(h, &member).and_then(|(_, ms)| ms.into_iter().find(|m| m.space == space)) else { continue };
-        let Some((_, epochs)) = crate::rekey_round::space_of(h, &member, &m) else {
+        let Some((epochs, dids)) = readers(h, &member, &m) else {
             followed(h, &member, &space, craftworks_rules::steps::UNLOADABLE, &format!("{}: its group does not load here: not followed", m.name));
             continue;
         };
-        let Ok(g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(space), &m.state) else { continue };
-        // WHOSE DEVICES are read (`account::reading_dids`, the page's too): the group's members and the owner.
-        let group: Vec<String> = leaves(&g, None, 0).into_iter().map(|l| l.did).collect();
-        let dids: Vec<[u8; 32]> = craftworks_account::reading_dids(&group, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
         let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
-        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false };
+        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false, files_unread: Vec::new(), listing: Vec::new() };
         keep(h, Some(&r));
         return io;
     }
@@ -261,6 +284,9 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
             Step::Commit { .. } => "the commit was never answered".into(),
             Step::Next { .. } => "the next epoch's log never answered".into(),
             Step::Keys { .. } => "a key operation's write never answered".into(),
+            Step::KeyFileRead { .. } => "a key operation's file never answered".into(),
+            Step::KeyFileWrite { .. } => "a key operation's file was never stored".into(),
+            Step::ListFiles => "the space's files never answered".into(),
         };
         followed(h, &r.member, &r.space, craftworks_rules::steps::STALLED, &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
         keep(h, None);
@@ -333,7 +359,7 @@ fn door_id(c: &Held, space: &[u8; 32], epoch: u64) -> [u8; 32] {
 /// The contract a step waits on (`CatchUp` matches its two itself).
 fn waits_for(r: &Round, c: &Held, channel: Option<&str>) -> Option<[u8; 32]> {
     match &r.step {
-        Step::Acts | Step::CatchUp { .. } | Step::Keys { .. } => None,
+        Step::Acts | Step::CatchUp { .. } | Step::Keys { .. } | Step::KeyFileRead { .. } | Step::KeyFileWrite { .. } | Step::ListFiles => None,
         Step::Log { m } | Step::Commit { m } => Some(epoch_log(&c.tail, channel?, &m.from_secret).id_bytes()),
         Step::Next { m } => Some(epoch_log(&c.tail, channel?, &m.secret).id_bytes()),
     }
@@ -427,21 +453,39 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             }
             catch_up(h, &c, r, &m)
         }
-        (Step::Keys { rows, mut waiting, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
+        (Step::Keys { table, rows, mut waiting, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
             waiting.retain(|w| *w != id);
             if !ok {
                 followed(h, &member, &r.space, craftworks_rules::steps::KEYS_REFUSED, &format!("{}: a key operation's write was refused: the next round reads again", m.name));
                 return next_space(h, &c, r);
             }
             if !waiting.is_empty() {
-                r.step = Step::Keys { rows, waiting, blocks };
+                r.step = Step::Keys { table, rows, waiting, blocks };
                 keep(h, Some(&r));
                 return Vec::new();
             }
-            if rows.is_empty() {
-                return next_space(h, &c, r);
+            if !rows.is_empty() {
+                return keys_round::write(h, &c, r, &m, &table, rows, blocks);
             }
-            keys_round::write(h, &c, r, &m, rows, blocks)
+            // Its operations written: the files written for them listed in the space's `files` table (as a page's put).
+            if table == "pub-keyops" && !r.listing.is_empty() {
+                return keys_round::list_files(h, &c, r, &m);
+            }
+            next_space(h, &c, r)
+        }
+        (Step::KeyFileRead { .. }, Reply::Got { id, state }) => keys_round::file_got(h, &c, r, &m, id, state, now_ms),
+        (Step::KeyFileWrite { .. }, Reply::Put { id, ok } | Reply::Updated { id, ok }) => keys_round::file_put(h, &c, r, &m, id, ok, now_ms),
+        (Step::ListFiles, Reply::Got { id, state }) => {
+            if !r.reading.wants(&id) {
+                return Vec::new();
+            }
+            let io = r.reading.got(&c.codes(), id, state);
+            if !r.reading.done() {
+                keep(h, Some(&r));
+                return io;
+            }
+            let rows = std::mem::take(&mut r.listing);
+            keys_round::write(h, &c, r, &m, "files", rows, false)
         }
         (Step::CatchUp { epoch, secret, mut log, mut door }, Reply::Got { id, state }) => {
             if id == epoch_log(&c.tail, &m.channel, &secret).id_bytes() && log.is_none() {

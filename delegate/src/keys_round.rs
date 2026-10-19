@@ -17,7 +17,9 @@ use sha2::Digest;
 
 use super::{followed, governance, hex, keep, next_space, whole, Io, Round, Step};
 use crate::rekey_round::Held;
+use crate::file_io::{FileRead, FileWrite, Read, Wrote};
 use crate::write::{self, Next};
+use craftworks_identity::unhex32;
 
 /// The most cards a round reads that it has not learned yet (the rest the next round): a round stays under the
 /// node's per-round cap on network operations.
@@ -95,15 +97,26 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         ..ListCheck::default()
     };
     // 1–2. THE OPERATIONS merged through our check, in any order (one ahead of its predecessors offered again).
-    // (`members::keyop_row`, the page's too. An operation stored as a FILE is not read here — the node fetches no files:
-    // a page's to merge; said.)
+    // (`members::keyop_row`, the page's too: one in its row, or a large one stored as a FILE — read once by
+    // `file_io::FileRead`, then kept here by its key.)
     use craftworks_rules::members::{keyop_row, KeyopRow};
-    let rows: Vec<KeyopRow> = r.reading.rows("pub-keyops").values().filter_map(|row| keyop_row(std::str::from_utf8(&row.value).ok()?)).collect();
-    let as_files = rows.iter().filter(|x| matches!(x, KeyopRow::File(_))).count();
-    if as_files > 0 {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_OPS_UNREAD, &format!("{}: {as_files} key operation(s) stored as files — a page merges them (the node reads no files)", m.name));
+    let mut ops: Vec<Vec<u8>> = Vec::new();
+    let mut to_read: Vec<(String, String)> = Vec::new();
+    for (k, row) in r.reading.rows("pub-keyops") {
+        let (Ok(k), Ok(v)) = (std::str::from_utf8(&k), std::str::from_utf8(&row.value)) else { continue };
+        match keyop_row(v) {
+            Some(KeyopRow::Op(o)) => ops.push(o),
+            Some(KeyopRow::File(f)) => match h.get_secret(&file_op_key(k)).filter(|o| !o.is_empty()) {
+                Some(o) => ops.push(o),
+                None if !r.files_unread.iter().any(|x| x == k) => to_read.push((k.to_string(), f.to_string())),
+                None => {}
+            },
+            None => {}
+        }
     }
-    let ops: Vec<Vec<u8>> = rows.into_iter().filter_map(|x| if let KeyopRow::Op(o) = x { Some(o) } else { None }).collect();
+    if !to_read.is_empty() {
+        return read_file(h, c, r, m, to_read);
+    }
     // (`Group::merge_all`: the one loop, the page's too.)
     let merged = g.merge_all(&ops, &list);
     let (refused, waiting) = (merged.refused.len(), merged.waiting);
@@ -146,39 +159,219 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     };
     let done = g.reconcile(&members, &|d| list.listed(d), &ins, &outs, rand);
     let ops = done.ops;
+    // AN OPERATION TOO LARGE FOR A ROW is stored as a file — new contracts, which reach the network only from a page
+    // (`upkeep::creates`, as a re-key's new pieces): then the change is a page's, and nothing of it is kept here (a
+    // generation nobody else could ever read).
+    if !crate::upkeep::creates() && ops.iter().any(|op| !inline(op)) {
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: the key change has an operation too large for a row: a page stores it (a contract made here stays on this node)", m.name));
+        return next_space(h, c, r);
+    }
     for (n, k) in g.generations() {
         identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
     }
-    let rows: Vec<(Vec<u8>, Option<Vec<u8>>)> = ops
-        .iter()
-        // (`members::keyop_*`, the page's too.)
-        .filter(|op| craftworks_rules::members::keyop_inline(op))
-        .map(|op| (craftworks_rules::members::keyop_key(op).into_bytes(), Some(hex(op).into_bytes())))
-        .collect();
-    let large = ops.len() - rows.len();
+    // Each operation in its row; a large one stored as a FILE first, its row naming it (`members::keyop_*`, the page's
+    // too).
+    let mut rows: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
+    let mut large: Vec<String> = Vec::new();
+    for op in &ops {
+        let key = craftworks_rules::members::keyop_key(op);
+        if inline(op) {
+            rows.push((key.into_bytes(), Some(hex(op).into_bytes())));
+        } else {
+            h.set_secret(&out_op_key(&key), op);
+            large.push(key);
+        }
+    }
     let names = |v: &[String]| v.iter().map(|d| d.get(12..20).unwrap_or(d).to_string()).collect::<Vec<_>>().join(", ");
     followed(
         h,
         &r.member,
         &r.space,
         craftworks_rules::steps::KEYS_RECONCILED,
-        &format!("{}: {} added ({}), {} removed ({}), one key change{}{}", m.name, done.added.len(), names(&done.added), done.removed.len(), names(&done.removed), if large > 0 { format!(" — {large} operation(s) too large for a row: a page's") } else { String::new() }, if done.not.is_empty() { format!(" — {}", done.not.join("; ")) } else { String::new() }),
+        &format!("{}: {} added ({}), {} removed ({}), one key change{}{}", m.name, done.added.len(), names(&done.added), done.removed.len(), names(&done.removed), if large.is_empty() { String::new() } else { format!(" — {} stored as files", large.len()) }, if done.not.is_empty() { format!(" — {}", done.not.join("; ")) } else { String::new() }),
     );
-    write(h, c, r, m, rows, false)
+    if !large.is_empty() {
+        return write_file(h, c, r, m, large, rows);
+    }
+    write(h, c, r, m, "pub-keyops", rows, false)
 }
 
-/// ONE STEP of writing the operations into this member's `pub-keyops` (listing first when the feed is new, a flush when
+/// Whether an operation goes in its row (`members::keyop_inline`, the page's too) — a test may send every one to a
+/// file (a large operation needs a large group).
+fn inline(op: &[u8]) -> bool {
+    #[cfg(test)]
+    if ALL_AS_FILES.with(|f| f.get()) {
+        return false;
+    }
+    craftworks_rules::members::keyop_inline(op)
+}
+#[cfg(test)]
+thread_local! {
+    pub(crate) static ALL_AS_FILES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A key operation read from its file, kept here by its key (its bytes never change: content-addressed).
+fn file_op_key(key: &str) -> Vec<u8> {
+    [b"identity_upkeep/keyop-file/".as_slice(), key.as_bytes()].concat()
+}
+/// A large operation this round made, held until its file is stored.
+fn out_op_key(key: &str) -> Vec<u8> {
+    [b"identity_upkeep/keyop-out/".as_slice(), key.as_bytes()].concat()
+}
+/// A part of the file being read.
+fn part_key(g: u64) -> Vec<u8> {
+    [b"identity_upkeep/keyop-read/part/".as_slice(), &g.to_be_bytes()].concat()
+}
+/// Where `file_io` keeps a key operation's read and write between calls.
+const READ_SLOT: &[u8] = b"keyop-read/";
+const WRITE_SLOT: &[u8] = b"keyop-write/";
+
+/// The first of `files` READ (`file_io::FileRead`, from the reference its row names).
+fn read_file<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, mut files: Vec<(String, String)>) -> Vec<Io> {
+    while !files.is_empty() {
+        let (key, f) = files.remove(0);
+        let refd: serde_json::Value = serde_json::from_str(&f).unwrap_or_default();
+        let (Some(fk), Some(root)) = (refd["key"].as_str().and_then(unhex32), refd["root"].as_str().and_then(unhex32)) else {
+            r.files_unread.push(key);
+            continue;
+        };
+        let (read, io) = FileRead::start(READ_SLOT, &c.piece, fk, root);
+        r.step = Step::KeyFileRead { key, read, parts: 0, rest: files };
+        keep(h, Some(&r));
+        return io;
+    }
+    // Every file read (or not this round): the operations merged.
+    let now = identity::upkeep_now_ms(h);
+    reconcile(h, c, r, m, now)
+}
+
+/// An answer to the file read: its parts kept; whole, checked against its key (`members::keyop_file_ok`, the
+/// page's too) and kept by it; then the next file.
+pub(super) fn file_got<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, id: [u8; 32], state: Option<Vec<u8>>, now_ms: u64) -> Vec<Io> {
+    let Step::KeyFileRead { key, mut read, mut parts, rest } = r.step.clone() else { return Vec::new() };
+    if !read.wants(&id) {
+        return Vec::new();
+    }
+    let failed = |h: &mut H, mut r: Round, why: String| {
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_OPS_UNREAD, &format!("{}: a key operation's file did not read — {why}", m.name));
+        r.files_unread.push(key.clone());
+        read_file(h, c, r, m, rest.clone())
+    };
+    let io = match read.got(h, &c.piece, id, state) {
+        Err(why) => return failed(h, r, why),
+        Ok(Read::Io(io)) => io,
+        Ok(Read::Part(g, plain)) => {
+            h.set_secret(&part_key(g), &plain);
+            parts = g + 1;
+            match read.next(h, &c.piece) {
+                Err(why) => return failed(h, r, why),
+                Ok(io) => io,
+            }
+        }
+    };
+    if read.done() {
+        let op: Vec<u8> = (0..parts).flat_map(|g| h.get_secret(&part_key(g)).unwrap_or_default()).collect();
+        for g in 0..parts {
+            h.set_secret(&part_key(g), &[]);
+        }
+        if !craftworks_rules::members::keyop_file_ok(&key, &op) {
+            return failed(h, r, "its bytes are not the operation its row names".into());
+        }
+        h.set_secret(&file_op_key(&key), &op);
+        let _ = now_ms;
+        return read_file(h, c, r, m, rest);
+    }
+    r.step = Step::KeyFileRead { key, read, parts, rest };
+    keep(h, Some(&r));
+    io
+}
+
+/// The first of the `large` operations STORED as a public file of the space (`file_io::FileWrite`, as a page's put:
+/// keyed by its content alone).
+fn write_file<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, mut large: Vec<String>, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>) -> Vec<Io> {
+    let Some(key) = (!large.is_empty()).then(|| large.remove(0)) else {
+        return write(h, c, r, m, "pub-keyops", rows, false);
+    };
+    let op = h.get_secret(&out_op_key(&key)).unwrap_or_default();
+    let fk = craftworks_files::content_key(blake3::hash(&op).as_bytes(), None);
+    let mut w = FileWrite::new(WRITE_SLOT, fk, [0; 32], op.len() as u64);
+    let io = w.part(h, &c.piece, 0, part_of(&op, 0));
+    r.step = Step::KeyFileWrite { key, write: w, left: large, rows };
+    keep(h, Some(&r));
+    io
+}
+/// Part `g` of a file's bytes (its plan's).
+fn part_of(b: &[u8], g: u64) -> &[u8] {
+    let plan = craftworks_files::Plan::of(b.len() as u64);
+    let per = plan.chunk * craftworks_files::GEN;
+    let from = (g as usize * per).min(b.len());
+    &b[from..(from + per).min(b.len())]
+}
+
+/// An answer to the file write: the next part, the index; stored, its row (`{ file: <reference> }`) and its listing
+/// (`rules::rekey::file_ref` / `key_row_write`, the page's too) — then the next file.
+pub(super) fn file_put<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, id: [u8; 32], ok: bool, now_ms: u64) -> Vec<Io> {
+    let Step::KeyFileWrite { key, write: mut w, left, mut rows } = r.step.clone() else { return Vec::new() };
+    if !w.wants(&id) {
+        return Vec::new();
+    }
+    let op = h.get_secret(&out_op_key(&key)).unwrap_or_default();
+    let step = match w.put(h, &c.piece, id, ok) {
+        Ok(s) => s,
+        Err(why) => {
+            followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WRITE, &format!("{}: a key operation's file was not stored — {why}", m.name));
+            return next_space(h, c, r);
+        }
+    };
+    let io = match step {
+        Wrote::Io(io) => io,
+        Wrote::Part(g) if (g + 1) < craftworks_files::Plan::of(w.size()).gens => w.part(h, &c.piece, g + 1, part_of(&op, g + 1)),
+        Wrote::Part(_) => match w.index(&c.piece) {
+            Ok(io) => io,
+            Err(why) => {
+                followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WRITE, &format!("{}: a key operation's file was not stored — {why}", m.name));
+                return next_space(h, c, r);
+            }
+        },
+        Wrote::Done(root) => {
+            let id = hex(root);
+            let space = hex(r.space);
+            let refd = craftworks_rules::rekey::file_ref(&id, Some(&space), &w.key(), &root, &[0; 32], w.size(), "file", "application/octet-stream");
+            rows.push((key.clone().into_bytes(), Some(serde_json::json!({ "file": refd }).to_string().into_bytes())));
+            let fields = serde_json::json!({ "key": hex(w.key()), "root": id, "b": hex([0u8; 32]), "h": hex(blake3::hash(&op).as_bytes()), "pub": true, "app": "members", "n": -1 });
+            let (k, v) = craftworks_rules::rekey::key_row_write(&id, fields.as_object().expect("an object"), now_ms);
+            r.listing.push((k.into_bytes(), Some(v.into_bytes())));
+            h.set_secret(&out_op_key(&key), &[]);
+            return write_file(h, c, r, m, left, rows);
+        }
+    };
+    r.step = Step::KeyFileWrite { key, write: w, left, rows };
+    keep(h, Some(&r));
+    io
+}
+
+/// The space's `files` table read, to list the files written in it.
+pub(super) fn list_files<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate) -> Vec<Io> {
+    let Some((epochs, dids)) = crate::upkeep::readers(h, &r.member, m) else { return next_space(h, c, r) };
+    let (reading, io) = crate::table::Reading::of_members(&c.codes(), r.space, epochs, &dids, &["files"]);
+    r.reading = reading;
+    r.step = Step::ListFiles;
+    keep(h, Some(&r));
+    io
+}
+
+/// ONE STEP of writing `rows` into this member's feed of `table` (listing first when the feed is new, a flush when
 /// due — then the rows again once answered).
-pub(super) fn write<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, blocks_put: bool) -> Vec<Io> {
+pub(super) fn write<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, table: &str, rows: Vec<(Vec<u8>, Option<Vec<u8>>)>, blocks_put: bool) -> Vec<Io> {
     let nonce: [u8; 12] = identity::upkeep_random(h).map(|b| b[..12].try_into().expect("12")).unwrap_or([0; 12]);
-    match write::rows(h, &r.member, &c.codes(), &mut r.reading, "pub-keyops", &rows, nonce, blocks_put, crate::upkeep::creates()) {
+    match write::rows(h, &r.member, &c.codes(), &mut r.reading, table, &rows, nonce, blocks_put, crate::upkeep::creates()) {
         Ok(Next::Done(sent)) => {
-            r.step = Step::Keys { rows: Vec::new(), waiting: sent.confirm, blocks: false };
+            r.step = Step::Keys { table: table.into(), rows: Vec::new(), waiting: sent.confirm, blocks: false };
             keep(h, Some(&r));
             sent.io
         }
         Ok(Next::More(sent)) => {
-            r.step = Step::Keys { rows, waiting: sent.confirm, blocks: sent.blocks };
+            r.step = Step::Keys { table: table.into(), rows, waiting: sent.confirm, blocks: sent.blocks };
             keep(h, Some(&r));
             sent.io
         }

@@ -507,6 +507,10 @@ impl Person {
 /// The OWNER's tree made (its first operation in its device's `pub-keyops`, listed in its catalog); B's card names its
 /// member. `acts` as the test says.
 fn bee_world(acts: &[serde_json::Value], b: &Person) -> World {
+    bee_world_with(acts, b, false)
+}
+/// …its first operation stored as a public FILE of the space, its row naming it (as a page stores a large one).
+fn bee_world_with(acts: &[serde_json::Value], b: &Person, as_file: bool) -> World {
     let mut w = world(acts, &[]);
     let me_key = SigningKey::from_bytes(&SEED);
     let cred = identity::credential(&w.owner.did, &w.member, &w.owner.mls_pub, &craftworks_account::owner_seed(&w.owner.entropy).unwrap());
@@ -524,9 +528,57 @@ fn bee_world(acts: &[serde_json::Value], b: &Person) -> World {
     let name = table::table_name(&SPACE, "pub-keyops");
     let mut k = Feed::new(&me_key, &name, &name, &ep);
     k.o.public = true;
-    k.put(&hex(&sha2_of(&first)), &hex(&first));
+    if as_file {
+        let refd = store_file(&mut w.net, &first);
+        k.put(&hex(&sha2_of(&first)), &json!({ "file": refd }).to_string());
+    } else {
+        k.put(&hex(&sha2_of(&first)), &hex(&first));
+    }
     w.net.seed_tail(&k.o);
     w
+}
+
+/// A PUBLIC FILE stored as a page stores one (its content's key, every part coded, its index): its reference.
+fn store_file(net: &mut Net, bytes: &[u8]) -> serde_json::Value {
+    use craftworks_files as files;
+    let key = files::content_key(blake3::hash(bytes).as_bytes(), None);
+    let plan = files::Plan::of(bytes.len() as u64);
+    let per = plan.chunk * files::GEN;
+    let mut stored = Vec::new();
+    for g in 0..plan.gens {
+        let part = &bytes[(g as usize * per).min(bytes.len())..((g as usize + 1) * per).min(bytes.len())];
+        let pcs = files::encode(&key, &plan, g, part, files::EXTRA);
+        for (_, p) in &pcs {
+            net.st.insert(id(PIECE, &p.address), [&[2u8][..], &[0u8; 32], &p.state].concat());
+        }
+        stored.push(pcs.iter().map(|(j, p)| (*j, p.hash())).collect());
+    }
+    let (index, root) = files::index_hashed(&key, &plan, &stored);
+    for p in index {
+        net.st.insert(id(PIECE, &p.address), [&[2u8][..], &[0u8; 32], &p.state].concat());
+    }
+    craftworks_rules::rekey::file_ref(&hex(root), Some(&hex(SPACE)), &key, &root, &[0; 32], bytes.len() as u64, "file", "application/octet-stream")
+}
+/// A file READ BACK as a reader does, from the `files` crate alone (the test's own reader, not the node's).
+fn read_back(net: &Net, refd: &serde_json::Value) -> Option<Vec<u8>> {
+    use craftworks_files as files;
+    let un = |k: &str| craftworks_identity::unhex32(refd[k].as_str()?);
+    let (key, root_hash) = (un("key")?, un("root")?);
+    let piece = |a: [u8; 32]| net.st.get(&id(PIECE, &a)).filter(|st| st.len() > 33).map(|st| st[33..].to_vec());
+    let root = files::Root::open(&key, &root_hash, &piece(files::hashed_address(&key, &root_hash))?).ok()?;
+    let mut out = Vec::new();
+    for g in 0..root.plan.gens {
+        let leaf = root.children[files::Root::leaf_of(g) as usize];
+        let listed = files::open_leaf(&key, &root.plan, files::Root::leaf_of(g), &leaf, &piece(files::hashed_address(&key, &leaf))?).ok()?[files::Root::gen_slot(g)].clone();
+        let mut d = files::Decoder::new(&key, &root.plan, g, listed.clone());
+        for (j, _) in &listed {
+            if let Some(st) = piece(files::fragment_address(&key, g, *j)) {
+                let _ = d.add(*j, &st);
+            }
+        }
+        out.extend(d.plain().ok()?);
+    }
+    Some(out)
 }
 fn epoch0(w: &World) -> [u8; 32] {
     identity::upkeep_mandate(&w.h, &w.member).unwrap().1[0].clone().state.len();
@@ -543,7 +595,14 @@ fn owner_ops(w: &World) -> Vec<Vec<u8>> {
     o.public = true;
     o.absorb(&w.net.st[&o.id_bytes()]);
     let Ok(data::Step::Ready(rows)) = o.opened() else { panic!("the feed reads") };
-    rows.values().filter_map(|env| craftworks_feed::open(env).and_then(|r| r.value)).map(|v| unhex(std::str::from_utf8(&v).unwrap())).collect()
+    // (A row is its operation, or names its file: read back.)
+    rows.values()
+        .filter_map(|env| craftworks_feed::open(env).and_then(|r| r.value))
+        .map(|v| match craftworks_rules::members::keyop_row(std::str::from_utf8(&v).unwrap()).expect("a key operation's row") {
+            craftworks_rules::members::KeyopRow::Op(o) => o,
+            craftworks_rules::members::KeyopRow::File(f) => read_back(&w.net, &f).expect("its file reads back"),
+        })
+        .collect()
 }
 /// B's page: merges every operation (no check needed for this reading: the operations are the node's own).
 struct Anyone;
@@ -745,4 +804,65 @@ fn one_stuck_rule_by_wakeups_or_time() {
     h.set_secret(UPKEEP_WAKEUPS, &10u64.to_le_bytes());
     clock(&mut h, 1000 + 3 * 60, 10);
     assert!(crate::upkeep::stuck(&h, w, ms), "three minutes with no wake-up");
+}
+
+
+/// K5, a key operation STORED AS A FILE (a page stores a large one so: a row holds 64 KB): the node READS it
+/// (`file_io::FileRead`) and merges it — here the owner's first, so without it the node is in no tree. B listed:
+/// added. Control — the file's pieces gone: the node says the file did not read, and adds nobody.
+#[test]
+fn k5_a_key_operation_stored_as_a_file_is_read_and_merged() {
+    let b = person(0x55);
+    let acts = [json!({ "act": "added", "did": b.id(), "at": 10 })];
+    let mut w = bee_world_with(&acts, &b, true);
+    w.run();
+    let said = w.said();
+    assert!(said.iter().any(|s| s.starts_with("keys-reconciled: ") && s.contains("1 added")), "said: {said:?}");
+    assert!(merged(&b, &owner_ops(&w)).placed(), "B placed: {said:?}");
+
+    let mut c = bee_world_with(&acts, &b, true);
+    c.net.st.retain(|_, st| !(st.len() > 33 && st[0] == 2 && st[1..33] == [0u8; 32]));
+    c.run();
+    let said = c.said();
+    assert!(said.iter().any(|s| s.starts_with("keys-ops-unread: ") && s.contains("did not read")), "said: {said:?}");
+    assert!(!said.iter().any(|s| s.contains("1 added")), "nobody added: {said:?}");
+}
+
+/// K5, a LARGE key operation made by the node (here every one, by the test's switch): STORED AS A FILE
+/// (`file_io::FileWrite`, as a page's put), its row naming it, the file listed in the space's `files` table — and the
+/// next round reads it back (in step, nothing written). On a network where a contract made here does not reach the
+/// others (`upkeep::creates`, live today): the change is left to a page, and no generation of it kept.
+#[test]
+fn k5_a_large_operation_is_stored_as_a_file_and_read_back() {
+    let b = person(0x55);
+    let acts = [json!({ "act": "added", "did": b.id(), "at": 10 })];
+    crate::upkeep::ALL_AS_FILES.with(|f| f.set(true));
+    // Live today: nothing made here reaches the others — left to a page, nothing kept.
+    let mut c = bee_world(&acts, &b);
+    let before = identity::kept_epochs(&c.h, &c.member, &Some(SPACE)).len();
+    c.run();
+    let said = c.said();
+    assert!(said.iter().any(|s| s.starts_with("keys-wait: ") && s.contains("too large for a row")), "said: {said:?}");
+    assert_eq!(identity::kept_epochs(&c.h, &c.member, &Some(SPACE)).len(), before, "no generation of it kept");
+    assert!(!merged(&b, &owner_ops(&c)).placed(), "B not added here");
+    // Where it does reach them.
+    crate::upkeep::CREATES.with(|f| f.set(true));
+    let mut w = bee_world(&acts, &b);
+    w.run();
+    crate::upkeep::ALL_AS_FILES.with(|f| f.set(false));
+    let said = w.said();
+    assert!(said.iter().any(|s| s.starts_with("keys-reconciled: ") && s.contains("stored as files")), "said: {said:?}");
+    // B, reading every row (a file read back by the test's own reader), is placed.
+    assert!(merged(&b, &owner_ops(&w)).placed(), "B placed: {said:?}");
+    // Listed in the space's `files` table, as a page's put lists it.
+    let name = table::table_name(&SPACE, "files");
+    let label = identity::blind_name(&identity::space_table_key(&SPACE, &name), &name);
+    let mut o = data::Open::new(TAIL, &w.member, &label);
+    o.set_table_key(identity::space_table_key(&SPACE, &name));
+    assert!(w.net.st.contains_key(&o.id_bytes()), "its files feed written: {:?}", w.said());
+    // The next round: read back, in step.
+    w.run();
+    let said = w.said();
+    crate::upkeep::CREATES.with(|f| f.set(crate::upkeep::NEW_CONTRACTS_REACH_THE_NETWORK));
+    assert!(said.iter().any(|s| s.starts_with("keys-in-step: ")), "said: {said:?}");
 }
