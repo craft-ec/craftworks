@@ -138,6 +138,10 @@ try {
       await u.p.goto(site(u.port) + "#/settings");
       await u.p.waitForTimeout(40000);
       const who = await u.ev(async () => (await (await app.require("space")).account())?.id ?? null).catch(e => "ERR " + e.message);
+      // THE ACCOUNT's KEYS after the login, traced (a run of 7 on 10-19 lost the account's own epoch 0 — "another
+      // branch's" — after a relogin; this is what tells why if it happens again).
+      const trace = await u.ev(() => new Promise(r => { const o = []; app.on(e => /lifecycle (account|session)|account keys|account's|recover|keys:|epoch 0|sealed|fork|branch/i.test(`${e.step} ${e.what ?? ""}`) && o.push(`${e.t ?? ""} ${e.step}: ${String(e.what ?? "").slice(0, 200)}`)); setTimeout(() => r(o.slice(-25)), 50); })).catch(e => ["ERR " + e.message]);
+      say(`4t ${n} account trace:\n     ` + trace.join("\n     "));
       say(`4 ${n} unlocks on the NEW build: ${r}; account ${who === did ? "is " + n + "'s" : "WRONG: " + who}`);
       if (who !== did) throw new Error(`${n}'s unlock did not open ${n}'s account`);
     }
