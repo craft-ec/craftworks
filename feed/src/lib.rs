@@ -150,7 +150,6 @@ mod tests {
         assert!(within_cap(&v, 5) && !within_cap(&v, 4));
         assert!(!within_cap(b"not a version", u64::MAX) && seq_of(b"not a version").is_none());
     }
-    use super::*;
 
     const A: [u8; 32] = [0xA; 32];
     const B: [u8; 32] = [0xB; 32];
