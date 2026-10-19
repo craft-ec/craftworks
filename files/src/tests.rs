@@ -285,6 +285,13 @@ fn a_huge_file_s_index_grows_an_inner_level() {
     };
     let root = Root::open(&key, &root_hash, &at(hashed_address(&key, &root_hash))).unwrap();
     assert_eq!(root.depth, 1);
+    // EVERY index piece below the root (`Root::index_pieces`): each one `index_hashed` stored, the root aside.
+    assert_eq!(root.index_pieces().len(), pieces.len() - 1);
+    let leaves = gens.div_ceil(GENS_PER_LEAF as u64);
+    assert_eq!(root.index_pieces().iter().filter(|(l, _)| *l == 1).count() as u64, leaves.div_ceil(FANOUT as u64));
+    // A piece's place in its parent (`Root::parent`, `gen_slot`), the page's walk and the node's.
+    assert_eq!(Root::parent(0, FANOUT as u64 + 3), ((1, 1), 3));
+    assert_eq!(Root::gen_slot(GENS_PER_LEAF as u64 + 5), 5);
     // The last generation, through the inner level down to its leaf.
     let g = gens - 1;
     let leaf = Root::leaf_of(g);

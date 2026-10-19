@@ -300,22 +300,23 @@ export async function start(ctx) {
           const root = JSON.parse(glue.file_root(key, ref.root, state));
           // The hash of index piece `n` at `level` (from its parent, read once): what a hash-addressed one is fetched by.
           const inner = new Map();
+          // (The walk — a piece's parent, a generation's leaf — `files::Root`'s, the node's too.)
           const indexHash = async (level, n) => {
             if (level === root.depth) return root.children[n];
-            const at = Math.floor(n / 7000);
-            const k = `${level + 1}/${at}`;
+            const [pl, pn, slot] = glue.file_parent(level, n);
+            const k = `${pl}/${pn}`;
             const got = await ctx.cache(inner, k, async () => {
-              const h = await indexHash(level + 1, at);
+              const h = await indexHash(pl, pn);
               const st = await fetchState(core.file_index_id(key, h), `${ref.name}: its index`);
               if (!st) throw new Error(`${ref.name}: part of its index is missing`);
               return glue.file_inner(key, h, st);
             });
-            return got[n % 7000];
+            return got[slot];
           };
           const leaves = new Map();
           // The leaf that lists generation g, down from the root through any inner levels.
           const leafOf = async g => {
-            const n = Math.floor(g / 192);
+            const [n, slot] = glue.file_leaf_of(g);
             // (A leaf that failed to read is not kept: read again next time — it was before, review 10-17.)
             const got = await ctx.cache(leaves, n, async () => {
               const h = await indexHash(0, n);
@@ -323,9 +324,11 @@ export async function start(ctx) {
               if (!st) throw new Error(`${ref.name}: part of its index is missing`);
               return JSON.parse(glue.file_leaf(key, root.plan.size, n, h, st));
             });
-            return got[g % 192];
+            return got[slot];
           };
-          return { key, depth: root.depth, plan: root.plan, listed: leafOf, rootHash: ref.root, indexHash };
+          // Every index piece below the root, `[level, n]` (what keep, burn and a keeper's listing walk).
+          const indexPieces = JSON.parse(glue.file_index_pieces(root.plan.size, root.depth));
+          return { key, depth: root.depth, plan: root.plan, listed: leafOf, rootHash: ref.root, indexHash, indexPieces };
     });
   }
 
@@ -465,9 +468,7 @@ export async function start(ctx) {
     const secret = row.x ? bytes(row.x) : null;
     if (!secret || hex(await sha(secret)) !== row.b) throw new Error("its burn secret is not known here");
     const puts = [core.file_burn(key, "root", 0, 0, secret, f.rootHash)];
-    const leaves = Math.ceil(f.plan.gens / 192);
-    for (let n = 0; n < leaves; n++) puts.push(core.file_burn(key, "index", 0, n, secret, await f.indexHash(0, n)));
-    for (let level = 1; level <= f.depth; level++) for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) puts.push(core.file_burn(key, "index", level, n, secret, await f.indexHash(level, n)));
+    for (const [level, n] of f.indexPieces) puts.push(core.file_burn(key, "index", level, n, secret, await f.indexHash(level, n)));
     for (let g = 0; g < f.plan.gens; g++) for (const [j] of await f.listed(g)) puts.push(core.file_burn(key, "fragment", g, j, secret, ""));
     const ok = await Promise.all(puts.map(p => putOne([0, ...Array.from(p)], `${row.id.slice(0, 8)}…: burning`)));
     ctx.log("files", { what: `${row.id.slice(0, 8)}…: ${ok.filter(Boolean).length} of ${ok.length} old pieces burned` });
@@ -495,16 +496,10 @@ export async function start(ctx) {
       return true;
     };
     await one("root", 0, 0, core.file_root_id(f.key, f.rootHash), f.rootHash);
-    const leaves = Math.ceil(f.plan.gens / 192);
-    for (let n = 0; n < leaves; n++) {
-      const h = await f.indexHash(0, n);
-      await one("index", 0, n, core.file_index_id(f.key, h), h);
+    for (const [level, n] of f.indexPieces) {
+      const h = await f.indexHash(level, n);
+      await one("index", level, n, core.file_index_id(f.key, h), h);
     }
-    for (let level = 1; level <= f.depth; level++)
-      for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) {
-        const h = await f.indexHash(level, n);
-        await one("index", level, n, core.file_index_id(f.key, h), h);
-      }
     // Each generation: its listed fragments read and put again; a DEGRADED one (some missing, 16 still there) REPAIRED —
     // rebuilt from any 16 and its missing fragments made again (a fragment is deterministic: the same bytes, address and
     // hash as the index lists) and put. Measured 2026-10-06: 14% of a video's fragments unanswered a day after upload as
@@ -540,10 +535,7 @@ export async function start(ctx) {
   async function pieces(sp, row) {
     const f = await open({ key: row.key, root: row.root, name: `${row.id.slice(0, 8)}…`, ...(row.b ? { b: row.b } : {}) });
     const out = [[core.file_root_id(f.key, f.rootHash), 0]];
-    const leaves = Math.ceil(f.plan.gens / 192);
-    for (let n = 0; n < leaves; n++) out.push([core.file_index_id(f.key, await f.indexHash(0, n)), 0]);
-    for (let level = 1; level <= f.depth; level++)
-      for (let n = 0; n < Math.ceil(leaves / 7000 ** level); n++) out.push([core.file_index_id(f.key, await f.indexHash(level, n)), 0]);
+    for (const [level, n] of f.indexPieces) out.push([core.file_index_id(f.key, await f.indexHash(level, n)), 0]);
     for (let g = 0; g < f.plan.gens; g++) for (const [j] of await f.listed(g)) out.push([core.file_fragment_id(f.key, g, j), f.plan.chunk]);
     return out;
   }

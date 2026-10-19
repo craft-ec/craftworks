@@ -413,6 +413,26 @@ impl Root {
     pub fn leaf_of(g: u64) -> u64 {
         g / GENS_PER_LEAF as u64
     }
+    /// Where generation `g` is in its leaf's listing.
+    pub fn gen_slot(g: u64) -> usize {
+        (g % GENS_PER_LEAF as u64) as usize
+    }
+    /// Index piece `n` at `level` (0: the leaves): its PARENT one level up `(level + 1, number)` and its place in it —
+    /// at `depth` its parent is the root (`children[n]`).
+    pub fn parent(level: u8, n: u64) -> ((u8, u64), usize) {
+        ((level + 1, n / FANOUT as u64), (n % FANOUT as u64) as usize)
+    }
+    /// EVERY index piece below the root, `(level, number)`, leaves first — what a keep, a burn or a keeper's listing
+    /// walks (the root itself is the reference's).
+    pub fn index_pieces(&self) -> Vec<(u8, u64)> {
+        let mut out = Vec::new();
+        let mut count = self.plan.gens.div_ceil(GENS_PER_LEAF as u64).max(1);
+        for level in 0..=self.depth {
+            out.extend((0..count).map(|n| (level, n)));
+            count = count.div_ceil(FANOUT as u64);
+        }
+        out
+    }
     /// The path from the root to leaf `leaf`: `(level, piece number)` per level below the root, top first; the hash of
     /// each comes from its parent (`Inner::open`), the first from `children`.
     pub fn path(&self, leaf: u64) -> Vec<(u8, u64)> {

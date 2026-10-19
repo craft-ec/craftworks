@@ -39,6 +39,8 @@ pub fn burned(secret: &[u8; 32]) -> Vec<u8> {
 enum Phase {
     /// Its root asked.
     Root,
+    /// Inner index piece `(level, n)` asked (an index deeper than one level), walking down to its leaves.
+    Inner(u8, u64),
     /// Leaf `n` asked.
     Leaf(u64),
     /// Generation g's fragments asked: those still out.
@@ -64,7 +66,10 @@ pub struct Recode {
     pub n: i64,
     pub h: [u8; 32],
     size: u64,
-    leaves: Vec<[u8; 32]>,
+    depth: u8,
+    /// Every index piece's hash known so far, `(level, n)` (the leaves at level 0): from the root down (`files::Root`'s
+    /// walk, the page's too).
+    index: std::collections::BTreeMap<(u8, u64), [u8; 32]>,
     /// Each generation's listed fragments, as its leaf says (filled leaf by leaf).
     listed: Vec<Vec<(u8, [u8; 32])>>,
     /// The new pieces stored per generation.
@@ -117,7 +122,8 @@ impl Recode {
             n,
             h,
             size: 0,
-            leaves: Vec::new(),
+            depth: 0,
+            index: Default::default(),
             listed: Vec::new(),
             stored: Vec::new(),
             root: None,
@@ -181,14 +187,27 @@ impl Recode {
         serde_json::Value::Object(v).to_string()
     }
 
-    /// The OLD pieces, to burn: its root, its leaves, every listed fragment.
+    /// The OLD pieces, to burn: its root, every index piece, every listed fragment.
     fn old_pieces(&self) -> Vec<[u8; 32]> {
         let mut out = vec![files::hashed_address(&self.old_key, &self.old_root)];
-        out.extend(self.leaves.iter().map(|h| files::hashed_address(&self.old_key, h)));
+        out.extend(self.index.values().map(|h| files::hashed_address(&self.old_key, h)));
         for (g, l) in self.listed.iter().enumerate() {
             out.extend(l.iter().map(|(j, _)| files::fragment_address(&self.old_key, g as u64, *j)));
         }
         out
+    }
+
+    /// DOWN THE INDEX: the next inner piece not read yet (top first), else the first generation.
+    fn walk<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32]) -> Result<Vec<Io>, String> {
+        let root = files::Root { plan: self.plan(), depth: self.depth, children: Vec::new() };
+        let mut inner: Vec<(u8, u64)> = root.index_pieces().into_iter().filter(|(l, _)| *l > 0).collect();
+        inner.reverse();
+        if let Some(&(level, n)) = inner.iter().find(|p| !self.index.contains_key(&(p.0 - 1, p.1 * files::FANOUT as u64))) {
+            let hash = *self.index.get(&(level, n)).ok_or("an inner piece its parent does not list")?;
+            self.phase = Phase::Inner(level, n);
+            return Ok(vec![Io::Get { id: crate::upkeep::id_of(piece_hash, &files::hashed_address(&self.old_key, &hash)), subscribe: false }]);
+        }
+        self.ask_gen(h, piece_hash, 0)
     }
 
     /// Generation g's fragments asked (its leaf read first when not yet).
@@ -209,8 +228,8 @@ impl Recode {
             return Ok(io);
         }
         if (g as usize) >= self.listed.len() {
-            let n = g / files::GENS_PER_LEAF as u64;
-            let leaf = *self.leaves.get(n as usize).ok_or("a leaf its root does not list")?;
+            let n = files::Root::leaf_of(g);
+            let leaf = *self.index.get(&(0, n)).ok_or("a leaf its index does not list")?;
             self.phase = Phase::Leaf(n);
             return Ok(vec![Io::Get { id: crate::upkeep::id_of(piece_hash, &files::hashed_address(&self.old_key, &leaf)), subscribe: false }]);
         }
@@ -268,17 +287,26 @@ impl Recode {
             Phase::Root => {
                 let st = piece.ok_or("its root is not on the network")?;
                 let r = files::Root::open(&self.old_key, &self.old_root, &st).map_err(|e| format!("its root: {e:?}"))?;
-                if r.depth != 0 {
-                    return Err("an index deeper than one level (a page re-keys it)".into());
-                }
                 self.size = r.plan.size;
-                self.leaves = r.children.clone();
+                self.depth = r.depth;
+                self.index = r.children.iter().enumerate().map(|(n, c)| ((r.depth, n as u64), *c)).collect();
                 self.stored = Vec::new();
-                self.ask_gen(h, piece_hash, 0)
+                self.walk(h, piece_hash)
+            }
+            Phase::Inner(level, n) => {
+                let st = piece.ok_or("part of its index is missing")?;
+                let hash = self.index[&(level, n)];
+                let children = files::open_inner(&self.old_key, &hash, &st).map_err(|e| format!("its index: {e:?}"))?;
+                // (Each child's place: `files::Root::parent`, the one walk.)
+                let first = n * files::FANOUT as u64;
+                for (i, c) in children.iter().enumerate() {
+                    self.index.insert((level - 1, first + i as u64), *c);
+                }
+                self.walk(h, piece_hash)
             }
             Phase::Leaf(n) => {
                 let st = piece.ok_or("part of its index is missing")?;
-                let hash = self.leaves[n as usize];
+                let hash = self.index[&(0, n)];
                 let gens = files::open_leaf(&self.old_key, &self.plan(), n, &hash, &st).map_err(|e| format!("its index: {e:?}"))?;
                 self.listed.extend(gens);
                 let g = self.stored.len() as u64;

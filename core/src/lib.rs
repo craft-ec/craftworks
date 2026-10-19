@@ -4018,6 +4018,24 @@ mod js {
         })
         .to_string())
     }
+    /// THE INDEX WALK (`files::Root`, the node's too). The leaf listing generation `g` and its place there:
+    /// `[leaf, slot]`.
+    #[wasm_bindgen]
+    pub fn file_leaf_of(g: f64) -> Vec<f64> {
+        vec![craftworks_files::Root::leaf_of(g as u64) as f64, craftworks_files::Root::gen_slot(g as u64) as f64]
+    }
+    /// Index piece `n` at `level`: its parent and its place there, `[parentLevel, parentN, slot]`.
+    #[wasm_bindgen]
+    pub fn file_parent(level: u8, n: f64) -> Vec<f64> {
+        let ((l, p), slot) = craftworks_files::Root::parent(level, n as u64);
+        vec![l as f64, p as f64, slot as f64]
+    }
+    /// Every index piece below a root of `depth` for a file of `size`: JSON `[[level, n]]`, leaves first.
+    #[wasm_bindgen]
+    pub fn file_index_pieces(size: f64, depth: u8) -> String {
+        let r = craftworks_files::Root { plan: craftworks_files::Plan::of(size as u64), depth, children: Vec::new() };
+        json!(r.index_pieces()).to_string()
+    }
     /// An inner index piece opened: its children's hashes.
     #[wasm_bindgen]
     pub fn file_inner(key: &[u8], hash: &str, state: &[u8]) -> Result<Vec<String>, JsValue> {
