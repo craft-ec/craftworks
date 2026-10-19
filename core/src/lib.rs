@@ -2332,6 +2332,11 @@ mod js {
     pub fn turn_wait(k: f64, since: f64, now: f64) -> f64 {
         craftworks_rules::guards::turn_wait(k.max(0.0) as u64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS) as f64
     }
+    /// AN ENTRY's OUTCOME (`guards::entry_outcome`, the node's too): "apply", "skip" or "defer".
+    #[wasm_bindgen]
+    pub fn guard_entry_outcome(taken: bool, whole: bool) -> String {
+        format!("{:?}", craftworks_rules::guards::entry_outcome(taken, whole)).to_lowercase()
+    }
     /// THE LIST READ WHOLE (`guards::list_whole`, the node's too): `devices` JSON `["<did>: why"…]` (listed members
     /// whose devices did not read), `feeds` JSON `[[table, why]…]`, `missing` acts named and not held. `undefined`: whole.
     #[wasm_bindgen]

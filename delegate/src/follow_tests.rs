@@ -707,3 +707,22 @@ fn an_unread_card_with_a_devices_contract_is_not_a_short_list() {
     assert!(!said.iter().any(|s| s.starts_with("short")), "not short: {said:?}");
     assert!(!w.leaves().contains(&x.id()), "the removal went ahead: {said:?}");
 }
+
+/// 10-19: ON A SHORT READ an entry the list check TAKES is applied all the same (its answer never changes as more is
+/// read — `guards::entry_outcome`, the page's too); nobody is taken out. Y, a member, never answers (the read short).
+/// Before: the node decided nothing on a short read, B's entry left waiting.
+#[test]
+fn a_short_read_still_applies_a_listed_entry() {
+    let (b, y) = (person(0x57), person(0x58));
+    let acts = [json!({ "act": "member", "did": b.id(), "at": 10 })];
+    let mut w = world(&acts, &[&y]);
+    b.publish(&mut w.net, &[]); // (Y's key log never answers: the read is short.)
+    let e = w.mandate().epoch;
+    let info = w.group().group_info().unwrap();
+    let (bg, b_in) = b.enter(&info, b"");
+    w.door_entry(e, &b_in);
+    w.run();
+    assert!(w.said().iter().any(|s| s.starts_with("short")), "short: {:?}", w.said());
+    assert_eq!(w.mandate().epoch, e + 1, "B's entry applied: {:?}", w.said());
+    assert_eq!(w.group().epoch_secret().unwrap(), bg.epoch_secret().unwrap(), "the node follows B's entry");
+}

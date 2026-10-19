@@ -95,6 +95,23 @@ pub fn list_whole(devices: &[String], feeds: &[(String, String)], missing: usize
     whole(&unread, missing)
 }
 
+/// AN ENTRY's OUTCOME (page and node): APPLIED when the list check takes it — its answer never changes as more of the
+/// list is read (EVER listed), so a short read applies it too; one it does not take is SKIPPED only on a whole read and
+/// DEFERRED on a short one (10-19: the node decided nothing on a short read, the page applied what the check took).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryOutcome {
+    Apply,
+    Skip,
+    Defer,
+}
+pub fn entry_outcome(taken: bool, whole: bool) -> EntryOutcome {
+    match (taken, whole) {
+        (true, _) => EntryOutcome::Apply,
+        (false, true) => EntryOutcome::Skip,
+        (false, false) => EntryOutcome::Defer,
+    }
+}
+
 /// LEADS PAST: a group this device's own node moved (its removals) is taken only if it leads past this device's epoch
 /// (an older one never takes it back).
 pub fn leads_past(to: u64, held: Option<u64>) -> Verdict {
@@ -146,6 +163,7 @@ mod tests {
     fn each_guard_says_why_not() {
         assert!(leads_past(5, Some(5)).is_err() && leads_past(6, Some(5)).is_ok() && leads_past(1, None).is_ok());
         assert!(whole(&[], 0).is_ok() && whole(&["x: no key log".into()], 0).is_err() && whole(&[], 2).is_err());
+        assert_eq!((entry_outcome(true, false), entry_outcome(false, true), entry_outcome(false, false)), (EntryOutcome::Apply, EntryOutcome::Skip, EntryOutcome::Defer));
         // THE LIST's own feeds count, other tables' do not; an unread member's devices count (page and node the same).
         let feeds = |t: &str| vec![(t.to_string(), "not read".to_string())];
         assert!(list_whole(&[], &feeds("x0cce26765a1f-acts"), 0).is_err() && list_whole(&[], &feeds("x0cce26765a1f-pub-acts"), 0).is_err());

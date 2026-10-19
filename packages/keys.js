@@ -777,13 +777,10 @@ export async function start(ctx) {
     const apply = (mm, commit) => {
       const l = lists.get(sp.id);
       const r = mm.apply_checked(commit, l?.check ?? { listed: () => false, admits: () => false, mayTakeOut: () => false });
-      if (r.applied) return r;
-      if (!l || !l.whole) {
-        // (The list asked for: `roles` reads the acts with the keys held so far and hands it here.)
-        if (!l) ctx.background("keys: roles.of", ctx.require("roles").then(x => x.of(sp)));
-        return { defer: l ? "the list was not read whole: nothing decided from a short read" : "the list not read yet" };
-      }
-      return { skipped: r.why };
+      // THE OUTCOME (`guards::entry_outcome`, the node's too). (No list yet: `roles` asked to read the acts.)
+      if (!l) ctx.background("keys: roles.of", ctx.require("roles").then(x => x.of(sp)));
+      const out = glue.guard_entry_outcome(!!r.applied, !!l?.whole);
+      return out === "apply" ? r : out === "skip" ? { skipped: r.why } : { defer: l ? "the list was not read whole: nothing decided from a short read" : "the list not read yet" };
     };
     const logs = logsOf({
       mls: () => m,

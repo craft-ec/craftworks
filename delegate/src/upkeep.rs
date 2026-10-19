@@ -522,11 +522,8 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
 fn entries<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, epoch: u64, secret: &[u8; 32], log: Option<Vec<u8>>, door: Option<Vec<u8>>, now_ms: u64) -> Vec<Io> {
     use craftworks_rules::ordering;
     let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, c, r) };
-    // NOTHING DECIDED FROM A SHORT READ (I6): no entry judged, nobody taken out.
-    if let Err(why) = whole(&r, &gov) {
-        followed(h, &r.member, &r.space, "short", &format!("{}: {why} — nothing decided this round", m.name));
-        return next_space(h, c, r);
-    }
+    // A SHORT READ (I6): an entry the check takes is applied all the same; one it does not is deferred; nobody out.
+    let short = whole(&r, &gov).err();
     let mut o = epoch_log(&c.tail, &m.channel, secret);
     if let Some(st) = &log {
         o.absorb(st);
@@ -556,9 +553,13 @@ fn entries<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, epoch: u64, 
                 r.state = state;
                 return catch_up(h, c, r, m);
             }
-            Ok(craftworks_mls::Applied::Skipped(why)) => followed(h, &r.member, &r.space, "entry-skipped", &format!("{}: epoch {epoch}: {why}", m.name)),
-            Err(_) => {}
+            Ok(craftworks_mls::Applied::Skipped(why)) if craftworks_rules::guards::entry_outcome(false, short.is_none()) == craftworks_rules::guards::EntryOutcome::Skip => followed(h, &r.member, &r.space, "entry-skipped", &format!("{}: epoch {epoch}: {why}", m.name)),
+            _ => {}
         }
+    }
+    if let Some(why) = short {
+        followed(h, &r.member, &r.space, "short", &format!("{}: {why} — nobody out this round", m.name));
+        return next_space(h, c, r);
     }
     follow_out(h, c, r, m, &gov, g, now_ms)
 }
