@@ -7,7 +7,7 @@ pub use craftworks_account as account;
 /// A table as a tail: its own crate (the identity delegate drives it too).
 pub use craftworks_data as data;
 
-use craftworks_identity::{decode_answer, encode_request, hex, unhex32, Answer, Request};
+use craftworks_identity::{decode_answer, encode_request, hex, Answer, Request};
 pub use craftworks_identity::unhex;
 use serde_json::{json, Value};
 use wire::{AckKind, Incoming, Reassembler};
@@ -1598,7 +1598,7 @@ mod js {
         pub fn space_writers(members: &str, departed: &str) -> Result<String, JsValue> {
             let m: Vec<(String, Vec<String>)> = serde_json::from_str(members).map_err(|e| err(format!("members: {e}")))?;
             let d: Vec<(String, String)> = serde_json::from_str(departed).map_err(|e| err(format!("departed: {e}")))?;
-            let m: Vec<(String, Vec<[u8; 32]>)> = m.into_iter().map(|(did, ns)| (did, ns.iter().filter_map(|h| unhex32(h)).collect())).collect();
+            let m: Vec<(String, Vec<[u8; 32]>)> = m.into_iter().map(|(did, ns)| (did, ns.iter().filter_map(|h| craftworks_identity::unhex32(h)).collect())).collect();
             let out: Vec<serde_json::Value> = account::writers(&m, &d).into_iter().map(|w| serde_json::json!({ "node": hex(&w.node), "did": w.did, "caps": w.caps })).collect();
             Ok(serde_json::Value::Array(out).to_string())
         }
@@ -1612,9 +1612,9 @@ mod js {
         /// THE WRITERS A TABLE IS READ FROM (`craftworks_account::table_writers`, the node's too): hex JSON lists of the
         /// members' devices, the writers bag's listed, the open list's writers for this table; `blind`, `public`; `me`.
         pub fn table_writers(devices: &str, listed: &str, blind: bool, named: &str, public: bool, me: &str) -> Result<String, JsValue> {
-            let hexes = |j: &str, what: &str| -> Result<Vec<[u8; 32]>, JsValue> { Ok(serde_json::from_str::<Vec<String>>(j).map_err(|e| err(format!("{what}: {e}")))?.iter().filter_map(|h| unhex32(h)).collect()) };
+            let hexes = |j: &str, what: &str| -> Result<Vec<[u8; 32]>, JsValue> { Ok(serde_json::from_str::<Vec<String>>(j).map_err(|e| err(format!("{what}: {e}")))?.iter().filter_map(|h| craftworks_identity::unhex32(h)).collect()) };
             let listed: std::collections::BTreeSet<[u8; 32]> = hexes(listed, "listed")?.into_iter().collect();
-            let me = unhex32(me).unwrap_or([0; 32]);
+            let me = craftworks_identity::unhex32(me).unwrap_or([0; 32]);
             let out = account::table_writers(&hexes(devices, "devices")?, &listed, blind, &hexes(named, "named")?, public, &me);
             Ok(serde_json::to_string(&out.iter().map(|n| hex(n)).collect::<Vec<_>>()).expect("a list encodes"))
         }
@@ -2369,7 +2369,7 @@ mod js {
     /// the card's `beekem` value → JSON `{ id, leaf }` (hex) or `{ why }`.
     #[wasm_bindgen]
     pub fn beekem_member(did: &[u8], data_key: &str, value: &str) -> String {
-        let (Ok(did), Some(dk)) = (<[u8; 32]>::try_from(did), unhex32(data_key)) else { return json!({ "why": "its key log not read" }).to_string() };
+        let (Ok(did), Some(dk)) = (<[u8; 32]>::try_from(did), craftworks_identity::unhex32(data_key)) else { return json!({ "why": "its key log not read" }).to_string() };
         match craftworks_account::beekem_member(&did, &dk, value.as_bytes()) {
             Ok((id, leaf)) => json!({ "id": hex(&id), "leaf": hex(&leaf) }).to_string(),
             Err(why) => json!({ "why": why }).to_string(),
@@ -2550,7 +2550,7 @@ mod js {
     /// An item SEALED: `plain` under `key` (hex), marked `epoch`; `nonce` 12 random bytes.
     #[wasm_bindgen]
     pub fn bag_seal(key: &str, epoch: u32, plain: &[u8], nonce: &[u8]) -> Result<Vec<u8>, JsValue> {
-        let k = unhex32(key).ok_or_else(|| err("a bag key is 32 bytes (hex)".into()))?;
+        let k = craftworks_identity::unhex32(key).ok_or_else(|| err("a bag key is 32 bytes (hex)".into()))?;
         let n: [u8; 12] = nonce.try_into().map_err(|_| err("a nonce is 12 bytes".into()))?;
         Ok(craftworks_identity::bag_seal(&k, epoch, plain, n))
     }
@@ -2562,7 +2562,7 @@ mod js {
     /// An item OPENED with `key` (hex); undefined: not this key's.
     #[wasm_bindgen]
     pub fn bag_open(key: &str, item: &[u8]) -> Option<Vec<u8>> {
-        craftworks_identity::bag_open(&unhex32(key)?, item)
+        craftworks_identity::bag_open(&craftworks_identity::unhex32(key)?, item)
     }
 
     /// The address key (hex) of a space's table (`identity::space_table_key`).
