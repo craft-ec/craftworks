@@ -421,6 +421,15 @@ export async function start(ctx) {
   };
 
   const on = (machine, fn) => listeners.set(machine, [...(listeners.get(machine) ?? []), fn]);
+  // A JOURNAL LINE once per change (the same rule as a step's, for what is only journaled): `what` logged under `tag`
+  // when it differs from the last for `key`. Whether it was.
+  const lastLine = new Map();
+  const logOnce = (tag, key, what) => {
+    if (lastLine.get(`${tag}|${key}`) === what) return false;
+    lastLine.set(`${tag}|${key}`, what);
+    ctx.log(tag, { what });
+    return true;
+  };
   // Where every process stands now (for the visit report): `{ machine: { key: state } }`.
   const snapshot = () => {
     const out = {};
@@ -433,5 +442,5 @@ export async function start(ctx) {
 
   // How many of a machine's processes stand in `s` now (a save OWED: what an update waits for).
   const count = (machine, s) => [...states].filter(([k, v]) => k.startsWith(`${machine}|`) && v.s === s).length;
-  return { MACHINES, state, count, transition, become, on, snapshot, job, jobs, deleting, journal, keepNow };
+  return { MACHINES, state, count, transition, become, on, logOnce, snapshot, job, jobs, deleting, journal, keepNow };
 }

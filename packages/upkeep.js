@@ -137,7 +137,6 @@ export async function start(ctx) {
       }
     }
   }
-  let lastMandate = null;
   // A device that still cannot read enters again at most this often (each try one door item; an entry not taken is
   // skipped by every reader).
   const ENTER_AGAIN = 5 * 60 * 1000;
@@ -155,7 +154,7 @@ export async function start(ctx) {
     }
     const r = await auth.identity.upkeepMandate(me.id, spaces);
     const said = spaces.map(x => x.name).join(", ");
-    if (said !== lastMandate) (lastMandate = said), ctx.log("upkeep", { what: `the node upkeeps ${spaces.length} space(s): ${said}` });
+    (await ctx.require("lifecycle")).logOnce("upkeep", "mandate", `the node upkeeps ${spaces.length} space(s): ${said}`);
     if (r.upkeep?.stale?.length) ctx.log("upkeep", { what: `${r.upkeep.stale.length} space(s): the delegate's group is newer (loaded next tick)` });
   }
   // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which

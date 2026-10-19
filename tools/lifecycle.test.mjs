@@ -205,3 +205,10 @@ test("a step repeated with the same reason is recorded once; a different one, or
   await tick();
   assert.deepEqual(seen, ["keys-short:not whole", "keys-short:still not whole", "keys-in-step:placed", "keys-short:still not whole"]);
 });
+
+test("a journal line is logged once per change (logOnce)", () => {
+  assert.equal(L.logOnce("t", "k", "a"), true);
+  assert.equal(L.logOnce("t", "k", "a"), false);
+  assert.equal(L.logOnce("t", "k", "b"), true);
+  assert.equal(L.logOnce("t", "other", "b"), true, "per key");
+});

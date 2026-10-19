@@ -131,7 +131,6 @@ export async function start(ctx) {
     let devicesUnread = [];
     let group = [];
     let left = false;
-    let lastSaid = null;
     // The group READ at least once (owner 10-08: a space showed "0 members" while its keys were still arriving).
     let groupRead = false;
     // MEMBERS and WRITERS: the one map (`storage.writersOf` — members whose credential is really theirs, their devices,
@@ -147,7 +146,7 @@ export async function start(ctx) {
       devicesUnread = [...new Set(group.map(m => m.did))].map(d => [d, directory.devicesWhy(d)]).filter(([, why]) => why).map(([d, why]) => `${d}: ${why}`);
       // SAID when it changes (owner 10-07: a member's space showed 0 members): what the group gave, and what was kept.
       const said = `${st ? `${st.members?.length ?? 0} member(s) at epoch ${st.epoch ?? "?"}${st.removed ? " (this node removed)" : ""}` : "not ready"}, ${all.length} with a credential, ${group.length} kept`;
-      if (said !== lastSaid) (lastSaid = said), ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}` });
+      (await ctx.require("lifecycle")).logOnce("roles", sp.id, `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}`);
     };
     if (!out) await learn(await g.ready());
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
