@@ -4,8 +4,9 @@
 // navigation and maintain only side navigation"; until 10-18 the header still drew it until the panel took it over —
 // the menu shown on top first, then moved to the side). The app's own component (the layout names it), so editing it is
 // publishing the app, never the loader.
-export async function mount(ctx, el) {
-  const h = (await ctx.require("theme")).h;
+export function mount(ctx, el) {
+  // (Its elements by `theme.h`, taken where each part first draws: the bar itself mounts at once.)
+  const theme = ctx.require("theme");
   el.innerHTML = `
     <style>@layer components {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
@@ -60,10 +61,11 @@ export async function mount(ctx, el) {
     const btn = box.querySelector("button");
     const out = box.querySelector(".results");
     const label = btn.textContent;
-    const badge = n => (n ? h("span", { className: "cw-badge", textContent: String(n) }) : null);
     ctx.optional("header: activity", ctx
       .require("activity")
       .then(async activity => {
+        const { h } = await theme;
+        const badge = n => (n ? h("span", { className: "cw-badge", textContent: String(n) }) : null);
         const directory = await ctx.require("directory");
         const markdown = await ctx.require("markdown");
         const count = () => (of === "recent" ? activity.recent().reduce((n, x) => n + x.count, 0) : activity.mentionsNew());
@@ -114,7 +116,8 @@ export async function mount(ctx, el) {
         })),
       ];
     };
-    const draw = () => {
+    const draw = async () => {
+      const { h } = await theme;
       box.hidden = !list.length;
       btn.replaceChildren("⏳", ...(list.length ? [h("span", { className: "cw-badge", textContent: String(list.length) })] : []));
       if (out.hidden) return;
@@ -152,6 +155,7 @@ export async function mount(ctx, el) {
     let itemsHeld = null; // the items read once per opening of the search (not per key)
     let asked = 0;
     async function find() {
+      const { h } = await theme;
       const q = input.value.trim();
       const n = ++asked;
       if (!q) return close();
