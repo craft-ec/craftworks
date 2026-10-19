@@ -667,10 +667,10 @@ export async function start(ctx) {
     return g;
   }
   // AN AUDIENCE KEPT IN STEP — by its maker, and by the space's admins in it too: its maker makes them the group's admins
-  // (so they may add and remove), and an admin acts on a change still due TEN MINUTES after their page first saw it
-  // (the maker online does it within a tick; two pages committing the same change at once would fork the group).
+  // (so they may add and remove), and an admin acts on a change still due IN ITS TURN (`guards::lapse_turn`, the one
+  // turn rule: the maker first, then one admin at a time — before, every admin at the same 10 minutes, which two pages
+  // committing at once would fork).
   const dueSince = new Map(); // `${group}|${did}|in|out` → when first seen due here
-  const GRACE = 10 * 60 * 1000;
   async function keepReaders(sp) {
     const me = await space.me.strict();
     const [groups, roles] = await Promise.all(["groups", "roles"].map(n => ctx.require(n)));
@@ -702,7 +702,9 @@ export async function start(ctx) {
       const now = Date.now();
       for (const k of due) if (!dueSince.has(k)) dueSince.set(k, now);
       for (const k of [...dueSince.keys()]) if (k.startsWith(`${g.id}|`) && !due.includes(k)) dueSince.delete(k);
-      if (!due.some(k => now - dueSince.get(k) >= GRACE)) continue;
+      const since = Math.min(...due.map(k => dueSince.get(k)));
+      const admins = gr.members().map(m => m.did).filter(d => d !== g.governance?.owner && gr.role(d) === "admin");
+      if (!due.length || glueOf().guard_lapse_turn((await ctx.require("ordering")).turn(`keep|${g.id}`, admins, me), since, now)) continue;
       ctx.log("audiences", { what: `${space.shown(sp)}: its maker away — keeping ${g.name ?? "an audience"} in step` });
       await groups.keep(g, want);
     }
