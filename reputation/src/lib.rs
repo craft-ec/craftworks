@@ -501,3 +501,24 @@ mod tests {
         assert_eq!(absent[&d(1)], present[&d(1)], "1's own reputation is not what decays");
     }
 }
+
+/// TEST PEOPLE (this crate's tests and those of crates built on it — `testing`): person `n`'s key log, account and
+/// owner seed, and the logs of persons 1–9 by account.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use ed25519_dalek::SigningKey;
+    pub fn owner_seed(n: u8) -> [u8; 32] {
+        [n.wrapping_add(100); 32]
+    }
+    pub fn log(n: u8) -> craftworks_idlog_contract::Log {
+        let next = SigningKey::from_bytes(&[n.wrapping_add(150); 32]).verifying_key().to_bytes();
+        let e = craftworks_idlog_contract::Event::signed(0, [0; 32], &owner_seed(n), craftworks_idlog_contract::commit(&next), [n; 32], [n; 32], vec![]).unwrap();
+        craftworks_idlog_contract::Log { events: vec![e] }
+    }
+    pub fn did(n: u8) -> crate::Did {
+        log(n).events[0].id()
+    }
+    pub fn logs(d: &crate::Did) -> Option<craftworks_idlog_contract::Log> {
+        (1..=9).find(|n| did(*n) == *d).map(log)
+    }
+}

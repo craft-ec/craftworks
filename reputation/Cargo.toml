@@ -17,5 +17,9 @@ blake3 = { version = "1", default-features = false }
 engine = { path = "../sdk/craftworks-sdk/engine" }
 freenet-prolly = { path = "../sdk/freenet-prolly" }
 
+[features]
+# Its test people, for crates built on it (`testing`).
+testing = []
+
 [dev-dependencies]
 ed25519-dalek = { version = "=2.2.0", default-features = false }

@@ -110,17 +110,7 @@ pub(crate) mod tests {
     use super::*;
     use ed25519_dalek::{Signer as _, SigningKey};
 
-    pub(crate) fn owner_seed(n: u8) -> [u8; 32] {
-        [n.wrapping_add(100); 32]
-    }
-    pub(crate) fn log(n: u8) -> craftworks_idlog_contract::Log {
-        let next = SigningKey::from_bytes(&[n.wrapping_add(150); 32]).verifying_key().to_bytes();
-        let e = craftworks_idlog_contract::Event::signed(0, [0; 32], &owner_seed(n), craftworks_idlog_contract::commit(&next), [n; 32], [n; 32], vec![]).unwrap();
-        craftworks_idlog_contract::Log { events: vec![e] }
-    }
-    pub(crate) fn did(n: u8) -> Did {
-        log(n).events[0].id()
-    }
+    pub(crate) use craftworks_reputation::testing::{did, log, logs, owner_seed};
     pub(crate) fn device(n: u8) -> SigningKey {
         SigningKey::from_bytes(&[n.wrapping_add(10); 32])
     }
@@ -133,9 +123,6 @@ pub(crate) mod tests {
         let k = device(n);
         let key = k.verifying_key().to_bytes();
         Equivocation { did: did(n), cred: craftworks_identity::credential(&did(n), &key, &[], &owner_seed(n)), key_seq: 0, key, a: wsig(&k, 9, 4, 1, 100), b: wsig(&k, 9, 4, 2, 101) }
-    }
-    pub(crate) fn logs(d: &Did) -> Option<craftworks_idlog_contract::Log> {
-        (1..=9).find(|n| did(*n) == *d).map(log)
     }
 
     #[test]
