@@ -584,7 +584,7 @@ impl craftworks_mls::List for GovList<'_> {
 fn follow_out<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, gov: &craftworks_gov::Gov, mut g: craftworks_mls::Account, now_ms: u64) -> Vec<Io> {
     let entries = leaves(&g, Some(gov), now_ms);
     let listed: Vec<String> = gov.roster.iter().cloned().collect();
-    let followers: Vec<String> = listed.iter().filter(|d| entries.iter().any(|l| l.did == **d)).cloned().collect();
+    let followers = members::followers(&listed, &entries.iter().map(|l| l.did.clone()).collect::<Vec<_>>());
     let (from_epoch, Ok(from_secret)) = (g.epoch(), g.epoch_secret()) else { return next_space(h, c, r) };
     let p = members::follow(&members::View {
         me: &r.me,

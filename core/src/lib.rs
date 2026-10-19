@@ -2332,6 +2332,14 @@ mod js {
     pub fn turn_wait(k: f64, since: f64, now: f64) -> f64 {
         craftworks_rules::guards::turn_wait(k.max(0.0) as u64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS) as f64
     }
+    /// WHETHER THIS ACCOUNT PUBLISHES an epoch's group info (`members::publishes_info` over `members::followers`, the
+    /// node's too): the owner always; else two followers in turn. `listed`, `in_group`: JSON DID lists.
+    #[wasm_bindgen]
+    pub fn publishes_info(me: &str, owner: &str, listed: &str, in_group: &str, epoch: f64) -> Result<bool, JsValue> {
+        let l: Vec<String> = serde_json::from_str(listed).map_err(|e| JsValue::from_str(&format!("listed: {e}")))?;
+        let g: Vec<String> = serde_json::from_str(in_group).map_err(|e| JsValue::from_str(&format!("in_group: {e}")))?;
+        Ok(craftworks_rules::members::publishes_info(me, owner, &craftworks_rules::members::followers(&l, &g), epoch as u64))
+    }
     /// AN ENTRY's OUTCOME (`guards::entry_outcome`, the node's too): "apply", "skip" or "defer".
     #[wasm_bindgen]
     pub fn guard_entry_outcome(taken: bool, whole: bool) -> String {

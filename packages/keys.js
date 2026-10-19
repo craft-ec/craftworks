@@ -718,9 +718,9 @@ export async function start(ctx) {
       const ih = await digest(info);
       const items = await index.spacePointers(sp, doorName(s.epoch));
       const have = items.filter(x => x?.k === "info" && x.d === ih);
-      const whole = d => { const ps = items.filter(x => x?.k === "info" && x.d === d); return ps.length && new Set(ps.map(x => x.i)).size === ps[0].n; };
-      const owner = (await space.account())?.id === sp.governance?.owner;
-      if (!owner && !have.length && items.some(x => x?.k === "info" && whole(x.d))) return null;
+      // WHO PUBLISHES (`members::publishes_info`, the node's too): the owner always; else two followers in turn.
+      const inGroup = (s.members ?? []).filter(x => x.cred).map(x => glue.credential_did(bytes(x.cred))).filter(Boolean);
+      if (!glue.publishes_info((await space.account())?.id ?? "", sp.governance?.owner ?? "", JSON.stringify(lists.get(sp.id)?.roster ?? []), JSON.stringify(inGroup), s.epoch)) return null;
       const hex = hexOf(info);
       const n = Math.ceil(hex.length / PART);
       for (let i = 0; i < n; i++)

@@ -96,6 +96,11 @@ pub const INFO_PUBLISHERS: i64 = 2;
 
 /// Whether `me`'s node publishes epoch `epoch`'s group info: the OWNER's always; of the other members holding keys
 /// (`followers`), the first `INFO_PUBLISHERS` in turn for that epoch (`admission::turn` — the same ranking everywhere).
+/// THE FOLLOWERS: the listed accounts the group holds (page and node — who takes turns on the group's work).
+pub fn followers(listed: &[String], in_group: &[String]) -> Vec<String> {
+    listed.iter().filter(|d| in_group.contains(d)).cloned().collect()
+}
+
 pub fn publishes_info(me: &str, owner: &str, followers: &[String], epoch: u64) -> bool {
     if me == owner {
         return true;
@@ -108,6 +113,13 @@ pub fn publishes_info(me: &str, owner: &str, followers: &[String], epoch: u64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// THE FOLLOWERS (page and node): the listed the group holds — one listed not in the group, or in it unlisted, is not.
+    #[test]
+    fn followers_are_the_listed_the_group_holds() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(followers(&s(&["a", "b", "c"]), &s(&["b", "c", "x"])), s(&["b", "c"]));
+    }
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
