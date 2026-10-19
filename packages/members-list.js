@@ -59,10 +59,34 @@ export async function start(ctx) {
     // to ask another for a log: on the owner's keys, behind, or on another branch, and who caught them up.
     // DIAGNOSTICS only (debugging: `edge.prefs` "diagnostics", Settings → Content).
     let keyState = null;
+    // …and WHETHER EACH IS IN THE SPACE's KEY TREE (BeeKEM: what its tables are sealed with now — the MLS epoch above
+    // says "current" for a member the tree never placed, 10-19), as this page's synced tree places them.
+    let tree = null;
     ctx.background("members-list: edge", ctx
       .require("edge")
       .then(e => e.prefs())
       .then(p => (p.get("diagnostics") ? ctx.require("conversation").then(c => c.keyStatus(sp)) : null)).then(k => k && ((keyState = k), box.isConnected && draw())));
+    ctx.background("members-list: tree", ctx
+      .require("edge")
+      .then(e => e.prefs())
+      .then(async p => {
+        if (!p.get("diagnostics")) return;
+        const members = await ctx.require("members");
+        const g = members.group(sp);
+        await g.sync();
+        const placed = new Set(g.members());
+        const of = new Map();
+        for (const m of r.members()) of.set(m.did, await members.memberOf(m.did).catch(e => ({ why: e?.message ?? String(e) })));
+        tree = { placed, of, size: placed.size };
+        if (box.isConnected) draw();
+      }));
+    const treeChip = did => {
+      if (!tree) return null;
+      const m = tree.of.get(did);
+      const inTree = m?.id && tree.placed.has(m.id);
+      const text = !tree.size ? "🌳 no key tree here" : inTree ? "🌳 in the key tree" : m?.why ? `🌳 not in the key tree (${m.why})` : "🌳 not in the key tree";
+      return h("span", { className: `chip key ${inTree ? "ok" : "warn"}`, textContent: text });
+    };
     const keyChip = did => {
       const k = keyState?.members.get(did);
       if (!k) return null;
@@ -100,6 +124,7 @@ export async function start(ctx) {
             m.did === me.id ? h("span", { className: "chip", textContent: "you" }) : null,
             ...chips,
             keyChip(m.did),
+            treeChip(m.did),
             remove ? h("span", { className: "acts" }, remove) : null,
           );
         }),

@@ -74,7 +74,7 @@ export async function start(ctx) {
     const once = f => (queue = queue.then(f, f));
     const at = `g/${sp.id}`;
     // (What was last REPORTED, so each change is said once — never the same report every round.)
-    let lastUnmapped = "", lastWaiting = "", lastShort = null, lastInStep = null;
+    let lastUnmapped = "", lastWaiting = "", lastShort = null, lastInStep = null, lastNotPlaced = "";
     const state = () => storage.table("beekem");
     const feed = () => storage.table(space.tableOf(sp, "pub-keyops"), sp);
     async function load() {
@@ -287,6 +287,14 @@ export async function start(ctx) {
         return { ...said, short: "the list not read whole: nothing changed" };
       }
       lastShort = false;
+      // NOT PLACED in a tree that exists: nothing this page can add — said once per change, with the tree's members.
+      if (!g.placed() && (await feed()).rows().some(x => x.value)) {
+        const placed = [...g.members()];
+        const names = await Promise.all(placed.map(async id => (await Promise.all(c.listedNow.map(async d => ((await memberOf(d)).id === id ? d : null)))).find(Boolean) ?? `unnamed ${id.slice(0, 8)}`));
+        const why = `this account's member ${(typeof m.id === "string" ? m.id : hexOf(m.id)).slice(0, 8)} is not in the tree; it places ${placed.length}: ${names.map(n => n.replace(/^did:craftec:/, "").slice(0, 8)).join(", ")}`;
+        if (why !== lastNotPlaced) life().then(l => l.transition("group", sp.id, "keys-not-placed", { why, placed: placed.length }));
+        lastNotPlaced = why;
+      } else lastNotPlaced = "";
       if (g.placed()) {
         const r = g.reconcile(c.cards, c.listedNow, c.ins, c.outs);
         for (const op of r.ops) await send(op);

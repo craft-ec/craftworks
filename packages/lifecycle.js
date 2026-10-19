@@ -76,7 +76,7 @@ export async function start(ctx) {
       initial: "UNKNOWN",
       journal: true,
       // Steps that are routine (still kept in the journal): not each a health report.
-      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found", "follow-info", "keys-in-step", "follow-keys"],
+      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found", "follow-info", "follow-keys"],
       events: {
         held: { from: "*", to: "HELD" },
         // Ahead of the owner's announcement (it reads: HELD).
@@ -139,6 +139,10 @@ export async function start(ctx) {
         "keys-reconciled": { from: "*" },
         "keys-in-step": { from: "*" },
         "keys-short": { from: "*" },
+        // This page's account NOT in the space's tree (a tree there, placing others): it cannot add anyone — said, with
+        // whom the tree places (10-19: Craftworks' tree placed one member nobody could name; nobody was ever added, and
+        // no report said why).
+        "keys-not-placed": { from: "*" },
         "keys-refused": { from: "*" },
         "keys-waiting": { from: "*" },
         "keys-unmapped": { from: "*" },
