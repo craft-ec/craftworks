@@ -99,7 +99,7 @@ fn unhex(s: &[u8]) -> Option<Vec<u8>> {
 pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now_ms: u64) -> Vec<Io> {
     let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, c, r) };
     let Some(seed) = identity::upkeep_space_member(h, &r.member) else {
-        followed(h, &r.member, &r.space, "keys-no-member", &format!("{}: the account's data key is not held here: its keys are a page's", m.name));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NO_MEMBER, &format!("{}: the account's data key is not held here: its keys are a page's", m.name));
         return next_space(h, c, r);
     };
     let mut g = Group::empty(&r.space, Account::of(&seed));
@@ -143,11 +143,11 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let placed = g.members();
     // 4. RECONCILE — from a whole read only.
     if let Err(why) = whole(&r, &gov) {
-        followed(h, &r.member, &r.space, "keys-short", &format!("{}: {why} — the keys are not changed this round", m.name));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — the keys are not changed this round", m.name));
         return next_space(h, c, r);
     }
     if !g.placed() {
-        followed(h, &r.member, &r.space, "keys-not-placed", &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, pending.len(), why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NOT_PLACED, &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, pending.len(), why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
         return next_space(h, c, r);
     }
     // THE ONE PLAN (`Group::reconcile`, the page's too): the listed placed, the put-out taken out by their act.
@@ -164,12 +164,12 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let (ins, outs) = (acts(true), acts(false));
     let due = members.iter().any(|(d, id, _)| !placed.contains(id) && list.listed(d)) || placed.iter().any(|id| list.by_member.get(id).is_some_and(|d| !list.listed(d) && outs.contains_key(d)));
     if !due {
-        followed(h, &r.member, &r.space, "keys", &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), pending.len()));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), pending.len()));
         return next_space(h, c, r);
     }
     // (A delegate has no randomness of its own: a key change draws from upkeep's pool.)
     let Some(rand) = identity::upkeep_random(h) else {
-        followed(h, &r.member, &r.space, "keys-wait", &format!("{}: the tree is not the list — no randomness yet (a page stirs the pool)", m.name));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: the tree is not the list — no randomness yet (a page stirs the pool)", m.name));
         return next_space(h, c, r);
     };
     let done = g.reconcile(&members, &|d| list.listed(d), &ins, &outs, rand);
@@ -188,7 +188,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         h,
         &r.member,
         &r.space,
-        "keys-plan",
+        craftworks_rules::steps::KEYS_RECONCILED,
         &format!("{}: {} added ({}), {} removed ({}), one key change{}{}", m.name, done.added.len(), names(&done.added), done.removed.len(), names(&done.removed), if large > 0 { format!(" — {large} operation(s) too large for a row: a page's") } else { String::new() }, if done.not.is_empty() { format!(" — {}", done.not.join("; ")) } else { String::new() }),
     );
     write(h, c, r, m, rows, false)
@@ -210,7 +210,7 @@ pub(super) fn write<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, row
             sent.io
         }
         Err(why) => {
-            followed(h, &r.member, &r.space, "keys-write", &format!("{}: the key operations were not written — {why}", m.name));
+            followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WRITE, &format!("{}: the key operations were not written — {why}", m.name));
             next_space(h, c, r)
         }
     }

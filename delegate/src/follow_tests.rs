@@ -351,7 +351,7 @@ fn a_short_read_decides_nothing() {
     let asked = w.run();
     assert_eq!(World::writes(&asked), 0, "nothing moves: {:?}", w.said());
     assert!(w.leaves().contains(&x.id()));
-    assert!(w.said().iter().any(|s| s.starts_with("short")), "said why: {:?}", w.said());
+    assert!(w.said().iter().any(|s| s.starts_with("list-short")), "said why: {:?}", w.said());
 }
 
 /// CATCH-UP by the one rule: a LISTED device's entry in the door is taken; an OUTSIDER's at the same position is skipped
@@ -678,7 +678,7 @@ fn k5_a_beekem_space_whose_operations_read_empty_is_not_caught_up_as_mls() {
     assert!(w.net.st.remove(&o.id_bytes()).is_some(), "the feed was there");
     w.run();
     let said = w.said();
-    assert!(said.iter().any(|s| s.starts_with("short: ") && s.contains("read empty though it holds a BeeKEM generation")), "said: {said:?}");
+    assert!(said.iter().any(|s| s.starts_with("keys-ops-unread: ") && s.contains("read empty though it holds a BeeKEM generation")), "said: {said:?}");
 
     // CONTROL: no generation held (an MLS space), the same empty read — the MLS path, nothing said of BeeKEM.
     let mut c = world(&[], &[]);
@@ -704,7 +704,7 @@ fn an_unread_card_with_a_devices_contract_is_not_a_short_list() {
     w.net.st.insert(id(DEVICES, &dev), craftworks_devices_contract::encode(&[cred]));
     w.run();
     let said = w.said();
-    assert!(!said.iter().any(|s| s.starts_with("short")), "not short: {said:?}");
+    assert!(!said.iter().any(|s| s.starts_with("list-short")), "not short: {said:?}");
     assert!(!w.leaves().contains(&x.id()), "the removal went ahead: {said:?}");
 }
 
@@ -722,7 +722,7 @@ fn a_short_read_still_applies_a_listed_entry() {
     let (bg, b_in) = b.enter(&info, b"");
     w.door_entry(e, &b_in);
     w.run();
-    assert!(w.said().iter().any(|s| s.starts_with("short")), "short: {:?}", w.said());
+    assert!(w.said().iter().any(|s| s.starts_with("list-short")), "short: {:?}", w.said());
     assert_eq!(w.mandate().epoch, e + 1, "B's entry applied: {:?}", w.said());
     assert_eq!(w.group().epoch_secret().unwrap(), bg.epoch_secret().unwrap(), "the node follows B's entry");
 }

@@ -123,9 +123,18 @@ export async function start(ctx) {
     // LOST to the node's limit (its newest 128 kept while no page reads them): how many, REPORTED — a gap in what the
     // node did is said, never silently missing.
     const first = Math.min(...fresh.map(d => Number(d.seq) || 0));
-    if (since > 0 && fresh.length && first > since + 1) life.transition("group", "account", "follow-dropped", { by: "node", why: `${first - since - 1} of the node's steps dropped before a page read them`, n: first - since - 1 });
-    for (const d of fresh)
-      life.transition("group", d.space, `follow-${d.step}`, { by: "node", why: d.why, at: d.at, seq: d.seq, ...(d.did ? { to: d.did.replace(/^did:craftec:/, "").slice(0, 6) } : {}) });
+    if (since > 0 && fresh.length && first > since + 1) life.transition("group", "account", "node-dropped", { by: "node", why: `${first - since - 1} of the node's steps dropped before a page read them`, n: first - since - 1 });
+    // Each by ITS OWN NAME (`rules::steps`, one list); a name the list does not know (an older build's) as `node-step` —
+    // one step never stops the rest.
+    for (const d of fresh) {
+      const known = !!life.MACHINES.group.events[d.step] && !life.MACHINES.group.events[d.step].to;
+      const detail = { by: "node", why: known ? d.why : `${d.step}: ${d.why}`, at: d.at, seq: d.seq, ...(d.did ? { to: d.did.replace(/^did:craftec:/, "").slice(0, 6) } : {}) };
+      try {
+        life.transition("group", d.space, known ? d.step : "node-step", detail);
+      } catch (e) {
+        ctx.log("upkeep", { what: `the node's step ${d.step} not recorded: ${e?.message ?? e}` });
+      }
+    }
   }
   let lastMandate = null;
   // A device that still cannot read enters again at most this often (each try one door item; an entry not taken is

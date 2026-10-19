@@ -16,6 +16,12 @@ globalThis.CustomEvent ??= class CustomEvent {
     this.detail = init?.detail;
   }
 };
+// THE GROUP's STEPS as the one list says them (`rules/src/steps.rs` — what `core.group_steps` returns): read from the Rust
+// source itself, so this test runs on the real list.
+import { readFileSync } from "node:fs";
+const stepsRs = readFileSync(new URL("../rules/src/steps.rs", import.meta.url), "utf8");
+const stepConsts = Object.fromEntries([...stepsRs.matchAll(/pub const ([A-Z_]+): &str = "([a-z-]+)";/g)].map(m => [m[1], m[2]]));
+const groupSteps = [...stepsRs.matchAll(/\(("?[A-Za-z_-]+"?), (true|false)\)/g)].map(m => [m[1].startsWith('"') ? m[1].slice(1, -1) : stepConsts[m[1]], m[2] === "true"]);
 const healths = [];
 const ctx = {
   log: () => {},
@@ -24,6 +30,7 @@ const ctx = {
   require: async name => {
     if (name === "fault") return fault;
     if (name === "index") return { health: async item => (healths.push(item), true) };
+    if (name === "node") return { glue: { group_steps: () => JSON.stringify(groupSteps) } };
     throw new Error(`no ${name}`);
   },
 };
@@ -177,4 +184,12 @@ test("a group's commit is a step: reported, the state kept; routine steps quiet"
   assert.deepEqual(healths.slice(from).map(h => [h.k, h.to]), [["lifecycle-group", "UNKNOWN>HELD"], ["lifecycle-group", "HELD>HELD"]]);
   assert.match(healths.at(-1).why, /^commit:/);
   assert.throws(() => L.transition("group", g, "made-up-step", {}), e => e.kind === "bug");
+});
+
+test("the group's steps are the one list's: the node's names known, an unknown one refused as a bug", () => {
+  assert.ok(groupSteps.length > 40, `read ${groupSteps.length} steps`);
+  for (const [name] of groupSteps) assert.ok(L.MACHINES.group.events[name], `${name} in the table`);
+  assert.ok(L.MACHINES.group.quiet.includes("keys-in-step") && !L.MACHINES.group.quiet.includes("keys-reconciled"));
+  L.transition("group", "s", "out-plan", { by: "node" });
+  assert.throws(() => L.transition("group", "s", "follow-plan", {}), e => e.kind === "bug", "the old prefixed names are gone");
 });

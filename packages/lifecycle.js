@@ -76,7 +76,7 @@ export async function start(ctx) {
       initial: "UNKNOWN",
       journal: true,
       // Steps that are routine (still kept in the journal): not each a health report.
-      quiet: ["log-open-written", "log-open-left", "log-back-added", "log-mended", "history-received", "history-handed", "writers-found", "follow-info", "follow-keys"],
+      quiet: [], // (the steps' own: below)
       events: {
         held: { from: "*", to: "HELD" },
         // Ahead of the owner's announcement (it reads: HELD).
@@ -87,77 +87,7 @@ export async function start(ctx) {
         unreadable: { from: "*", to: "UNREADABLE" },
         removed: { from: "*", to: "REMOVED" },
         "stuck-own-commit": { from: "*", to: "STUCK" },
-        commit: { from: "*" },
-        applied: { from: "*" },
-        "apply-failed": { from: "*" },
-        // ENTERED BY ITSELF (FOUNDATION "Members and keys" 1): an external commit put in its epoch's door — or no group
-        // info a listed member published to enter from yet.
-        enter: { from: "*" },
-        "enter-no-info": { from: "*" },
-        "enter-not-listed": { from: "*" },
-        // A NEW WRITER of one of its tables found (`storage`): read now, or waiting to be listed in its writers bag.
-        "writers-found": { from: "*" },
-        "writers-waiting": { from: "*" },
-        // Its epoch and group info NOT announced (what a device with no key enters from): why.
-        "announce-failed": { from: "*" },
-        // An entry SKIPPED by the list check (`mls::entry_ok`: every reader skips it), and a catch-up DEFERRED until
-        // the list is read whole (I6).
-        "entry-skipped": { from: "*" },
-        "catch-up-deferred": { from: "*" },
-        "adopt-delegate": { from: "*" },
-        "pending-published": { from: "*" },
-        "log-open-written": { from: "*" },
-        "log-open-left": { from: "*" },
-        "log-back-added": { from: "*" },
-        "log-mended": { from: "*" },
-        "log-mend-cannot": { from: "*" },
-        "history-received": { from: "*" },
-        "history-handed": { from: "*" },
-        // THE NODE's FOLLOWER over this space (`by: node`: removals only), each step its own event with its why: its
-        // plan; its commit; and why a round did not finish.
-        "follow-plan": { from: "*" },
-        "follow-commit": { from: "*" },
-        "follow-stalled": { from: "*" },
-        "follow-short": { from: "*" },
-        "follow-entry-skipped": { from: "*" },
-        "follow-unloadable": { from: "*" },
-        "follow-behind": { from: "*" },
-        "follow-log-refused": { from: "*" },
-        "follow-commit-refused": { from: "*" },
-        "follow-next-refused": { from: "*" },
-        "follow-no-commit": { from: "*" },
-        // The node's group info for an epoch: published, or waiting for randomness (a page stirs the pool).
-        "follow-info": { from: "*" },
-        "follow-info-held": { from: "*" },
-        // Steps of the node lost to its limit before a page read them: how many.
-        "follow-dropped": { from: "*" },
-        // MEMBERS AND KEYS ON BEEKEM (K3–K7, `members`): its TREE made (this account placed itself); a reconcile that
-        // CHANGED it (added, removed — one key change) or found it IN STEP with the list; one that decided nothing (the
-        // list not read whole — I6); OPERATIONS refused by our check (why) or waiting on their predecessors; a listed
-        // account whose card names no member we can check; the HISTORY BRIDGE written and crossed.
-        "keys-tree-made": { from: "*" },
-        "keys-reconciled": { from: "*" },
-        "keys-in-step": { from: "*" },
-        "keys-short": { from: "*" },
-        // This page's account NOT in the space's tree (a tree there, placing others): it cannot add anyone — said, with
-        // whom the tree places (10-19: Craftworks' tree placed one member nobody could name; nobody was ever added, and
-        // no report said why).
-        "keys-not-placed": { from: "*" },
-        "keys-refused": { from: "*" },
-        "keys-waiting": { from: "*" },
-        "keys-unmapped": { from: "*" },
-        "keys-bridged": { from: "*" },
-        "keys-crossed": { from: "*" },
-        // …and the NODE's (`keys_round`, every page closed): in step; its plan (added, removed); not changed — the list
-        // short, this account not placed, no randomness yet, no data key here; its write failed or was refused.
-        "follow-keys": { from: "*" },
-        "follow-keys-plan": { from: "*" },
-        "follow-keys-short": { from: "*" },
-        "follow-keys-not-placed": { from: "*" },
-        "follow-keys-wait": { from: "*" },
-        "follow-keys-no-member": { from: "*" },
-        "follow-keys-write": { from: "*" },
-        "follow-keys-refused": { from: "*" },
+        // THE STEPS (a thing done, nothing changed): the one list, page and node (`rules::steps`) — added below.
       },
     },
     // A REQUEST TO JOIN (owner 10-17: "requests are not hanging"), keyed by the space: asked; then CANCELLED by the asker,
@@ -266,6 +196,13 @@ export async function start(ctx) {
       },
     },
   };
+
+  // THE GROUP's STEPS from the one list (`rules::steps::ALL`, the node's names: `core.group_steps`).
+  const { glue } = await ctx.require("node");
+  for (const [name, quiet] of JSON.parse(glue.group_steps())) {
+    MACHINES.group.events[name] ??= { from: "*" };
+    if (quiet) MACHINES.group.quiet.push(name);
+  }
 
   // THE JOURNAL: moves of `journal` machines, batched into the account's table (newest 500 kept).
   const pending = [];

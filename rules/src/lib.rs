@@ -13,6 +13,7 @@ pub mod misdeed;
 pub mod ordering;
 pub mod rekey;
 pub mod statement;
+pub mod steps;
 pub mod tokens;
 pub mod wallet;
 pub mod witness;

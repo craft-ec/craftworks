@@ -136,12 +136,12 @@ fn group_info<H: Host>(h: &mut H, c: &Held, r: &Round, m: &Mandate, followers: &
     // NOTHING WRITTEN (no randomness: a page stirs the pool): said, and the epoch NOT marked — asked again next round
     // (before, it was marked first, and an epoch whose info found the pool empty was never published).
     if io.is_empty() {
-        followed(h, &r.member, &r.space, "info-held", &format!("{}: epoch {epoch}: no randomness yet (a page stirs the pool): its group info waits", m.name));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::INFO_HELD, &format!("{}: epoch {epoch}: no randomness yet (a page stirs the pool): its group info waits", m.name));
         return io;
     }
     h.set_secret(&key, &epoch.to_le_bytes());
     let whose = if r.me == m.owner { "the owner's" } else { "a member's, in turn" };
-    followed(h, &r.member, &r.space, "info", &format!("{}: epoch {epoch}: group info published ({whose})", m.name));
+    followed(h, &r.member, &r.space, craftworks_rules::steps::INFO_PUBLISHED, &format!("{}: epoch {epoch}: group info published ({whose})", m.name));
     io
 }
 
@@ -224,7 +224,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
         let space = rest.remove(0);
         let Some(m) = identity::upkeep_mandate(h, &member).and_then(|(_, ms)| ms.into_iter().find(|m| m.space == space)) else { continue };
         let Some((_, epochs)) = crate::rekey_round::space_of(h, &member, &m) else {
-            followed(h, &member, &space, "unloadable", &format!("{}: its group does not load here: not followed", m.name));
+            followed(h, &member, &space, craftworks_rules::steps::UNLOADABLE, &format!("{}: its group does not load here: not followed", m.name));
             continue;
         };
         let Ok(g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(space), &m.state) else { continue };
@@ -270,7 +270,7 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
             Step::Next { .. } => "the next epoch's log never answered".into(),
             Step::Keys { .. } => "a key operation's write never answered".into(),
         };
-        followed(h, &r.member, &r.space, "stalled", &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::STALLED, &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
         keep(h, None);
     }
     start(h)
@@ -422,7 +422,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             // at epoch 149, whose log nobody writes, and stalled 33 times). Said with what the read noted; next round.
             if r.reading.holds_generation() {
                 let notes = if r.reading.feeds_unread.is_empty() { "no feed noted".to_string() } else { r.reading.feeds_unread.iter().map(|(t, w)| format!("{t} of {w}")).collect::<Vec<_>>().join("; ") };
-                followed(h, &member, &r.space, "short", &format!("{}: its key operations read empty though it holds a BeeKEM generation ({notes}): not followed this round", m.name));
+                followed(h, &member, &r.space, craftworks_rules::steps::KEYS_OPS_UNREAD, &format!("{}: its key operations read empty though it holds a BeeKEM generation ({notes}): not followed this round", m.name));
                 return next_space(h, &c, r);
             }
             catch_up(h, &c, r, &m)
@@ -430,7 +430,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         (Step::Keys { rows, mut waiting, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
             waiting.retain(|w| *w != id);
             if !ok {
-                followed(h, &member, &r.space, "keys-refused", &format!("{}: a key operation's write was refused: the next round reads again", m.name));
+                followed(h, &member, &r.space, craftworks_rules::steps::KEYS_REFUSED, &format!("{}: a key operation's write was refused: the next round reads again", m.name));
                 return next_space(h, &c, r);
             }
             if !waiting.is_empty() {
@@ -467,7 +467,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             use craftworks_rules::ordering;
             let taken = matches!(log.opened(), Ok(data::Step::Ready(rows)) if ordering::entry_at(rows.iter().map(|(k, v)| (k.as_slice(), v.as_slice())), "c/", mv.from_epoch).is_some());
             if taken {
-                followed(h, &member, &r.space, "behind", &format!("{}: the group moved from epoch {} meanwhile: caught up next round", m.name, mv.from_epoch));
+                followed(h, &member, &r.space, craftworks_rules::steps::MOVED_MEANWHILE, &format!("{}: the group moved from epoch {} meanwhile: caught up next round", m.name, mv.from_epoch));
                 return next_space(h, &c, r);
             }
             let at = ordering::row_key("c/", mv.from_epoch, &hex(&member[..6]));
@@ -476,7 +476,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             let entry = serde_json::json!({ "commit": hex(&mv.commit), "info": hex(&mv.info), "by": hex(&member[..8]), "why": why, "at": now_ms, "v": "node" }).to_string();
             let key = identity::epoch_log_key(&mv.from_secret);
             let Some(send) = signed(&mut log, &key, at.as_bytes(), entry.as_bytes()) else {
-                followed(h, &member, &r.space, "log-refused", &format!("{}: the epoch's log would not take the commit", m.name));
+                followed(h, &member, &r.space, craftworks_rules::steps::LOG_REFUSED, &format!("{}: the epoch's log would not take the commit", m.name));
                 return next_space(h, &c, r);
             };
             let io = send_io(&log, send, Code::Tail);
@@ -486,7 +486,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
         }
         (Step::Commit { m: mv }, Reply::Updated { ok, .. } | Reply::Put { ok, .. }) => {
             if !ok {
-                followed(h, &member, &r.space, "commit-refused", &format!("{}: the commit was refused: the group moved meanwhile", m.name));
+                followed(h, &member, &r.space, craftworks_rules::steps::COMMIT_REFUSED, &format!("{}: the commit was refused: the group moved meanwhile", m.name));
                 return next_space(h, &c, r);
             }
             // The group moved: held here now (its secret kept, the mandate's group this one).
@@ -495,7 +495,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             let open = serde_json::json!({ "info": hex(&mv.info), "prev": hex(&mv.from_secret) }).to_string();
             let key = identity::epoch_log_key(&mv.secret);
             let Some(send) = signed(&mut next, &key, b"open", open.as_bytes()) else {
-                followed(h, &member, &r.space, "next-refused", &format!("{}: the next epoch's log would not take its first row", m.name));
+                followed(h, &member, &r.space, craftworks_rules::steps::NEXT_REFUSED, &format!("{}: the next epoch's log would not take its first row", m.name));
                 return next_space(h, &c, r);
             };
             let io = send_io(&next, send, Code::Tail);
@@ -504,7 +504,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             vec![io]
         }
         (Step::Next { m: mv }, Reply::Put { .. } | Reply::Updated { .. }) => {
-            followed(h, &member, &r.space, "commit", &format!("{}: {} entr(ies) out, epoch {}", m.name, mv.removed, mv.epoch));
+            followed(h, &member, &r.space, craftworks_rules::steps::COMMIT, &format!("{}: {} entr(ies) out, epoch {}", m.name, mv.removed, mv.epoch));
             // ITS GROUP INFO in the new epoch's door, announced: what a listed device with no key enters from.
             h.set_secret(&[ANNOUNCED, &member[..], &r.space[..]].concat(), &mv.epoch.to_le_bytes());
             let mut io = door_io(h, &c, &member, &r.space, mv.epoch, &mv.secret, &mv.info);
@@ -553,12 +553,12 @@ fn entries<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, epoch: u64, 
                 r.state = state;
                 return catch_up(h, c, r, m);
             }
-            Ok(craftworks_mls::Applied::Skipped(why)) if craftworks_rules::guards::entry_outcome(false, short.is_none()) == craftworks_rules::guards::EntryOutcome::Skip => followed(h, &r.member, &r.space, "entry-skipped", &format!("{}: epoch {epoch}: {why}", m.name)),
+            Ok(craftworks_mls::Applied::Skipped(why)) if craftworks_rules::guards::entry_outcome(false, short.is_none()) == craftworks_rules::guards::EntryOutcome::Skip => followed(h, &r.member, &r.space, craftworks_rules::steps::ENTRY_SKIPPED, &format!("{}: epoch {epoch}: {why}", m.name)),
             _ => {}
         }
     }
     if let Some(why) = short {
-        followed(h, &r.member, &r.space, "short", &format!("{}: {why} — nobody out this round", m.name));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::LIST_SHORT, &format!("{}: {why} — nobody out this round", m.name));
         return next_space(h, c, r);
     }
     follow_out(h, c, r, m, &gov, g, now_ms)
@@ -599,7 +599,7 @@ fn follow_out<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, gov: &cra
     });
     if p.is_empty() {
         if let Some(why) = &p.not_my_turn {
-            followed(h, &r.member, &r.space, "plan", &format!("{}: {} out by the list — {why}", m.name, entries.iter().filter(|l| !gov.roster.contains(&l.did) && !l.admitted).count()));
+            followed(h, &r.member, &r.space, craftworks_rules::steps::OUT_NOT_MY_TURN, &format!("{}: {} out by the list — {why}", m.name, entries.iter().filter(|l| !gov.roster.contains(&l.did) && !l.admitted).count()));
         }
         // NOT ITS TURN YET: when it is (the page asks the node then: its wake-ups may not come).
         if let Some(w) = p.wait {
@@ -610,17 +610,17 @@ fn follow_out<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, gov: &cra
         return io;
     }
     let whom: Vec<String> = entries.iter().filter(|l| p.remove.contains(&l.index)).map(|l| format!("{}…", l.did.get(12..20).unwrap_or(&l.did))).collect();
-    followed(h, &r.member, &r.space, "plan", &format!("{}: {} out ({})", m.name, p.remove.len(), whom.join(", ")));
+    followed(h, &r.member, &r.space, craftworks_rules::steps::OUT_PLAN, &format!("{}: {} out ({})", m.name, p.remove.len(), whom.join(", ")));
     // (A delegate has no randomness of its own: upkeep's pool ARMS a stream before MLS draws — `crate::arm_random`.)
     let Some(seed) = identity::upkeep_random(h) else {
-        followed(h, &r.member, &r.space, "no-commit", &format!("{}: no randomness yet (a page stirs the pool): the removal waits", m.name));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::OUT_NOT_BUILT, &format!("{}: no randomness yet (a page stirs the pool): the removal waits", m.name));
         return next_space(h, c, r);
     };
     crate::arm_random(seed);
     let commit = match g.remove(&p.remove) {
         Ok(c) => c,
         Err(why) => {
-            followed(h, &r.member, &r.space, "no-commit", &format!("{}: the removal of {} would not build — {why}", m.name, whom.join(", ")));
+            followed(h, &r.member, &r.space, craftworks_rules::steps::OUT_NOT_BUILT, &format!("{}: the removal of {} would not build — {why}", m.name, whom.join(", ")));
             return next_space(h, c, r);
         }
     };
