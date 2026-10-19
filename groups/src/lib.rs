@@ -429,11 +429,9 @@ mod page {
     use super::*;
     use wasm_bindgen::prelude::*;
 
+    use ::hex::encode as hex;
     fn err(x: impl core::fmt::Display) -> JsValue {
         JsValue::from_str(&x.to_string())
-    }
-    fn hex(b: &[u8]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
     }
     fn b32(b: &[u8]) -> Result<[u8; 32], JsValue> {
         b.try_into().map_err(|_| err("32 bytes expected"))

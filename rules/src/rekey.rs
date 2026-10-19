@@ -58,7 +58,7 @@ pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone
 /// A space's SALT row of `files` (page and node): the secret (64 hex — the first shape is that alone), how many salts
 /// it has had (`n`), the removals it was made after. None: not a salt.
 pub fn parse_salt(v: &str) -> Option<([u8; 32], i64, usize)> {
-    let hex32 = |s: &str| -> Option<[u8; 32]> { (s.len() == 64).then(|| (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect::<Option<Vec<u8>>>())??.try_into().ok() };
+    let hex32 = |s: &str| craftworks_identity::unhex32(s);
     if let Some(s) = hex32(v) {
         return Some((s, 0, 0));
     }

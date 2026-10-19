@@ -19,10 +19,8 @@ use freenet_prolly::Cid;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use tail::{Op, Unsigned, Writer};
+use ::hex::encode as hex;
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
 
 /// A table's tail is FLUSHED into its tree once it holds this many rows: the tail stays small (every write re-signs
 /// and every reader re-reads the whole tail), the tree holds the rest.

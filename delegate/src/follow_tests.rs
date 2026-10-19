@@ -36,11 +36,9 @@ impl Host for Secrets {
     }
 }
 
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
+use craftworks_identity::hex;
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+    craftworks_identity::unhex(s).expect("hex")
 }
 fn id(code: &[u8], params: &[u8]) -> [u8; 32] {
     upkeep::id_of(&contract_keys::code_hash(code), params)

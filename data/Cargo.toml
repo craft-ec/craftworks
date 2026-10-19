@@ -12,6 +12,8 @@ description = "DATA: an account's (or a space's) table as a tail — read, seale
 history = []
 
 [dependencies]
+# Hex: the one implementation (the `hex` crate) every crate of the page's and the node's uses.
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # The tail's params and ids, sans-IO (`contract_keys`: no client API — the identity delegate links this crate too).
 contract-keys = { workspace = true }
 bs58 = "0.5"

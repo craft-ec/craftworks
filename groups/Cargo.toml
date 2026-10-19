@@ -8,6 +8,8 @@ description = "Members and keys on BeeKEM (docs/proposals/members-and-keys-beeke
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Hex: the one implementation (the `hex` crate) every crate of the page's and the node's uses.
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 beekem = { path = "../vendor/beekem-0.5.0" }
 keyhive_crypto = { path = "../vendor/keyhive_crypto-0.2.1" }
 future_form = "0.3.1"

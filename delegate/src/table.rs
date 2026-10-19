@@ -14,6 +14,8 @@
 //! A writer whose catalog or feed does not read here (absent, sealed with a key not held) is left out — the same as a
 //! page: nothing is written over what is not seen, because upkeep writes only its own feed.
 
+pub use craftworks_identity::hex;
+use craftworks_identity::unhex32;
 use std::collections::{BTreeMap, BTreeSet};
 
 use craftworks_data as data;
@@ -107,16 +109,6 @@ pub struct Reading {
     card_trees: Vec<([u8; 32], Vec<u8>, Vec<([u8; 32], Vec<u8>)>, Vec<([u8; 32], [u8; 32])>)>,
 }
 
-pub fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
-fn unhex32(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
-        return None;
-    }
-    let v: Option<Vec<u8>> = (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect();
-    v?.try_into().ok()
-}
 
 /// A space's table's full name: `x<first 12 hex of its id>-<name>` (`space.tableOf`).
 pub fn table_name(space: &[u8; 32], name: &str) -> String {

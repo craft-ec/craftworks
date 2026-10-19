@@ -9,6 +9,7 @@
 //!      putting it out); then ONE key change. No turns: several nodes doing it at once merge.
 //!   5. WRITTEN into this member's own `pub-keyops` (`write::rows`).
 
+use craftworks_identity::unhex;
 use std::collections::BTreeMap;
 
 use craftworks_groups::{Account, Check, Group, ListCheck};
@@ -73,10 +74,6 @@ fn learn<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(Strin
 const ROW: usize = 60000;
 /// No act names the owner's own placement (its tree's first operation).
 
-fn unhex(s: &[u8]) -> Option<Vec<u8>> {
-    let s = std::str::from_utf8(s).ok()?;
-    (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect()
-}
 
 /// THE ROUND's BEEKEM STEP for this space (the follower's, after its read).
 pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now_ms: u64) -> Vec<Io> {

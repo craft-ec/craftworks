@@ -7,23 +7,11 @@ pub use craftworks_account as account;
 /// A table as a tail: its own crate (the identity delegate drives it too).
 pub use craftworks_data as data;
 
-use craftworks_identity::{decode_answer, encode_request, Answer, Request};
+use craftworks_identity::{decode_answer, encode_request, hex, unhex32, Answer, Request};
+pub use craftworks_identity::unhex;
 use serde_json::{json, Value};
 use wire::{AckKind, Incoming, Reassembler};
 
-fn unhex32(h: &str) -> Option<[u8; 32]> {
-    if h.len() != 64 {
-        return None;
-    }
-    let mut o = [0u8; 32];
-    for (i, b) in o.iter_mut().enumerate() {
-        *b = u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(o)
-}
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
 
 /// An identity answer, for the page.
 pub fn answer_json(a: &Answer) -> Value {
@@ -877,15 +865,6 @@ pub fn bytes32(what: &str, h: &str) -> Result<[u8; 32], String> {
         .ok_or_else(|| format!("{what}: not 32 bytes of hex"))
 }
 
-pub fn unhex(h: &str) -> Option<Vec<u8>> {
-    if h.len() % 2 != 0 {
-        return None;
-    }
-    (0..h.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(h.get(i..i + 2)?, 16).ok())
-        .collect()
-}
 
 // THE RULES (crate `craftworks-rules`: the identity delegate runs them too) — re-exported, one implementation.
 pub use craftworks_rules::{allowance, editions, keeper, tokens, wallet, witness};

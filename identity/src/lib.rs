@@ -997,6 +997,18 @@ pub fn bag_open(key: &[u8; 32], item: &[u8]) -> Option<Vec<u8>> {
     aes_gcm::Aes256Gcm::new(key.into()).decrypt(aes_gcm::Nonce::from_slice(&item[4..16]), &item[16..]).ok()
 }
 
+/// HEX — one implementation (the `hex` crate) for every crate of the page's and the node's: lower case out; in, only
+/// whole bytes of hex digits (an odd digit, a sign, anything else: none).
+pub fn hex(b: impl AsRef<[u8]>) -> String {
+    ::hex::encode(b)
+}
+pub fn unhex(s: impl AsRef<[u8]>) -> Option<Vec<u8>> {
+    ::hex::decode(s).ok()
+}
+pub fn unhex32(s: impl AsRef<[u8]>) -> Option<[u8; 32]> {
+    <[u8; 32] as ::hex::FromHex>::from_hex(s).ok()
+}
+
 /// The ADDRESS key of a space's table (where its sealed tree blocks live, and the key its tail is opened under): from the
 /// space's id and the table, so every member names the same blocks. Its rows and blocks are sealed with the space's
 /// epoch keys, never with this. The ONE derivation.

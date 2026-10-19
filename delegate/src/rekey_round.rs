@@ -10,6 +10,7 @@
 //! on, so an admission round and a re-key round run side by side. Once every `EVERY` wake-ups at most (each round reads
 //! every space: GETs on the network).
 
+use craftworks_identity::unhex32;
 use serde::{Deserialize, Serialize};
 
 use craftworks_identity::{self as identity, Host};
@@ -363,13 +364,6 @@ impl Task {
     }
 }
 
-fn unhex32(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
-        return None;
-    }
-    let v: Option<Vec<u8>> = (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect();
-    v?.try_into().ok()
-}
 fn old_key_of(d: &Task) -> [u8; 32] {
     serde_json::from_str::<serde_json::Value>(&d.row).ok().and_then(|v| v["key"].as_str().and_then(unhex32)).unwrap_or_default()
 }

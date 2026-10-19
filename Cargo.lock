@@ -643,6 +643,7 @@ dependencies = [
  "ed25519-dalek",
  "engine",
  "freenet-prolly",
+ "hex",
  "serde_json",
  "tail",
 ]
@@ -728,6 +729,7 @@ dependencies = [
  "ed25519-dalek",
  "future_form",
  "getrandom 0.2.17",
+ "hex",
  "js-sys",
  "keyhive_crypto",
  "rand 0.8.8",
@@ -745,6 +747,7 @@ dependencies = [
  "chacha20poly1305",
  "craftec-register-contract",
  "ed25519-dalek",
+ "hex",
  "serde",
  "serde_json",
  "sha2",

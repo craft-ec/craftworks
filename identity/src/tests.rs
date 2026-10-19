@@ -968,3 +968,14 @@ fn a_bag_item_opens_with_its_key_and_names_its_epoch() {
     assert!(bag_open(&space_table_key(&[2; 32], "bag-writers-open"), &open).is_some());
     assert!(bag_is_open("writers") && bag_is_open("door-4") && !bag_is_open("acts"));
 }
+
+/// HEX, the one implementation: whole bytes of hex digits only — none for an odd digit, a sign or a non-ASCII string
+/// (the copies before took "+f" as a byte, one dropped an odd last digit, three panicked slicing a non-ASCII one).
+#[test]
+fn hex_takes_whole_bytes_only() {
+    assert_eq!(hex([0xab, 0x01]), "ab01");
+    assert_eq!(unhex("AB01"), Some(vec![0xab, 1]));
+    assert!(unhex("abc").is_none() && unhex("+f").is_none());
+    assert!(unhex32("é".repeat(32)).is_none() && unhex32("00".repeat(31)).is_none());
+    assert_eq!(unhex32("07".repeat(32)), Some([7; 32]));
+}

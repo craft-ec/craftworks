@@ -7,6 +7,7 @@
 //! is up to 16 × 256 KiB), decoded, coded again, PUT; their answers counted. A file whose row has no content hash (an
 //! adopted one from before hashes travelled), or whose index is deeper than one level, is left to a page.
 
+use craftworks_identity::{hex, unhex32};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
@@ -18,16 +19,6 @@ use crate::upkeep::{Code, Io};
 /// A fragment of the generation being read, kept here until decoded: `REKEY_FRAG ‖ j`.
 const FRAG: &[u8] = b"identity_upkeep/rekey/frag/";
 
-fn unhex32(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
-        return None;
-    }
-    let v: Option<Vec<u8>> = (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect();
-    v?.try_into().ok()
-}
-fn hex(b: &[u8]) -> String {
-    crate::table::hex(b)
-}
 fn sha(b: &[u8]) -> [u8; 32] {
     sha2::Sha256::digest(b).into()
 }

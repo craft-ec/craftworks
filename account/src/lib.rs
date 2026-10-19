@@ -20,6 +20,7 @@
 //! The page makes the entropy (this crate has no randomness) and the identity delegate keeps it with the member, so
 //! the Account page can show the words when the person sets up recovery.
 
+use craftworks_identity::unhex32;
 use bip39::Mnemonic;
 use ed25519_dalek::SigningKey;
 #[cfg(feature = "puts")]
@@ -520,16 +521,6 @@ pub fn table_writers(devices: &[[u8; 32]], listed: &std::collections::BTreeSet<[
     out
 }
 
-fn unhex32(h: &str) -> Option<[u8; 32]> {
-    if h.len() != 64 {
-        return None;
-    }
-    let mut o = [0u8; 32];
-    for (i, b) in o.iter_mut().enumerate() {
-        *b = u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(o)
-}
 
 #[cfg(test)]
 mod tests {
@@ -617,9 +608,8 @@ mod tests {
     }
 
 
-    fn hex(b: &[u8]) -> String {
-        b.iter().map(|x| format!("{x:02x}")).collect()
-    }
+
+    use craftworks_identity::hex;
 
     /// SLIP-0010's own test vector 1 for ed25519 (seed 000102…0f): an oracle that is not this code.
     #[test]

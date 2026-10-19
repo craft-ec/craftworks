@@ -15,6 +15,7 @@
 //! Each step is a message out and an answer in; the round lives in the delegate's secrets. Pure: the whole round runs
 //! in tests against a scripted network.
 
+use craftworks_identity::{hex, unhex};
 use craftworks_data as data;
 use craftworks_identity::{self as identity, Host, Mandate};
 use craftworks_rules::members;
@@ -161,15 +162,6 @@ fn round<H: Host>(h: &H) -> Option<Round> {
 }
 pub(crate) fn keep<H: Host>(h: &mut H, r: Option<&Round>) {
     h.set_secret(ROUND, &r.map(|r| bincode::serialize(r).expect("a round encodes")).unwrap_or_default());
-}
-fn unhex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
-        return None;
-    }
-    (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect()
-}
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 fn mandate<H: Host>(h: &H, r: &Round) -> Option<Mandate> {
     identity::upkeep_mandate(h, &r.member)?.1.into_iter().find(|m| m.space == r.space)
