@@ -34,8 +34,6 @@ const SEEN: &[u8] = b"identity_upkeep/rekey/seen";
 const NEXT_AT: &[u8] = b"identity_upkeep/rekey/next";
 /// Wake-ups between rounds (one a minute: every ten minutes).
 pub const EVERY: u64 = 10;
-/// A round that has not moved for this many wake-ups is dropped (the next starts over from a read).
-const STUCK: u64 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Step {
@@ -71,7 +69,10 @@ struct Round {
     step: Step,
     /// Rows still due this pass (turn now).
     queue: Vec<Task>,
+    /// When it last moved (wake-up count; the node's time, ms): one `upkeep::stuck` is dropped (the next starts over
+    /// from a read).
     moved: u64,
+    moved_ms: u64,
     /// A salt's secret for the rows due (the space's now).
     salt: Option<([u8; 32], i64)>,
 }
@@ -170,7 +171,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
     // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
     let dids: Vec<[u8; 32]> = roster.iter().filter_map(|(_, d)| craftworks_account::did_bytes(d)).collect();
     let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
-    let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: identity::upkeep_wakeups(h), salt: None };
+    let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: identity::upkeep_wakeups(h), moved_ms: crate::upkeep::now_ms(h), salt: None };
     keep(h, Some(&r));
     io
 }
@@ -201,7 +202,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
 fn woke_<H: Host>(h: &mut H) -> Vec<Io> {
     let w = identity::upkeep_wakeups(h);
     if let Some(r) = load(h) {
-        if w.saturating_sub(r.moved) < STUCK {
+        if !crate::upkeep::stuck(h, r.moved, r.moved_ms) {
             why(h, w, "a round is running");
             return Vec::new();
         }
@@ -269,6 +270,7 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
 fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> {
     let Some(mut r) = load(h) else { return Vec::new() };
     r.moved = identity::upkeep_wakeups(h);
+    r.moved_ms = crate::upkeep::now_ms(h);
     match (r.step.clone(), reply) {
         (Step::Reading, Reply::Got { id, state }) => {
             let io = r.reading.got(&c.codes(), id, state);

@@ -726,3 +726,25 @@ fn a_short_read_still_applies_a_listed_entry() {
     assert_eq!(w.mandate().epoch, e + 1, "B's entry applied: {:?}", w.said());
     assert_eq!(w.group().epoch_secret().unwrap(), bg.epoch_secret().unwrap(), "the node follows B's entry");
 }
+
+/// Every round of the node's (upkeep's, the re-key's, the reads') is STUCK by one rule (`upkeep::stuck`): not moved for
+/// `STUCK` wake-ups, or for `STUCK_MS` of the node's time even when no wake-up came.
+#[test]
+fn one_stuck_rule_by_wakeups_or_time() {
+    use craftworks_identity::{Host, UPKEEP_CLOCK, UPKEEP_WAKEUPS};
+    let mut h = crate::testhost::Map(Default::default());
+    let clock = |h: &mut crate::testhost::Map, secs: u64, at: u64| h.set_secret(UPKEEP_CLOCK, &[secs.to_le_bytes(), at.to_le_bytes()].concat());
+    clock(&mut h, 1000, 10);
+    h.set_secret(UPKEEP_WAKEUPS, &10u64.to_le_bytes());
+    let (w, ms) = (10, crate::upkeep::now_ms(&h));
+    assert!(!crate::upkeep::stuck(&h, w, ms), "just moved");
+    h.set_secret(UPKEEP_WAKEUPS, &(10 + crate::upkeep::STUCK - 1).to_le_bytes());
+    clock(&mut h, 1000, 10 + crate::upkeep::STUCK - 1);
+    assert!(!crate::upkeep::stuck(&h, w, ms), "one wake-up short, no time passed");
+    h.set_secret(UPKEEP_WAKEUPS, &(10 + crate::upkeep::STUCK).to_le_bytes());
+    clock(&mut h, 1000, 10 + crate::upkeep::STUCK);
+    assert!(crate::upkeep::stuck(&h, w, ms), "STUCK wake-ups");
+    h.set_secret(UPKEEP_WAKEUPS, &10u64.to_le_bytes());
+    clock(&mut h, 1000 + 3 * 60, 10);
+    assert!(crate::upkeep::stuck(&h, w, ms), "three minutes with no wake-up");
+}

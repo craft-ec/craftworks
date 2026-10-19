@@ -1,6 +1,6 @@
 //! A ROUND OF READS across calls (the witness and keeper rounds': each step a message out and an answer in): one
 //! member's round, what it read so far (a contract's state; empty: read, not there), what it waits on, the wake-up it
-//! started at — kept in the secrets under the round's name. One at a time per round; one stuck for STUCK wake-ups is
+//! started at — kept in the secrets under the round's name. One at a time per round; one `upkeep::stuck` since it began is
 //! dropped (the next starts afresh).
 //!
 //! KEPT CHEAPLY (audit 10-11: every answer re-serialized the whole round — every state it had read — into one secret,
@@ -9,7 +9,7 @@
 //! back only when the round is driven on; a round ended or replaced blanks the states it no longer names.
 
 use crate::upkeep::Io;
-use craftworks_identity::{self as identity, Host};
+use craftworks_identity::Host;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -20,10 +20,10 @@ pub struct Round {
     pub got: BTreeMap<[u8; 32], Vec<u8>>,
     /// Asked and not answered yet.
     pub waiting: Vec<[u8; 32]>,
+    /// When it started (wake-up count; the node's time, ms): one `upkeep::stuck` since is dropped.
     pub started: u64,
+    pub started_ms: u64,
 }
-/// Wake-ups after which a round still waiting is dropped.
-const STUCK: u64 = 5;
 
 /// A round as its secret holds it: the ids read, not their states.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,9 +32,10 @@ struct Index {
     read: Vec<[u8; 32]>,
     waiting: Vec<[u8; 32]>,
     started: u64,
+    started_ms: u64,
 }
 /// (The index's bytes are tagged: an older round's encoding never reads as one.)
-const TAG: &[u8] = b"R2";
+const TAG: &[u8] = b"R3";
 
 fn got_key(name: &[u8], id: &[u8; 32]) -> Vec<u8> {
     [name, b"/got/", &id[..]].concat()
@@ -49,7 +50,7 @@ fn put_index<H: Host>(h: &mut H, name: &[u8], i: &Index) {
 pub fn load<H: Host>(h: &H, name: &[u8]) -> Option<Round> {
     let i = index(h, name)?;
     let got = i.read.iter().map(|id| (*id, h.get_secret(&got_key(name, id)).unwrap_or_default())).collect();
-    Some(Round { member: i.member, got, waiting: i.waiting, started: i.started })
+    Some(Round { member: i.member, got, waiting: i.waiting, started: i.started, started_ms: i.started_ms })
 }
 /// Keep round `r` (`None`: no round) — each state it read written once; those a round stored before it no longer
 /// names (it ended, or was dropped for a new one) blanked.
@@ -66,11 +67,11 @@ pub fn save<H: Host>(h: &mut H, name: &[u8], r: Option<&Round>) {
     for (id, state) in r.got.iter().filter(|(id, _)| !was.contains(id)) {
         h.set_secret(&got_key(name, id), state);
     }
-    put_index(h, name, &Index { member: r.member, read, waiting: r.waiting.clone(), started: r.started });
+    put_index(h, name, &Index { member: r.member, read, waiting: r.waiting.clone(), started: r.started, started_ms: r.started_ms });
 }
 /// Whether a round is IN FLIGHT (and not stuck): no new one starts.
 pub fn busy<H: Host>(h: &H, name: &[u8]) -> bool {
-    index(h, name).is_some_and(|r| identity::upkeep_wakeups(h).saturating_sub(r.started) < STUCK)
+    index(h, name).is_some_and(|r| !crate::upkeep::stuck(h, r.started, r.started_ms))
 }
 /// Whether a round is kept waiting on NO read (paused by its step: work left for a later call, `witness_statement`).
 pub fn paused<H: Host>(h: &H, name: &[u8]) -> bool {

@@ -295,10 +295,20 @@ pub fn now<H: Host>(h: &mut H, member: [u8; 32], now_ms: u64) -> Vec<Io> {
     identity::upkeep_set_next(h, &member, 0);
     begin(h, &c, member, me, all)
 }
-/// A round RUNNING (moved within `STUCK` wake-ups and `STUCK_MS`): left to go on.
+/// A round RUNNING (not `stuck`): left to go on.
 fn running<H: Host>(h: &H) -> bool {
+    round(h).is_some_and(|r| !stuck(h, r.moved, r.moved_ms))
+}
+/// A ROUND STUCK — every round of the node's (this one, the re-key's, the reads'), one rule: not moved for `STUCK`
+/// wake-ups, or for `STUCK_MS` of the node's time — by TIME too, never only by wake-ups (which may not come: I2).
+/// `moved`: the wake-up count when it last moved; `moved_ms`: the node's time then.
+pub fn stuck<H: Host>(h: &H, moved: u64, moved_ms: u64) -> bool {
     let now = identity::upkeep_now(h).unwrap_or(0) * 1000;
-    round(h).is_some_and(|r| identity::upkeep_wakeups(h).saturating_sub(r.moved) < STUCK && now.saturating_sub(r.moved_ms) < STUCK_MS)
+    identity::upkeep_wakeups(h).saturating_sub(moved) >= STUCK || now.saturating_sub(moved_ms) >= STUCK_MS
+}
+/// The node's time now (ms), as a round's `moved_ms` notes it.
+pub fn now_ms<H: Host>(h: &H) -> u64 {
+    identity::upkeep_now(h).unwrap_or(0) * 1000
 }
 /// A round not moved for this long (the node's time) is stalled.
 const STUCK_MS: u64 = 3 * 60 * 1000;
