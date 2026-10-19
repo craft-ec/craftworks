@@ -255,7 +255,7 @@ pub(crate) fn governance<H: Host>(h: &H, r: &Round, now_ms: u64) -> Option<craft
 /// The list read WHOLE (the guard): no feed silent, no act named and not held.
 pub(crate) fn whole(r: &Round, gov: &craftworks_gov::Gov) -> Result<(), String> {
     let have: std::collections::BTreeSet<String> = r.reading.rows("acts").keys().chain(r.reading.rows("pub-acts").keys()).map(|k| String::from_utf8_lossy(k).into_owned()).collect();
-    craftworks_rules::guards::whole(&r.reading.notes, gov.missing(&have).len())
+    craftworks_rules::guards::list_whole(&r.reading.devices_unread, &r.reading.feeds_unread, gov.missing(&have).len())
 }
 
 /// A WAKE-UP: a stuck round dropped (said why); else, none running, the next member's round begun (each in turn).
@@ -431,7 +431,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             // read — never taken for an MLS space (10-18, live: a node's round went to the MLS catch-up of a BeeKEM space
             // at epoch 149, whose log nobody writes, and stalled 33 times). Said with what the read noted; next round.
             if r.reading.holds_generation() {
-                let notes = if r.reading.notes.is_empty() { "no feed noted".to_string() } else { r.reading.notes.join("; ") };
+                let notes = if r.reading.feeds_unread.is_empty() { "no feed noted".to_string() } else { r.reading.feeds_unread.iter().map(|(t, w)| format!("{t} of {w}")).collect::<Vec<_>>().join("; ") };
                 followed(h, &member, &r.space, "short", &format!("{}: its key operations read empty though it holds a BeeKEM generation ({notes}): not followed this round", m.name));
                 return next_space(h, &c, r);
             }

@@ -395,6 +395,38 @@ pub fn devices(did: &[u8; 32], log: &Log, contract: Option<&[Vec<u8>]>, card: &[
     members(did, log, card, &[])
 }
 
+/// A member's DEVICES, STEP BY STEP — the one resolution's order and failures, page and node (each only fetches): their
+/// key log, then their card, then their devices contract where the card says they have one or nothing on the card
+/// counts. `log`: None — not read. `card`: its device credentials and whether it says they have a devices contract;
+/// None — not read. `contract`: None — not asked yet; `Some(None)` — asked, not read. A READ that failed is said
+/// (`unread`) — never a list of no devices taken for a member with none (10-19: the node took an unread card for a
+/// short list before it asked the devices contract, which would have answered).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DevicesStep {
+    /// Read their devices contract, then step again.
+    ReadDevices,
+    /// Their devices; `unread`: what did not read, if that is why there are none.
+    Done { devices: Vec<[u8; 32]>, unread: Option<String> },
+}
+pub fn devices_step(did: &[u8; 32], log: Option<&Log>, card: Option<(&[Vec<u8>], bool)>, contract: Option<Option<&[Vec<u8>]>>) -> DevicesStep {
+    let Some(log) = log else { return DevicesStep::Done { devices: Vec::new(), unread: Some("their key log not read".into()) } };
+    let (creds, marked) = card.unwrap_or((&[], false));
+    let on_card = members(did, log, creds, &[]);
+    if card.is_some() && !marked && !on_card.is_empty() {
+        return DevicesStep::Done { devices: on_card, unread: None };
+    }
+    let Some(contract) = contract else { return DevicesStep::ReadDevices };
+    let devices = devices(did, log, contract, creds);
+    let unread = match (devices.is_empty(), card.is_some(), contract.is_some()) {
+        (false, ..) => None,
+        (true, false, false) => Some("their card and devices contract not read".into()),
+        (true, false, true) => Some("their card not read".into()),
+        (true, true, false) if marked => Some("their devices contract not read".into()),
+        _ => None,
+    };
+    DevicesStep::Done { devices, unread }
+}
+
 /// EVERY DEVICE THE ACCOUNT HAS HAD: each credential its devices contract holds for this DID (a grow-only set — each
 /// signed by a key its key log has had, `craftworks_devices_contract::valid`), current or not. What a dropped device
 /// wrote before it was dropped is still its account's (`writers`: up to where it stood) — this is how it is known.
@@ -457,6 +489,34 @@ fn unhex32(h: &str) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
+    /// THE ONE DEVICES STEP (page and node): a card read with a device answers; an UNREAD card asks the devices
+    /// contract before anything is said (10-19: the node said "short" first); a failure is said only when nothing
+    /// answered; a card with no device and no contract is none — not a failure.
+    #[test]
+    fn devices_step_asks_the_contract_before_saying_unread() {
+        let words = [3u8; 16];
+        let e = inception(&words).unwrap();
+        let did = e.id();
+        let log = Log { events: vec![e] };
+        let node = [9u8; 32];
+        let cred = credential(&did, &node, &[1u8; 32], &owner_seed(&words).unwrap());
+        // A card read with a device: done, no contract asked.
+        assert_eq!(devices_step(&did, Some(&log), Some((&[cred.clone()], false)), None), DevicesStep::Done { devices: vec![node], unread: None });
+        // The card NOT read: the contract asked first.
+        assert_eq!(devices_step(&did, Some(&log), None, None), DevicesStep::ReadDevices);
+        // …and it answers (the card's device in it): done, nothing unread.
+        let contract = [cred.clone()];
+        assert!(matches!(devices_step(&did, Some(&log), None, Some(Some(&contract))), DevicesStep::Done { unread: None, .. }));
+        // …or it does not read either: said.
+        assert_eq!(devices_step(&did, Some(&log), None, Some(None)), DevicesStep::Done { devices: vec![], unread: Some("their card and devices contract not read".into()) });
+        // The key log not read: said.
+        assert!(matches!(devices_step(&did, None, Some((&[cred], false)), None), DevicesStep::Done { unread: Some(_), .. }));
+        // A card read with NO device, no contract there: none — not a failure.
+        assert_eq!(devices_step(&did, Some(&log), Some((&[], false)), Some(Some(&[]))), DevicesStep::Done { devices: vec![], unread: None });
+        // A card that says a contract exists, the contract not read: said.
+        assert_eq!(devices_step(&did, Some(&log), Some((&[], true)), Some(None)), DevicesStep::Done { devices: vec![], unread: Some("their devices contract not read".into()) });
+    }
+
     use super::*;
 
     #[test]

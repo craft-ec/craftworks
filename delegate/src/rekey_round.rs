@@ -403,7 +403,7 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
     {
         let name = r.name.clone();
         let files = r.reading.rows("files");
-        let notes = if r.reading.notes.is_empty() { String::new() } else { format!(" ({})", r.reading.notes.join("; ")) };
+        let notes = if r.reading.feeds_unread.is_empty() { String::new() } else { format!(" ({:?})", r.reading.feeds_unread) };
         identity::upkeep_say(
             h,
             &r.member,

@@ -154,7 +154,7 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
     let epochs_map: BTreeMap<u64, [u8; 32]> = epochs.into_iter().collect();
     let (mut r, first) = Reading::new(&codes(), SPACE, epochs_map, vec![pubkey(&a), pubkey(&b), pubkey(&c)], &["files"]);
     let asked = run(&mut r, first, &net);
-    assert!(r.done(), "the read finished: {:?}", r.notes);
+    assert!(r.done(), "the read finished: {:?}", r.feeds_unread);
 
     let rows: BTreeMap<String, String> =
         r.rows("files").into_iter().map(|(k, v)| (String::from_utf8(k).unwrap(), String::from_utf8(v.value).unwrap())).collect();
@@ -162,7 +162,7 @@ fn a_space_table_reads_as_its_feeds_merged_departed_writers_capped() {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    assert_eq!(rows, want, "notes: {:?}", r.notes);
+    assert_eq!(rows, want, "notes: {:?}", r.feeds_unread);
     // THEIR ROWS ARE THEIR AUTHORS' (the one map, `craftworks_account::writers`): a departed writer → its DID.
     assert!(r.writer_dids.contains(&(pubkey(&d), "did:craftec:D".to_string())), "a departed writer keeps its author");
     assert!(r.writer_dids.contains(&(pubkey(&e), "did:craftec:E".to_string())));

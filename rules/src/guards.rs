@@ -86,6 +86,15 @@ pub fn whole(unread: &[String], missing: usize) -> Verdict {
     Err(format!("the list read SHORT ({}{}): nobody out", unread.join("; "), if missing > 0 { format!("; {missing} act(s) named, not held") } else { String::new() }))
 }
 
+/// THE LIST READ WHOLE — what counts as unread, page and node the same: a listed member whose DEVICES did not read
+/// (`devices`: `"<who>: why"` — their acts were not looked for) and a feed of the LIST's own tables that did not read
+/// (`feeds`: `(table, why)` — only `…acts` and `…pub-acts` count: an unread key operation or departed row is not the
+/// list). 10-19: the node counted every failed read of any table, the page none of a member's devices — each its own.
+pub fn list_whole(devices: &[String], feeds: &[(String, String)], missing: usize) -> Verdict {
+    let unread: Vec<String> = devices.iter().cloned().chain(feeds.iter().filter(|(t, _)| t.ends_with("-acts") || t == "acts").map(|(t, w)| format!("{t}: {w}"))).collect();
+    whole(&unread, missing)
+}
+
 /// LEADS PAST: a group this device's own node moved (its removals) is taken only if it leads past this device's epoch
 /// (an older one never takes it back).
 pub fn leads_past(to: u64, held: Option<u64>) -> Verdict {
@@ -137,6 +146,11 @@ mod tests {
     fn each_guard_says_why_not() {
         assert!(leads_past(5, Some(5)).is_err() && leads_past(6, Some(5)).is_ok() && leads_past(1, None).is_ok());
         assert!(whole(&[], 0).is_ok() && whole(&["x: no key log".into()], 0).is_err() && whole(&[], 2).is_err());
+        // THE LIST's own feeds count, other tables' do not; an unread member's devices count (page and node the same).
+        let feeds = |t: &str| vec![(t.to_string(), "not read".to_string())];
+        assert!(list_whole(&[], &feeds("x0cce26765a1f-acts"), 0).is_err() && list_whole(&[], &feeds("x0cce26765a1f-pub-acts"), 0).is_err());
+        assert!(list_whole(&[], &feeds("x0cce26765a1f-pub-keyops"), 0).is_ok() && list_whole(&[], &feeds("x0cce26765a1f-departed"), 0).is_ok());
+        assert!(list_whole(&["did:x: their card and devices contract not read".into()], &[], 0).is_err() && list_whole(&[], &[], 1).is_err());
         assert!(listed("a", &["a".into()]).is_ok() && listed("b", &["a".into()]).is_err());
     }
 

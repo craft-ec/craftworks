@@ -80,10 +80,8 @@ pub struct Reading {
     bag_read: bool,
     /// `departed` read, and its departed writers' catalogs asked.
     departed_asked: bool,
-    /// Something did not read (named, for the round's log).
-    pub notes: Vec<String>,
     /// MEMBERS whose devices are still being read: `(did, their key log's state once got, the contract waited on)`.
-    resolving: Vec<([u8; 32], Option<Vec<u8>>, [u8; 32], Option<Vec<Vec<u8>>>)>,
+    resolving: Vec<([u8; 32], Option<Vec<u8>>, [u8; 32], Option<(Vec<Vec<u8>>, bool, bool)>)>,
     /// Each writer's DID (a device of a member, or a roster writer given): whose acts are whose.
     pub writer_dids: Vec<([u8; 32], String)>,
     /// Each member's BEEKEM MEMBER from their card (`beekem`: its credential checked against their key log's data key):
@@ -96,6 +94,11 @@ pub struct Reading {
     /// the keys round, never a short read.
     #[serde(default)]
     pub card_says: Vec<String>,
+    /// What did not read, as the one rule takes it (`guards::list_whole`): members' devices, and feeds `(table, why)`.
+    #[serde(default)]
+    pub devices_unread: Vec<String>,
+    #[serde(default)]
+    pub feeds_unread: Vec<(String, String)>,
     /// A CARDS-ONLY read in progress (`cards_of`): members' key logs and cards, nothing else (no catalogs, feeds or
     /// writers) — what the node's keys round still needs, on top of the read it has.
     #[serde(default)]
@@ -211,11 +214,12 @@ impl Reading {
             bag: Some(bag),
             bag_read: false,
             departed_asked: false,
-            notes: Vec::new(),
             resolving: Vec::new(),
             writer_dids: Vec::new(),
             beekem: Vec::new(),
             card_says: Vec::new(),
+            devices_unread: Vec::new(),
+            feeds_unread: Vec::new(),
             cards_only: false,
             card_trees: Vec::new(),
         };
@@ -265,8 +269,8 @@ impl Reading {
                 // (A cards-only read: an account with no key log has no member to learn — said, never a short read.)
                 if self.cards_only {
                     self.card_says.push(format!("{}: no key log", craftworks_account::did(&did)));
-                } else {
-                    self.notes.push(format!("{}: no key log", craftworks_account::did(&did)));
+                } else if let craftworks_account::DevicesStep::Done { unread: Some(why), .. } = craftworks_account::devices_step(&did, None, None, None) {
+                    self.devices_unread.push(format!("{}: {why}", craftworks_account::did(&did)));
                 }
                 self.resolving.remove(at);
                 return self.members_done(c);
@@ -315,12 +319,13 @@ impl Reading {
                     },
                     Some(None) => self.card_says.push(format!("{}: no member on its card", name.get(12..20).unwrap_or(&name))),
                     None if self.cards_only => self.card_says.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),
-                    None => self.notes.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),
+                    None => {}
                 }
                 if self.cards_only {
                     self.resolving.remove(at);
                     return self.members_done(c);
                 }
+                let card_read = rows.is_some();
                 let creds: Vec<Vec<u8>> = rows
                     .and_then(|r| r.get(b"nodes".as_slice()).cloned())
                     .and_then(|v| serde_json::from_slice::<Vec<String>>(&v).ok())
@@ -328,17 +333,18 @@ impl Reading {
                     .iter()
                     .filter_map(|h| (0..h.len() / 2).map(|i| u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()).collect())
                     .collect();
-                let on_card = craftworks_account::members(&did, &log, &creds, &[]);
-                if marked || on_card.is_empty() {
-                    // Their DEVICES contract: said on the card, or nothing on the card counts.
-                    self.resolving[at] = (did, Some(log_state), dev, Some(creds));
+                // THE ONE STEP (`account::devices_step`, the page's too): their devices contract asked when it must be.
+                let step = craftworks_account::devices_step(&did, Some(&log), card_read.then_some((creds.as_slice(), marked)), None);
+                if step == craftworks_account::DevicesStep::ReadDevices {
+                    self.resolving[at] = (did, Some(log_state), dev, Some((creds, card_read, marked)));
                     return vec![Io::Get { id: dev, subscribe: false }];
                 }
-                on_card
+                step
             }
-            // Their DEVICES contract, else the card's — the one resolution (`craftworks_account::devices`, the page's too).
-            Some(creds) => craftworks_account::devices(&did, &log, state.as_deref().and_then(craftworks_devices_contract::decode).as_deref(), &creds),
+            Some((creds, card_read, marked)) => craftworks_account::devices_step(&did, Some(&log), card_read.then_some((creds.as_slice(), marked)), Some(state.as_deref().and_then(craftworks_devices_contract::decode).as_deref())),
         };
+        let craftworks_account::DevicesStep::Done { devices: found, unread } = found else { return Vec::new() };
+        self.devices_unread.extend(unread.map(|u| format!("{name}: {u}")));
         for node in found {
             if !self.writers.contains(&node) {
                 self.writers.push(node);
@@ -432,7 +438,7 @@ impl Reading {
 
     fn fail(&mut self, c: &Codes, i: usize, why: &str) -> Vec<Io> {
         let j = &self.jobs[i];
-        self.notes.push(format!("{} of {}…: {why}", j.table, &hex(&j.owner)[..12]));
+        self.feeds_unread.push((j.table.clone(), format!("{}…: {why}", &hex(&j.owner)[..12])));
         self.jobs[i].rows = Some(None);
         self.finished(c, i)
     }

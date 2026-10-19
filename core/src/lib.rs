@@ -1586,6 +1586,23 @@ mod js {
             Ok(account::devices(&did, &log, contract.as_deref(), &bytes_list(&card)).iter().map(|n| JsValue::from(hex(n))).collect())
         }
 
+        /// A member's DEVICES, one STEP (`craftworks_account::devices_step`, the node's too): their key log and devices
+        /// contract as read here (`got`), their card's credentials (`card`: null — not read) and whether it says they
+        /// have a contract (`marked`); `asked`: the contract was asked for. → JSON `{ "readDevices": true }` (ask it, then
+        /// step again) or `{ "devices": [hex], "unread": why | null }`.
+        pub fn account_devices_step(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8], card: JsValue, marked: bool, asked: bool) -> Result<String, JsValue> {
+            let did = b32(did)?;
+            let log = self.0.got(&account::idlog_put(idlog_code, &did, None).id_bytes).and_then(|st| craftworks_idlog_contract::read(&did, st));
+            let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
+            let contract = asked.then(|| self.0.got(&dev).and_then(craftworks_devices_contract::decode));
+            let creds = (!card.is_null() && !card.is_undefined()).then(|| bytes_list(&js_sys::Array::from(&card)));
+            Ok(match account::devices_step(&did, log.as_ref(), creds.as_deref().map(|c| (c, marked)), contract.as_ref().map(|c| c.as_deref())) {
+                account::DevicesStep::ReadDevices => serde_json::json!({ "readDevices": true }),
+                account::DevicesStep::Done { devices, unread } => serde_json::json!({ "devices": devices.iter().map(|n| hex(n)).collect::<Vec<_>>(), "unread": unread }),
+            }
+            .to_string())
+        }
+
         /// EVERY DEVICE the account has had (`craftworks_account::devices_ever`), its devices contract read (`got`):
         /// node keys, hex. Empty where the contract was not read.
         pub fn account_devices_ever(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Array, JsValue> {
@@ -2298,6 +2315,14 @@ mod js {
     #[wasm_bindgen]
     pub fn turn_wait(k: f64, since: f64, now: f64) -> f64 {
         craftworks_rules::guards::turn_wait(k.max(0.0) as u64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS) as f64
+    }
+    /// THE LIST READ WHOLE (`guards::list_whole`, the node's too): `devices` JSON `["<did>: why"…]` (listed members
+    /// whose devices did not read), `feeds` JSON `[[table, why]…]`, `missing` acts named and not held. `undefined`: whole.
+    #[wasm_bindgen]
+    pub fn guard_list_whole(devices: &str, feeds: &str, missing: f64) -> Result<Option<String>, JsValue> {
+        let d: Vec<String> = serde_json::from_str(devices).map_err(|e| JsValue::from_str(&format!("devices: {e}")))?;
+        let f: Vec<(String, String)> = serde_json::from_str(feeds).map_err(|e| JsValue::from_str(&format!("feeds: {e}")))?;
+        Ok(craftworks_rules::guards::list_whole(&d, &f, missing as usize).err())
     }
     /// THE GUARD "a lapse's turn" (`guards::lapse_turn`): why not now, or `undefined`.
     #[wasm_bindgen]

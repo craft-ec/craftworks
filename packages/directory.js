@@ -245,24 +245,18 @@ export async function start(ctx) {
       deviceSets.set(
         did,
         (async () => {
-          const none = why => (deviceWhy.set(did, why), []);
-          if (!(await keysOf(did))) return none("their key log not read");
-          // Their DEVICES contract (owner 10-09): the devices on the key log's CURRENT key — looked up only when their
-          // card says they have one (an absent contract costs a whole network search on every page). Their card's
-          // devices otherwise (the card is the data key's: any of its devices could rewrite it).
+          // THE ONE STEP (`craftworks_account::devices_step`, the node's too): what to read next, and what a failed read
+          // means. Here only the reading: their key log, their card, their devices contract when the step asks.
+          await keysOf(did);
           const c = await card(did, { fresh });
-          const creds = (c?.nodes ?? []).map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16))));
-          // WHICH COUNT: the one resolution (`craftworks_account::devices` in the core — the node's too): their devices
-          // contract when read, else their card's. (Here only what to READ, and when.)
+          const creds = c ? (c.nodes ?? []).map(h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)))) : null;
           const devicesCode = await ctx.require("devices-wasm");
-          const resolve = () => Array.from(core.account_devices(devicesCode, idlogCode, didBytes(did), creds));
-          if (c?.hasDevices) await auth.identity.readDevices(didBytes(did));
-          let out = resolve();
-          // Nothing counts and their card does not say: an account that put its contract before cards said so.
-          if (!out.length && !c?.hasDevices && (await auth.identity.readDevices(didBytes(did)))) out = resolve();
-          if (out.length) return (deviceWhy.delete(did), out);
-          if (!c) return none("their card not read");
-          return none(c.nodes.length ? `none of their card's ${creds.length} device(s) on their key log` : "their card lists no device");
+          const step = asked => JSON.parse(core.account_devices_step(devicesCode, idlogCode, didBytes(did), creds, !!c?.hasDevices, asked));
+          let s = step(false);
+          if (s.readDevices) (await auth.identity.readDevices(didBytes(did)), (s = step(true)));
+          if (s.unread) deviceWhy.set(did, s.unread);
+          else deviceWhy.delete(did);
+          return s.devices ?? [];
         })().catch(e => (deviceWhy.set(did, `reading their devices: ${String(e?.message ?? e).slice(0, 80)}`), [])),
       );
     return deviceSets.get(did);

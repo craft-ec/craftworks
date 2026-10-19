@@ -142,6 +142,8 @@ export async function start(ctx) {
       const all = (st?.members ?? []).filter(m => m.cred);
       group = w.members;
       for (const [n, x] of w.byNode) writers.set(n, x.did);
+      // Members whose DEVICES did not read (`account::devices_step`'s why): their acts not looked for — the list short.
+      devicesUnread = [...new Set(group.map(m => m.did))].map(d => [d, directory.devicesWhy(d)]).filter(([, why]) => why).map(([d, why]) => `${d}: ${why}`);
       // SAID when it changes (owner 10-07: a member's space showed 0 members): what the group gave, and what was kept.
       const said = `${st ? `${st.members?.length ?? 0} member(s) at epoch ${st.epoch ?? "?"}${st.removed ? " (this node removed)" : ""}` : "not ready"}, ${all.length} with a credential, ${group.length} kept`;
       if (said !== lastSaid) (lastSaid = said), ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}` });
@@ -158,6 +160,7 @@ export async function start(ctx) {
     let gone = new Set();
     // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
     let listWhole = false;
+    let devicesUnread = [];
     function replay() {
       const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
       const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
@@ -182,7 +185,10 @@ export async function start(ctx) {
         // the acts' answers that never change as more are read (EVER listed, a proof's entry rule, who may be taken
         // out). WHOLE only when no act is named that is not here and the acts read decided (I6).
         const text = h => new TextDecoder().decode(new Uint8Array((String(h).match(/../g) ?? []).map(x => parseInt(x, 16))));
-        listWhole = !miss.length && t.state?.s === "present";
+        // THE ONE RULE (`guards::list_whole`, the node's too): no act named and not here, no listed member's devices
+        // unread, the list's own tables read.
+        const feeds = t.state?.s === "present" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];
+        listWhole = !node.glue.guard_list_whole(JSON.stringify(devicesUnread), JSON.stringify(feeds), miss.length);
         keys.setList(sp.id, {
           roster: [...roster],
           owner,
