@@ -34,11 +34,7 @@ export async function start(ctx) {
     .cw-bv:fullscreen .flow { height: calc(100vh - 80px); }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   // WHERE THE READER WAS, per book, on this device (a convenience: lost with the browser's storage, nothing else).
   const placeKey = (item, file) => `cw-read:${item ?? file?.key ?? file?.name}`;
   const placeOf = k => {

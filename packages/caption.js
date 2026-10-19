@@ -27,11 +27,7 @@ export async function mount(ctx, el) {
     }</style>
     <div class="sb"></div>`;
   const root = el.querySelector(".sb");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   // WHERE (`where`: yours, a space's, a person's — their tracks —, Discover — public videos and audio, each with
   // its tracks), read at each draw.
   const where = await ctx.require("where");

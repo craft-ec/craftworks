@@ -27,11 +27,7 @@ export async function start(ctx) {
     .cw-appset .ok { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; flex: 1; }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const NAMES = { anyone: "Anyone (public)", members: "Members", admins: "Admins", owner: "The owner", nobody: "Nobody", followers: "Your followers", friends: "Your friends", author: "Only you", ask: "Anyone may ask (a member decides)" };
   const parentOf = path => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : path ? "" : null);
 

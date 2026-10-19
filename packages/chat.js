@@ -406,11 +406,7 @@ async function openSpaces(ctx, el, { space, roles, conversation, theme }) {
     }</style>
     <div class="dir"><a class="back" href="#/chat">← Your messages</a><h2>Open spaces</h2><p class="note">Spaces anyone may join. What is said in them is for their members.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   (await ctx.require("where")).menu([], "/chat");
   grid.replaceChildren(theme.loading("Finding open spaces…"));
   const joins = await ctx.require("join-button");

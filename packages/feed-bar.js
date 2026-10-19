@@ -15,11 +15,7 @@
 //                                                  // reaches further on its own; an empty or stalled list waits for a click
 //   bar.span()                                     // words for the window ("this week", "in the last 30 days")
 export async function start() {
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const style = document.createElement("style");
   style.textContent = `@layer components {
 

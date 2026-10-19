@@ -8,11 +8,7 @@ export async function mount(ctx, el) {
   // A FEED as every content app's (owner 10-16: "Bundles should be feed still"): the one feed bar picks and orders
   // what is listed — New paged by Older, the ranked feeds with their period — yours, Following, Discover, a space's.
   const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() });
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `<style>@layer apps {
     .bd { padding: 0 16px; display: grid; gap: 12px; }
     .bd ul { list-style: none; padding: 0; display: grid; gap: 8px; }

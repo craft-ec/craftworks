@@ -18,11 +18,7 @@ export async function mount(ctx, el) {
   );
   const me = await space.me();
   const whereCap = await ctx.require("where");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer apps {
       .bl { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }

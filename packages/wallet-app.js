@@ -40,11 +40,7 @@ export async function mount(ctx, el) {
   const { core } = node;
   const { beacon, code, idlogCode, run, putAll, now, bytes, hexOf } = tokens;
   const table = await storage.table("tokens");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
 
   // AMOUNTS: the smallest unit (a decimal string) shown with the token's decimals, and back.
   const shown = (v, dec) => {

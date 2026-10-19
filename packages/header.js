@@ -4,7 +4,8 @@
 // navigation and maintain only side navigation"; until 10-18 the header still drew it until the panel took it over —
 // the menu shown on top first, then moved to the side). The app's own component (the layout names it), so editing it is
 // publishing the app, never the loader.
-export function mount(ctx, el) {
+export async function mount(ctx, el) {
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer components {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
@@ -59,11 +60,6 @@ export function mount(ctx, el) {
     const btn = box.querySelector("button");
     const out = box.querySelector(".results");
     const label = btn.textContent;
-    const h = (tag, props = {}, ...kids) => {
-      const e = Object.assign(document.createElement(tag), props);
-      e.append(...kids.filter(k => k != null && k !== false));
-      return e;
-    };
     const badge = n => (n ? h("span", { className: "cw-badge", textContent: String(n) }) : null);
     ctx.optional("header: activity", ctx
       .require("activity")
@@ -103,11 +99,6 @@ export function mount(ctx, el) {
     const box = el.querySelector(".tasks");
     const btn = box.querySelector("button");
     const out = box.querySelector(".results");
-    const h = (tag, props = {}, ...kids) => {
-      const e = Object.assign(document.createElement(tag), props);
-      e.append(...kids.filter(k => k != null && k !== false));
-      return e;
-    };
     const pct = p => `${Math.round((p || 0) * 100)}%`;
     let list = [];
     const read = async () => {
@@ -156,11 +147,6 @@ export function mount(ctx, el) {
     const box = el.querySelector(".find");
     const input = box.querySelector("input");
     const out = box.querySelector(".results");
-    const h = (tag, props = {}, ...kids) => {
-      const e = Object.assign(document.createElement(tag), props);
-      e.append(...kids.filter(k => k != null && k !== false));
-      return e;
-    };
     const close = () => (out.hidden = true);
     const go = href => (close(), (input.value = ""), (location.hash = href));
     let itemsHeld = null; // the items read once per opening of the search (not per key)

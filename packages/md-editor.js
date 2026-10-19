@@ -48,11 +48,7 @@ export async function start(ctx) {
     .cw-mde .suggest li:hover { background: var(--cw-hover); }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   // What is MEDIA (shown inline): what `kinds` declares a media domain.
   const isMedia = ref => !!kinds.mediaOf(ref);
   const MODE_KEY = "craftworks:editor-mode";

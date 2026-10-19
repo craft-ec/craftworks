@@ -27,11 +27,7 @@ export function withWrite(meta, write) {
 
 export async function start(ctx) {
   const [items, space, node] = await Promise.all(["items", "space", "node"].map(n => ctx.require(n)));
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
 
   async function picker({ space: sp = null, kind = "post", initial = null } = {}) {
     // The choices here: yours, or what the space's policy allows for this kind.

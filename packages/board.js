@@ -93,11 +93,7 @@ export async function mount(ctx, el) {
     <div class="bd"><div class="main"></div><aside class="side"></aside></div>`;
   const main = el.querySelector(".main");
   const side = el.querySelector(".side");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const ago = at => {
     const s = Math.max(0, (Date.now() - at) / 1000);
     if (s < 60) return "just now";

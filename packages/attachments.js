@@ -53,11 +53,7 @@ export async function start(ctx) {
     .cw-att-full p { color: #fff; margin: 8px 0 0; font-size: var(--cw-text-sm); }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const sizeOf = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`);
   const isImage = r => kinds.mediaOf(r)?.domain === "image";
 

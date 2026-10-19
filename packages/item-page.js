@@ -25,11 +25,7 @@ export async function start(ctx) {
     .cw-page .editing .row { display: flex; gap: var(--cw-space-2); justify-content: flex-end; align-items: center; }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
 
   // WHAT SOMEONE WROTE, whole (`markdown`): its media and embedded items where they were written, its other files below.
   const written = it =>

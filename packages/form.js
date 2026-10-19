@@ -23,11 +23,7 @@
 export async function mount(ctx, el) {
   const [items, theme, F, directory, space, conversation, roles] = await Promise.all(["items", "theme", "form-fields", "directory", "space", "conversation", "roles"].map(n => ctx.require(n)));
   const mail = conversation.mail;
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.flat().filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer apps {
       .fm { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }

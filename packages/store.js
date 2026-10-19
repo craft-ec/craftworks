@@ -3,11 +3,7 @@
 // their own frames (FOUNDATION.md build order 8): until then the catalog is the site's own apps.
 export async function mount(ctx, el) {
   const installed = await ctx.require("installed");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `<style>@layer components {
     .st { padding: 16px; }
     .st ul { list-style: none; padding: 0; display: grid; gap: 10px; }

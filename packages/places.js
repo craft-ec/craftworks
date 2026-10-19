@@ -31,11 +31,7 @@ export async function start(ctx) {
     return out;
   }
 
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false && k !== ""));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const initials = s =>
     String(s)
       .split(/\s+/)

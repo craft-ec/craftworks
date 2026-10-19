@@ -28,11 +28,7 @@ export async function start(ctx) {
     .cw-editions label { display: grid; gap: var(--cw-space-1); font-size: var(--cw-text-sm); }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
 
   // An edition AS THIS ITEM SHOWS IT (null: not shown — another item's). Its author is the item's (only the author
   // writes `meta.editions`); `mine`: the copies minted to this wallet's one-time owners.

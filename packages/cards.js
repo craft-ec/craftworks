@@ -121,11 +121,7 @@ export async function start(ctx) {
     ctx.optional("cards: ctx.require", ctx.require(n).then(m => ph.replaceWith(f(m) ?? "")), () => ph.remove());
     return ph;
   };
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const ago = at => {
     const s = Math.max(0, (Date.now() - at) / 1000);
     if (s < 60) return "just now";

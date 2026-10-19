@@ -50,11 +50,7 @@ export async function start(ctx) {
   // editor (`dialog`, over the post being written). Its kinds (the domain's: Video · Movie · Episode …), the fields of
   // the kind chosen, a cover (an audio's), subtitles or lyrics, keep the original, a title and a description — filled
   // from the file's own tags — and whom it is for (`audience`). `file`: given (an editor's), else picked here.
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const style = document.createElement("style");
   style.textContent = `@layer components {
 

@@ -49,11 +49,7 @@ export async function start(ctx) {
     .cw-reacts .more-menu button { font-size: var(--cw-text-sm); text-align: left; white-space: nowrap; padding: 4px 10px; }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
 
   // `outside`: the public description of the space it is in, when this person is not (a value, or a function that
   // finds it).

@@ -5,11 +5,7 @@
 // is not in, what joining needs. UI only: spaces are `space`'s, joining `conversation`'s, the rules `roles`'.
 export async function mount(ctx, el) {
   const [space, roles, conversation, theme] = await Promise.all(["space", "roles", "conversation", "theme"].map(n => ctx.require(n)));
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `<style>@layer components {
     .sa { padding: 16px; }
     .sa ul { list-style: none; padding: 0; }

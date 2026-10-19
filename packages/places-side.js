@@ -4,11 +4,7 @@
 // Chat's page has no side panel: its rail is its own (Discord's).
 export async function mount(ctx, el) {
   const places = await ctx.require("places");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const style = h("style", {
     textContent: `@layer components {
       .cw-side { width: 220px; box-sizing: border-box; padding: var(--cw-space-3) var(--cw-space-2); border-right: 1px solid var(--cw-line); overflow-y: auto; }

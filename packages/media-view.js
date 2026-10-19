@@ -39,11 +39,7 @@ export async function start(ctx) {
     .cw-mv .timed p.on { color: var(--cw-fg); font-weight: 600; }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
   function create({ file, item = null, kind = null, cover = false, outside = null, label = null, itemKind = null, onNote = null, onLevel = null, onLevels = null, place = true } = {}) {

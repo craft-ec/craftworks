@@ -34,11 +34,7 @@ export async function mount(ctx, el) {
     }</style>
     <div class="dv"></div>`;
   const root = el.querySelector(".dv");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   // Where Drive is: yours, or the space open; and the folder (`f/<path>`).
   // WHERE (`where`: yours, a space's, a person's, Discover — the last two read only).
   const where = await ctx.require("where");

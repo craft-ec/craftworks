@@ -262,5 +262,12 @@ export async function start() {
       (input ?? yes).focus();
     });
   }
-  return { loading, action, ask };
+  // AN ELEMENT (every package's): `tag` with `props` set on it, then `kids` appended — nested lists flattened; nothing,
+  // false and "" left out.
+  const h = (tag, props = {}, ...kids) => {
+    const e = Object.assign(document.createElement(tag), props);
+    e.append(...kids.flat(Infinity).filter(k => k != null && k !== false && k !== ""));
+    return e;
+  };
+  return { h, loading, action, ask };
 }

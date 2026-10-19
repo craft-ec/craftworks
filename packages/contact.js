@@ -116,11 +116,7 @@ async function people(ctx, el, { directory, person }) {
     }</style>
     <div class="ppl"><h2>👤 People</h2><p class="note">People who chose to be shown in Discover. Show yourself from your Contacts.</p><div class="grid"></div></div>`;
   const grid = el.querySelector(".grid");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(Boolean));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   // A VIEW: who chose to be shown, drawn again when that changes.
   ctx.view(grid, {
     read: async () => {

@@ -15,11 +15,7 @@
 // in each. Telemetry is the loader's collector's.
 export async function mount(ctx, el) {
   const [items, theme, V, directory, space, roles] = await Promise.all(["items", "theme", "vote-tally", "directory", "space", "roles"].map(n => ctx.require(n)));
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.flat().filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer apps {
       .vt { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }

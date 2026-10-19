@@ -42,11 +42,7 @@ export async function start(ctx) {
     .cw-cm .said { color: var(--cw-danger); font-size: var(--cw-text-sm); margin: 0; }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const ago = t => {
     const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
     if (s < 60) return "just now";

@@ -48,11 +48,7 @@ export async function mount(ctx, el) {
     }</style>
     <div class="vd"></div>`;
   const root = el.querySelector(".vd");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   // WHERE it is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.
   const where = await ctx.require("where");
   let at = await where.of({ kinds: VIDEO, app: C.app, yours: "Following" });

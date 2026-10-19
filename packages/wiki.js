@@ -12,11 +12,7 @@
 // not built: said where it would be.
 export async function mount(ctx, el) {
   const [items, theme, markdown, mdEditor, directory, W, where, spaceCap] = await Promise.all(["items", "theme", "markdown", "md-editor", "directory", "wiki-pages", "where", "space"].map(n => ctx.require(n)));
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer apps {
       .wk { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); min-width: 0; }

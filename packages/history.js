@@ -23,11 +23,7 @@ export async function start(ctx) {
     dialog.cw-history .end { justify-self: end; }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const name = async did => (did ? directory.shown(did, await directory.handle(did)) : "someone");
   const when = t => (t ? new Date(t).toLocaleString() : "");
   const stamp = it => it?.edited || it?.at || 0;

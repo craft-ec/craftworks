@@ -13,10 +13,10 @@ export function mount(ctx, el) {
   ctx.require("keeper").catch(e => ctx.log("keeper", { what: e.message ?? String(e) }));
   // …and witnesses what its stake is drawn for (`witness`: its member key, through its identity delegate).
   ctx.require("witness").catch(e => ctx.log("witness", { what: e.message ?? String(e) }));
-  mountDock(ctx, el);
+  mountDock(ctx, el).catch(e => ctx.failed("footer", e, `the dock: ${e?.message ?? e}`));
 }
 
-function mountDock(ctx, el) {
+async function mountDock(ctx, el) {
   el.innerHTML = `<style>@layer components {
     .cw-dock-pad { height: 76px; }
     .cw-dock { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 2147482000; display: flex; align-items: flex-end; gap: 4px;
@@ -46,11 +46,7 @@ function mountDock(ctx, el) {
     .cw-viewer .none { max-width: 1000px; margin: 0 auto 32px; color: var(--cw-muted); }
   }</style><div class="cw-dock-pad"></div><nav class="cw-dock" aria-label="Dock"></nav>`;
   const dock = el.querySelector(".cw-dock");
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   const appOf = route => (ctx.apps ?? []).find(a => a.route === route);
 
   // THE APPS OPEN this session: each app's last place (its address), newest first.

@@ -5,11 +5,7 @@ export async function mount(ctx, el) {
   const [items, cards, actions, theme, kinds] = await Promise.all(["items", "cards", "actions", "theme", "kinds"].map(n => ctx.require(n)));
   const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() }); // (draw: below)
   const tagNow = () => decodeURIComponent(String(ctx.sub ?? "").split("/")[0] ?? "").toLowerCase();
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer apps {
       .tg { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }

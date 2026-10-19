@@ -24,11 +24,7 @@ export async function start(ctx) {
     .cw-members .said { color: var(--cw-danger); margin: 0; font-size: var(--cw-text-sm); }
 }`;
   document.head.append(style);
-  const h = (tag, props = {}, ...kids) => {
-    const e = Object.assign(document.createElement(tag), props);
-    e.append(...kids.filter(k => k != null && k !== false));
-    return e;
-  };
+  const h = (await ctx.require("theme")).h;
 
   async function show(sp, { manage = false, who = null } = {}) {
     const [r, mod, me] = await Promise.all([roles.of.strict(sp), moderation.of(sp), space.account.strict()]);
