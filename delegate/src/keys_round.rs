@@ -117,8 +117,8 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
             .collect()
     };
     let (ins, outs) = (acts(true), acts(false));
-    let due = members.iter().any(|(d, id, _)| !placed.contains(id) && list.listed(d)) || placed.iter().any(|id| list.by_member.get(id).is_some_and(|d| !list.listed(d) && outs.contains_key(d)));
-    if !due {
+    // (`Group::due`: reconcile's own conditions, the page's too.)
+    if !g.due(&members, &|d| list.listed(d), &outs) {
         followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), waiting));
         return next_space(h, c, r);
     }

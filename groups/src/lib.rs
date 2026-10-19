@@ -74,6 +74,15 @@ pub trait Check {
     fn creator(&self) -> Option<String>;
 }
 
+/// A card's member the tree should PLACE: listed, not placed. One the tree should TAKE OUT: not listed, and an act put
+/// them out (none: left — nothing decided without the act). (`reconcile` and `due`, the one pair of conditions.)
+fn wants_in(placed: &[[u8; 32]], id: &[u8; 32], did: &str, listed: &dyn Fn(&str) -> bool) -> bool {
+    !placed.contains(id) && listed(did)
+}
+fn wants_out(did: &str, listed: &dyn Fn(&str) -> bool, outs: &std::collections::BTreeMap<String, [u8; 32]>) -> bool {
+    !listed(did) && outs.contains_key(did)
+}
+
 /// OUR CHECK FROM THE LIST (page and node, one implementation): whose each member id is (`by_member`, from their cards),
 /// who is listed (and the owner), and which act lets whom in or out (`acts`: sha256 of the act's id → (in?, DID)). A
 /// refusal is kept with what it saw (`misses`). 10-19: the page built this in JavaScript, the node as its own `List`.
@@ -323,11 +332,18 @@ impl Group {
     /// add stays valid when a later act puts it out — every replay judges it by that act); REMOVE each placed member
     /// whose account is not, by the act `outs` names (none: left — nothing decided without the act); then ONE key change
     /// (`seed`: its randomness). Only from a WHOLE read of the list: the caller's guard.
+    /// WHETHER A RECONCILE WOULD CHANGE ANYTHING (page and node — before drawing randomness): a listed card's member the
+    /// tree does not place, or a placed one no longer listed that an act put out. `reconcile`'s own conditions.
+    pub fn due(&mut self, cards: &[Card], listed: &dyn Fn(&str) -> bool, outs: &std::collections::BTreeMap<String, [u8; 32]>) -> bool {
+        let placed = self.members();
+        cards.iter().any(|(did, id, _)| wants_in(&placed, id, did, listed)) || placed.iter().any(|id| cards.iter().find(|c| c.1 == *id).is_some_and(|(did, ..)| wants_out(did, listed, outs)))
+    }
+
     pub fn reconcile(&mut self, cards: &[Card], listed: &dyn Fn(&str) -> bool, ins: &std::collections::BTreeMap<String, [u8; 32]>, outs: &std::collections::BTreeMap<String, [u8; 32]>, seed: [u8; 32]) -> Reconciled {
         let placed = self.members();
         let mut r = Reconciled::default();
         for (did, id, leaf) in cards {
-            if placed.contains(id) || !listed(did) || r.added.contains(did) {
+            if !wants_in(&placed, id, did, listed) || r.added.contains(did) {
                 continue;
             }
             match self.add_member_raw(id, leaf, ins.get(did).unwrap_or(&[0; 32])) {
@@ -338,7 +354,7 @@ impl Group {
         }
         for id in &placed {
             let Some((did, ..)) = cards.iter().find(|c| c.1 == *id) else { continue };
-            if listed(did) {
+            if !wants_out(did, listed, outs) {
                 continue;
             }
             let Some(act) = outs.get(did) else { continue };
