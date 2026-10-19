@@ -55,12 +55,45 @@ pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone
     Plan { rotate, due }
 }
 
+/// A space's SALT row of `files` (page and node): the secret (64 hex — the first shape is that alone), how many salts
+/// it has had (`n`), the removals it was made after. None: not a salt.
+pub fn parse_salt(v: &str) -> Option<([u8; 32], i64, usize)> {
+    let hex32 = |s: &str| -> Option<[u8; 32]> { (s.len() == 64).then(|| (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect::<Option<Vec<u8>>>())??.try_into().ok() };
+    if let Some(s) = hex32(v) {
+        return Some((s, 0, 0));
+    }
+    let o: serde_json::Value = serde_json::from_str(v).ok()?;
+    Some((hex32(o["s"].as_str()?)?, o["n"].as_i64().unwrap_or(0), o["removals"].as_u64().unwrap_or(0) as usize))
+}
+
+/// A KEY ROW of `files` (`k/<id>`, page and node): its fields with `id`, when it names a `key` and a `root` (non-empty).
+pub fn parse_key_row(key: &str, value: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let id = key.strip_prefix("k/")?;
+    let mut o = serde_json::from_str::<serde_json::Value>(value).ok()?.as_object()?.clone();
+    let named = |f: &str| o.get(f).and_then(serde_json::Value::as_str).is_some_and(|s| !s.is_empty());
+    if !(named("key") && named("root")) {
+        return None;
+    }
+    o.insert("id".into(), serde_json::Value::String(id.to_string()));
+    Some(o)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn row(id: &str, n: i64, public: bool) -> Row {
         Row { id: id.into(), n, public, app: "drive".into(), moved: 0 }
+    }
+    #[test]
+    fn salts_and_key_rows_parse_one_way() {
+        let h = "ab".repeat(32);
+        assert_eq!(parse_salt(&h).map(|x| (x.1, x.2)), Some((0, 0)), "the first shape: the secret alone");
+        assert_eq!(parse_salt(&format!(r#"{{"s":"{h}","n":2,"removals":1}}"#)).map(|x| (x.1, x.2)), Some((2, 1)));
+        assert_eq!(parse_salt(r#"{"s":"short","n":1}"#), None, "a secret that is not 64 hex: no salt");
+        assert!(parse_key_row("k/x", r#"{"key":"aa","root":"bb","n":1}"#).is_some_and(|o| o["id"] == "x"));
+        assert!(parse_key_row("k/x", r#"{"key":"","root":"bb"}"#).is_none() && parse_key_row("k/x", r#"{"key":null,"root":"bb"}"#).is_none());
+        assert!(parse_key_row("p/x", r#"{"key":"aa","root":"bb"}"#).is_none(), "not a key row");
     }
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()

@@ -47,15 +47,10 @@ export async function start(ctx) {
   // A SPACE's dedup SALT: a secret in its table `files` — `{ s, n, removals }` (n counts the salts it has had; removals:
   // the removals it was made after) — made by the first upload there (two made at once: the merge keeps one, and a
   // file keyed by the other is still the file it is). A new one after a removal (`rotate`, by `file-keys`).
+  // (`rules::rekey::parse_salt`, the node's too.)
   const parseSalt = v => {
-    if (!v) return null;
-    if (/^[0-9a-f]{64}$/.test(v)) return { s: bytes(v), n: 0, removals: 0 };
-    try {
-      const o = JSON.parse(v);
-      return { s: bytes(o.s), n: o.n | 0, removals: o.removals | 0 };
-    } catch {
-      return null;
-    }
+    const o = v ? glue.file_salt_parse(v) : null;
+    return o ? (x => ({ ...x, s: bytes(x.s) }))(JSON.parse(o)) : null;
   };
   // One salt made at a time per space here (the first upload and `file-keys` asking at once made two).
   const making = new Map();
@@ -94,14 +89,8 @@ export async function start(ctx) {
   const keyFor = (h, s) => hex(glue.file_key(bytes(h), s ?? new Uint8Array(0)));
 
   // THE KEY ROWS: `k/<id>`.
-  const parseRow = r => {
-    try {
-      const v = JSON.parse(r.value);
-      return v?.key && v?.root ? { id: r.key.slice(2), ...v } : null;
-    } catch {
-      return null;
-    }
-  };
+  // (`rules::rekey::parse_key_row`, the node's too.)
+  const parseRow = r => (o => (o ? JSON.parse(o) : null))(glue.file_key_row(r.key, r.value ?? ""));
   const rows = async sp => (await table(sp)).rows().filter(r => r.key.startsWith("k/") && r.value).map(parseRow).filter(Boolean);
   async function rowOf(sp, id) {
     const r = (await table(sp)).rows().find(x => x.key === `k/${id}` && x.value);

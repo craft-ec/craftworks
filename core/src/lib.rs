@@ -2340,6 +2340,16 @@ mod js {
         let g: Vec<String> = serde_json::from_str(in_group).map_err(|e| JsValue::from_str(&format!("in_group: {e}")))?;
         Ok(craftworks_rules::members::publishes_info(me, owner, &craftworks_rules::members::followers(&l, &g), epoch as u64))
     }
+    /// A SALT ROW (`rules::rekey::parse_salt`, the node's too): JSON `{ s: hex, n, removals }` or undefined.
+    #[wasm_bindgen]
+    pub fn file_salt_parse(v: &str) -> Option<String> {
+        craftworks_rules::rekey::parse_salt(v).map(|(s, n, removals)| json!({ "s": hex(&s), "n": n, "removals": removals }).to_string())
+    }
+    /// A KEY ROW (`rules::rekey::parse_key_row`, the node's too): JSON of its fields with `id`, or undefined.
+    #[wasm_bindgen]
+    pub fn file_key_row(key: &str, value: &str) -> Option<String> {
+        craftworks_rules::rekey::parse_key_row(key, value).map(|o| Value::Object(o).to_string())
+    }
     /// THE FILE RE-KEY PLAN (`rules::rekey::plan`, the node's too). JSON in: `{ salt: {n, removals} | null, out: [did],
     /// members: [did], gone: [did], banned: [did], rows: [{id, n, pub, app, moved}], anyone: [app], me, now }`. JSON out:
     /// `{ rotate: removals | null, due: [{id, pub, rank, wait, moved}] }`.

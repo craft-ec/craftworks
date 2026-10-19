@@ -72,32 +72,20 @@ pub struct Plan {
     pub due: Vec<Due>,
 }
 
-fn unhex32(s: &str) -> Option<[u8; 32]> {
-    if s.len() != 64 {
-        return None;
-    }
-    let v: Option<Vec<u8>> = (0..32).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()).collect();
-    v?.try_into().ok()
-}
-
 /// `files`' salt row (the first shape: the secret's hex alone).
 pub fn salt(files: &BTreeMap<Vec<u8>, craftworks_feed::Row>) -> Option<Salt> {
-    let v = String::from_utf8(files.get(b"salt".as_slice())?.value.clone()).ok()?;
-    if let Some(s) = unhex32(&v) {
-        return Some(Salt { s, n: 0, removals: 0 });
-    }
-    let o: Value = serde_json::from_str(&v).ok()?;
-    Some(Salt { s: unhex32(o["s"].as_str()?)?, n: o["n"].as_i64().unwrap_or(0), removals: o["removals"].as_u64().unwrap_or(0) as usize })
+    // (`rules::rekey::parse_salt`, the page's too.)
+    let (s, n, removals) = craftworks_rules::rekey::parse_salt(std::str::from_utf8(&files.get(b"salt".as_slice())?.value).ok()?)?;
+    Some(Salt { s, n, removals })
 }
 
 pub fn key_rows(files: &BTreeMap<Vec<u8>, craftworks_feed::Row>) -> Vec<KeyRow> {
     files
         .iter()
+        // (`rules::rekey::parse_key_row`, the page's too.)
         .filter_map(|(k, r)| {
-            let id = std::str::from_utf8(k).ok()?.strip_prefix("k/")?.to_string();
-            let v: Value = serde_json::from_slice(&r.value).ok()?;
-            let o = v.as_object()?.clone();
-            (o.contains_key("key") && o.contains_key("root")).then_some(KeyRow { id, v: o })
+            let o = craftworks_rules::rekey::parse_key_row(std::str::from_utf8(k).ok()?, std::str::from_utf8(&r.value).ok()?)?;
+            Some(KeyRow { id: o["id"].as_str()?.to_string(), v: o })
         })
         .collect()
 }
