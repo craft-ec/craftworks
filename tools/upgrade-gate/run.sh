@@ -21,4 +21,10 @@ UP_PHASE=new perl -e 'alarm 2400; exec @ARGV' node "$here/upgrade.mjs" "${F}b" >
 grep -E "^[0-9:]+ ([4-9] |   [AB] rec|FAILED|RESULT)" -A12 "$OUT/new.log" | grep -vE "^\s+\[|journal" | cut -c1-400 | head -80
 echo "after the new phase: $(fails | tr '\n' ' ')"
 grep -q "FAILED" "$OUT/new.log" && exit 1
-[ "$(grep -c 'RETIRED: yes' "$OUT/new.log")" -ge 2 ] || { echo "GATE: an account did not retire the old build"; exit 1; }
+# A NEW identity build: each login must retire the old one (the same build: nothing to retire).
+if ! cmp -s "$OLD/packages/build/identity.wasm" "$NEW/packages/build/identity.wasm"; then
+  [ "$(grep -c 'RETIRED: yes' "$OUT/new.log")" -ge 2 ] || { echo "GATE: an account did not retire the old build"; exit 1; }
+fi
+# Every read: the before row, the DM and the after row read on the new build.
+grep -q '"aBefore":"written on the old build"' "$OUT/new.log" && grep -q '"bDm":"a direct message on the old build"' "$OUT/new.log" && grep -q "B reads after: written on the new build" "$OUT/new.log" || { echo "GATE: a read failed"; exit 1; }
+echo "GATE: PASS"

@@ -11,6 +11,7 @@ struct List {
     accounts: BTreeMap<[u8; 32], String>,
     listed: BTreeSet<String>,
     acts: BTreeMap<[u8; 32], (bool, [u8; 32])>,
+    creator: Option<String>,
 }
 impl Check for List {
     fn account_of(&self, member: &[u8; 32]) -> Option<String> {
@@ -21,6 +22,9 @@ impl Check for List {
     }
     fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
         self.acts.get(act) == Some(&(add, *target))
+    }
+    fn creator(&self) -> Option<String> {
+        self.creator.clone()
     }
 }
 
@@ -38,6 +42,8 @@ fn list(of: &[(&Account, &str)]) -> List {
         // (The maker's own placement names no act: allowed for the first member.)
         l.acts.insert([0; 32], (true, id(of[0].0)));
     }
+    // (The first listed made the tree.)
+    l.creator = of.first().map(|(_, d)| d.to_string());
     l
 }
 fn merge_all(g: &mut Group, ops: &[Vec<u8>], l: &impl Check) {
@@ -305,4 +311,45 @@ fn cost_of_a_rebuild_round() {
         let total = t.elapsed();
         println!("{n} members, {} ops: rebuild {:?}, + {gens} generations {:?} (native)", ops.len(), merged, total);
     }
+}
+
+/// 10-19, live: TWO TREES in one space — a listed member's page made one (it read no operations yet) while the owner's
+/// made another; the owner's operations waited forever on a root that lost, and nobody was ever added. Only the
+/// space's CREATOR (its owner) makes the root: another member's root is refused by every reader, the owner's tree is
+/// the one every reader holds, and the owner adds the other maker into it. Control: with the other maker as creator,
+/// the owner's root is the one refused — the rule decides, not the order the operations arrive in.
+#[test]
+fn only_the_creators_root_is_taken_two_makers_one_tree() {
+    let mut rng = StdRng::seed_from_u64(9);
+    let (owner, member, reader) = (account(11), account(12), account(13));
+    let l = list(&[(&owner, "did:owner"), (&member, "did:member"), (&reader, "did:reader")]);
+    // Both make a tree, each seeing none.
+    let (mut go, owners_root) = Group::create(&SPACE, owner.clone()).unwrap();
+    let (_gm, members_root) = Group::create_by(&SPACE, member.clone(), &[0; 32]).unwrap();
+    // The member's root arrives FIRST at the reader.
+    let mut gr = Group::empty(&SPACE, reader.clone());
+    assert!(matches!(gr.merge(&members_root, &l), Merged::Refused(ref w) if w.contains("not the space's creator")), "the member's root refused");
+    assert_eq!(gr.merge(&owners_root, &l), Merged::Applied, "the owner's root taken");
+    // The owner adds both; every reader is on the owner's tree.
+    let add_m = go.add_member(&id(&member), &member.leaf_key(), &[0; 32]).unwrap().unwrap();
+    let add_r = go.add_member(&id(&reader), &reader.leaf_key(), &[0; 32]).unwrap().unwrap();
+    let (rot, _) = go.rotate(&mut rng).unwrap();
+    for op in [&add_m, &add_r, &rot] {
+        assert_eq!(gr.merge(op, &l), Merged::Applied);
+    }
+    assert!(gr.placed(), "the reader is placed in the owner's tree");
+    let mut gm2 = Group::empty(&SPACE, member.clone());
+    assert!(matches!(gm2.merge(&members_root, &l), Merged::Refused(_)), "the member's own page refuses its root too");
+    for op in [&owners_root, &add_m, &add_r, &rot] {
+        assert_eq!(gm2.merge(op, &l), Merged::Applied);
+    }
+    assert!(gm2.placed(), "the other maker is placed in the owner's tree");
+    assert_eq!(gr.current_now().map(|x| x.0), gm2.current_now().map(|x| x.0), "one tree: the same generation for both");
+
+    // CONTROL: the member as creator — the owner's root is the one refused.
+    let mut lc = list(&[(&member, "did:member"), (&owner, "did:owner"), (&reader, "did:reader")]);
+    lc.creator = Some("did:member".into());
+    let mut gc = Group::empty(&SPACE, reader.clone());
+    assert!(matches!(gc.merge(&owners_root, &lc), Merged::Refused(_)), "control: the owner's root refused when it is not the creator");
+    assert_eq!(gc.merge(&members_root, &lc), Merged::Applied);
 }

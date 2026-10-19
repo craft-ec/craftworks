@@ -81,6 +81,13 @@ impl Check for List {
         }
         self.acts.get(act).is_some_and(|(i, d)| *i == add && d == t)
     }
+    fn creator(&self) -> Option<String> {
+        // The space's owner; with none, the lowest listed — the page's `members.check()` the same.
+        if !self.owner.is_empty() {
+            return Some(self.owner.clone());
+        }
+        self.listed.iter().min().cloned()
+    }
 }
 
 fn unhex(s: &[u8]) -> Option<Vec<u8>> {

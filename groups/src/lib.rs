@@ -69,6 +69,9 @@ pub trait Check {
     fn listed(&self, did: &str) -> bool;
     /// Whether the act whose hash is `act` allows ADDING (`add`) or REMOVING the member `target`.
     fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool;
+    /// THE ONE ACCOUNT that may make the space's tree: its owner (a space with none: the lowest listed DID). `None`:
+    /// not known yet — no root is taken.
+    fn creator(&self) -> Option<String>;
 }
 
 /// What merging an operation did.
@@ -310,6 +313,12 @@ fn admitted(op: &Signed<CgkaOperation>, check: &impl Check) -> Result<(), String
     if !check.listed(&did) {
         return Err(format!("signed by {did}, not on the list"));
     }
+    // A TREE's ROOT (no predecessors) only by its creator: two members each making a tree — each page seeing none yet
+    // — forked a space into two (10-19, live: Craftworks' tree made by a member, the owner's own operations left
+    // waiting forever on a root that lost; nobody was ever added). One account may make it, so there is one root.
+    if op.payload.predecessors().is_empty() && check.creator().as_deref() != Some(did.as_str()) {
+        return Err(format!("a tree's root signed by {did}, not the space's creator"));
+    }
     match &op.payload {
         // AN ADD: of an account the list names NOW (K7 — the tree only ever holds the list: any listed member places any
         // listed account, itself included), or one its named act allows.
@@ -358,6 +367,7 @@ mod page {
         fn call(&self, f: &str, args: &[JsValue]) -> JsValue {
             let Ok(f) = js_sys::Reflect::get(&self.0, &f.into()).and_then(|f| f.dyn_into::<js_sys::Function>()) else { return JsValue::NULL };
             let r = match args {
+                [] => f.call0(&self.0),
                 [a] => f.call1(&self.0, a),
                 [a, b, c] => f.call3(&self.0, a, b, c),
                 _ => return JsValue::NULL,
@@ -374,6 +384,9 @@ mod page {
         }
         fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
             self.call("allows", &[hex(act).into(), add.into(), hex(target).into()]).as_bool().unwrap_or(false)
+        }
+        fn creator(&self) -> Option<String> {
+            self.call("creator", &[]).as_string()
         }
     }
 

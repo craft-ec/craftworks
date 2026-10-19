@@ -72,7 +72,9 @@ export async function start(ctx) {
     let g = null;
     let queue = Promise.resolve();
     const once = f => (queue = queue.then(f, f));
-    const at = `g/${sp.id}`;
+    // (`g2/`: a tree saved before only the creator's root was taken (10-19) may hold another member's root — rebuilt from
+    // the operations under the rule.)
+    const at = `g2/${sp.id}`;
     // (What was last REPORTED, so each change is said once — never the same report every round.)
     let lastUnmapped = "", lastWaiting = "", lastShort = null, lastInStep = null, lastNotPlaced = "";
     const state = () => storage.table("beekem");
@@ -139,11 +141,16 @@ export async function start(ctx) {
       const acts = new Map(moves.map(m => [m.act, { kind: m.inn ? "add" : "remove", target: m.did }]));
       const latest = inn => Object.fromEntries(moves.filter(m => m.inn === inn).map(m => [m.did, bytes(m.act)]));
       const misses = [];
+      // THE ONE ACCOUNT that makes the tree (`groups::Check::creator`, the node's the same): the owner; none, the lowest
+      // listed DID.
+      const listedNow = [...new Set([...roster, ...(owner ? [owner] : [])])];
+      const creator = owner ?? [...listedNow].sort()[0] ?? null;
       return {
         misses,
+        creator: () => creator,
         // For RECONCILING (`BeeGroup.reconcile`, the node's one plan): every card's member, who is listed now, the acts.
         cards: members.map(m => [m.did, bytes(m.id), bytes(m.leaf)]),
-        listedNow: [...new Set([...roster, ...(owner ? [owner] : [])])],
+        listedNow,
         ins: latest(true),
         outs: latest(false),
         whole: () => r.whole?.() ?? false,
@@ -223,6 +230,11 @@ export async function start(ctx) {
       await t.settled;
       const rows = new Map(t.rows().filter(x => x.value).map(x => [x.key, x.value]));
       let n = 0;
+      const carryLost = async (e, secret) => {
+        const s = String(secret);
+        const k = `a${e}~${await tagOf(s)}`;
+        if (!rows.has(k)) (await t.put(k, s), rows.set(k, s), (n += 1));
+      };
       const carry = async (e, secret) => {
         if (typeof e !== "number" || e >= BELOW || !secret) return;
         const s = String(secret);
@@ -233,6 +245,11 @@ export async function start(ctx) {
       };
       for (const [e, secret] of held) await carry(e, secret);
       for (const l of lost) await carry(Number(l.epoch), l.secret);
+      // GENERATIONS of a tree this space no longer has (a member's own root refused, 10-19): what it sealed with them goes
+      // as alternates (`a<n>~`), so every member still reads it.
+      const reached = new Set(g.generations().map(([n]) => Number(n)));
+      const gens = await ctx.optional("members: generations held", auth.identity.epochSecrets(sp.idBytes, 2 ** 62), () => []);
+      for (const [e, secret] of gens) if (typeof e === "number" && e >= BELOW && !reached.has(e)) await carryLost(e, secret);
       return n;
     }
     // …and READ: the epochs the bridge carries, kept (`epochKeep`) — the storage reads the space's history with them.
@@ -272,7 +289,8 @@ export async function start(ctx) {
       const c = await check();
       const myDid = (await space.account())?.id;
       const listed = c.listedNow.includes(myDid);
-      if (!g.placed() && !(await feed()).rows().some(x => x.value) && listed) {
+      // ONLY THE CREATOR makes the tree (one root: 10-19, a member's page made a second one). Everyone else waits for it.
+      if (!g.placed() && myDid === c.creator() && !g.members().length) {
         const act = myDid === c.owner ? null : (c.ins[myDid] ?? null);
         const [made, op] = G.BeeGroup.create(sp.idBytes, m.seed, act);
         g = made;

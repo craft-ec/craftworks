@@ -559,6 +559,9 @@ impl groups::Check for Anyone {
     fn allows(&self, _: &[u8; 32], _: bool, _: &[u8; 32]) -> bool {
         true
     }
+    fn creator(&self) -> Option<String> {
+        Some("x".into())
+    }
 }
 fn merged(p: &Person, ops: &[Vec<u8>]) -> groups::Group {
     let mut g = groups::Group::empty(&SPACE, p.bee());
