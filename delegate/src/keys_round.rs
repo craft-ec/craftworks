@@ -22,36 +22,51 @@ use crate::write::{self, Next};
 /// The most cards a round reads that it has not learned yet (the rest the next round): a round stays under the
 /// node's per-round cap on network operations.
 pub(super) const CARDS_A_ROUND: usize = 8;
-/// What this node LEARNED of a space's members (`member ‖ space` → `[(DID, member id, leaf)]`): never read again.
-const KNOWN: &[u8] = b"identity_upkeep/beekem-known/";
+/// What this node LEARNED of a space's members (`member ‖ space` → `[(DID, member id, leaf, ms read)]`): read again by
+/// `members::card_due` (the page's too). (`KNOWN_BEFORE`: kept before with no time — taken as read long ago, so read
+/// again, and used until then.)
+const KNOWN: &[u8] = b"identity_upkeep/beekem-known2/";
+const KNOWN_BEFORE: &[u8] = b"identity_upkeep/beekem-known/";
 
 /// When this node last ASKED for an account's card (`member ‖ space` → `[(DID, ms)]`): one with no card (an account
-/// gone, a key log never made) is asked again only after `ASK_AGAIN_MS` — never every round.
+/// gone, a key log never made) is asked again by `members::card_due` — never every round.
 const ASKED: &[u8] = b"identity_upkeep/beekem-asked/";
-pub(super) const ASK_AGAIN_MS: u64 = 3_600_000;
 pub(super) fn asked<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<(String, u64)> {
     h.get_secret(&[ASKED, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
 pub(super) fn asking<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], dids: &[String], now_ms: u64) {
-    let mut all: Vec<(String, u64)> = asked(h, member, space).into_iter().filter(|(d, t)| !dids.contains(d) && now_ms.saturating_sub(*t) < ASK_AGAIN_MS).collect();
+    let mut all: Vec<(String, u64)> = asked(h, member, space).into_iter().filter(|(d, t)| !dids.contains(d) && !craftworks_rules::members::card_due(Some((*t, false)), now_ms)).collect();
     all.extend(dids.iter().map(|d| (d.clone(), now_ms)));
     h.set_secret(&[ASKED, &member[..], &space[..]].concat(), &bincode::serialize(&all).expect("a list encodes"));
 }
 
-pub(super) fn known<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<(String, [u8; 32], [u8; 32])> {
-    h.get_secret(&[KNOWN, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+/// A member learned: its DID, member id, leaf, and when its card was read.
+pub(super) type Known = (String, [u8; 32], [u8; 32], u64);
+pub(super) fn known<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<Known> {
+    if let Some(k) = h.get_secret(&[KNOWN, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()) {
+        return k;
+    }
+    let before: Vec<(String, [u8; 32], [u8; 32])> = h.get_secret(&[KNOWN_BEFORE, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    before.into_iter().map(|(d, id, leaf)| (d, id, leaf, 0)).collect()
 }
-fn learn<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(String, [u8; 32], [u8; 32])]) -> Vec<(String, [u8; 32], [u8; 32])> {
+/// Whether an account's card is read this round (`members::card_due`, the page's too): by when it was last read, or
+/// last asked for and none was there.
+pub(super) fn card_due(known: &[Known], asked: &[(String, u64)], did: &str, now_ms: u64) -> bool {
+    let last = known.iter().find(|k| k.0 == did).map(|k| (k.3, true)).or_else(|| asked.iter().find(|(d, _)| d == did).map(|(_, t)| (*t, false)));
+    craftworks_rules::members::card_due(last, now_ms)
+}
+fn learn<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(String, [u8; 32], [u8; 32])], now_ms: u64) -> Vec<(String, [u8; 32], [u8; 32])> {
     let mut all = known(h, member, space);
-    for m in read {
-        if let Some(at) = all.iter().position(|(d, ..)| *d == m.0) {
-            all[at] = m.clone();
+    for (d, id, leaf) in read {
+        let m = (d.clone(), *id, *leaf, now_ms);
+        if let Some(at) = all.iter().position(|k| k.0 == *d) {
+            all[at] = m;
         } else {
-            all.push(m.clone());
+            all.push(m);
         }
     }
     h.set_secret(&[KNOWN, &member[..], &space[..]].concat(), &bincode::serialize(&all).expect("a list encodes"));
-    all
+    all.into_iter().map(|(d, id, leaf, _)| (d, id, leaf)).collect()
 }
 
 /// The largest operation a row carries (hex): a larger one is a page's to write as a file (the row names it).
@@ -72,7 +87,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     };
     let mut g = Group::empty(&r.space, Account::of(&seed));
     // Every member LEARNED, this read's added (a card read now replaces what was kept).
-    let members = learn(h, &r.member, &r.space, &r.reading.beekem);
+    let members = learn(h, &r.member, &r.space, &r.reading.beekem, now_ms);
     // OUR CHECK (`groups::ListCheck`, the page's too).
     let list = ListCheck {
         by_member: members.iter().map(|(d, id, _)| (*id, d.clone())).collect(),

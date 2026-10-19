@@ -2396,6 +2396,12 @@ mod js {
             Err(why) => json!({ "why": why }).to_string(),
         }
     }
+    /// WHETHER AN ACCOUNT's CARD IS READ NOW (`members::card_due`, the node's too): `at` < 0: never read; `ok`: it named
+    /// a member.
+    #[wasm_bindgen]
+    pub fn card_due(at: f64, ok: bool, now: f64) -> bool {
+        craftworks_rules::members::card_due((at >= 0.0).then_some((at as u64, ok)), now as u64)
+    }
     /// AN EPOCH's DOOR ENTRIES (`members::door_entries`, the node's too): JSON items → JSON `[entry]`.
     #[wasm_bindgen]
     pub fn door_entries(items: &str, epoch: f64) -> String {

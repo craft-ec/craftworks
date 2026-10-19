@@ -39,12 +39,13 @@ export async function start(ctx) {
   // AN ACCOUNT's member, from its card (its credential checked: the signing key it names, signed by the data key its
   // key log names — the one check `storage`'s writers use).
   // `{ why }` when it is not (said: a refusal names its cause).
-  // (Each account's member, as last read: kept 10 minutes — a reconcile of every space every few minutes read every
-  // listed member's card FRESH each time, all of it load on the node for nothing that changed.)
+  // (Each account's member, as last read: read again by `members::card_due`, the node's too — a reconcile of every
+  // space every few minutes read every listed member's card FRESH each time, all of it load on the node for nothing
+  // that changed.)
   const memberRead = new Map(); // did → { at, m }
   async function memberOf(did) {
     const held = memberRead.get(did);
-    if (held && !held.m.why && Date.now() - held.at < 600e3) return held.m;
+    if (held && !glue.card_due(held.at, !held.m.why, Date.now())) return held.m;
     const m = await memberOfNow(did);
     memberRead.set(did, { at: Date.now(), m });
     return m;

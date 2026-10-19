@@ -403,9 +403,11 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 let Some(gov) = governance(h, &r, now_ms) else { return next_space(h, &c, r) };
                 let known = keys_round::known(h, &r.member, &r.space);
                 let asked = keys_round::asked(h, &r.member, &r.space);
-                let recently = |d: &str| asked.iter().any(|(k, t)| k == d && now_ms.saturating_sub(*t) < keys_round::ASK_AGAIN_MS);
-                // WHOSE CARDS (`gov::check_dids`, the page's too): the listed, the owner, everyone an act moved.
-                let mut want: Vec<String> = craftworks_gov::check_dids(&gov.roster.iter().cloned().collect::<Vec<_>>(), &m.owner, &gov.counted).into_iter().filter(|d| !known.iter().any(|(k, ..)| k == d) && !r.reading.beekem.iter().any(|(k, ..)| k == d) && !recently(d)).collect();
+                // WHOSE CARDS (`gov::check_dids`, the page's too): the listed, the owner, everyone an act moved — each read
+                // again by `members::card_due` (the page's too).
+                let mut want: Vec<String> = craftworks_gov::check_dids(&gov.roster.iter().cloned().collect::<Vec<_>>(), &m.owner, &gov.counted).into_iter().filter(|d| !r.reading.beekem.iter().any(|(k, ..)| k == d) && keys_round::card_due(&known, &asked, d, now_ms)).collect();
+                // (Never read first, then the longest ago: a re-read never holds back a new member.)
+                want.sort_by_key(|d| known.iter().find(|k| k.0 == *d).map(|k| k.3).or_else(|| asked.iter().find(|(x, _)| x == d).map(|(_, t)| *t)).map_or(0, |t| t + 1));
                 want.truncate(keys_round::CARDS_A_ROUND);
                 keys_round::asking(h, &r.member, &r.space, &want, now_ms);
                 let want: Vec<[u8; 32]> = want.iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();

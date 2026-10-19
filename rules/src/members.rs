@@ -116,8 +116,29 @@ pub fn publishes_info(me: &str, owner: &str, followers: &[String], epoch: u64) -
     (0..INFO_PUBLISHERS).contains(&k)
 }
 
+/// An account's CARD (its group member) as read: kept an hour, then read again — a changed card is seen within it.
+pub const CARD_KEEP_MS: u64 = 3_600_000;
+/// An account with NO card or a refused one (gone; not opened since BeeKEM): asked again after ten minutes — never
+/// every round (fx 10-18: every round re-reading every such card, past the node's per-round cap).
+pub const CARD_ASK_AGAIN_MS: u64 = 600_000;
+/// Whether an account's card is READ now (page and node): never read; or last read `at` (ms, `ok`: a member) longer ago
+/// than the rule for what it read.
+pub fn card_due(last: Option<(u64, bool)>, now_ms: u64) -> bool {
+    match last {
+        None => true,
+        Some((at, ok)) => now_ms.saturating_sub(at) >= if ok { CARD_KEEP_MS } else { CARD_ASK_AGAIN_MS },
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_card_is_read_again_by_what_it_read() {
+        use super::*;
+        assert!(card_due(None, 0));
+        assert!(!card_due(Some((0, true)), CARD_KEEP_MS - 1) && card_due(Some((0, true)), CARD_KEEP_MS));
+        assert!(!card_due(Some((0, false)), CARD_ASK_AGAIN_MS - 1) && card_due(Some((0, false)), CARD_ASK_AGAIN_MS));
+    }
     use super::*;
 
     /// THE FOLLOWERS (page and node): the listed the group holds — one listed not in the group, or in it unlisted, is not.
