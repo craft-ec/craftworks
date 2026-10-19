@@ -205,19 +205,10 @@ fn without_the_epoch_a_feed_is_sealed_with_nothing_of_it_reads() {
 // ---- R4b: writing this member's own feed with no page open ----
 
 use super::write::{self, Next};
-use craftworks_identity::{Host, Request};
+use craftworks_identity::Request;
 
-#[derive(Default)]
-struct Secrets(HashMap<Vec<u8>, Vec<u8>>);
-impl Host for Secrets {
-    fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.0.get(key).cloned()
-    }
-    fn set_secret(&mut self, key: &[u8], value: &[u8]) -> bool {
-        self.0.insert(key.to_vec(), value.to_vec());
-        true
-    }
-}
+/// (The tests' one host: `testhost::Map`.)
+use crate::testhost::Map as Secrets;
 const SEED: [u8; 32] = [0x31; 32];
 const DATA: [u8; 32] = [0xD1; 32];
 /// A node holding a member (its data seed too); the member's public key.
@@ -702,7 +693,7 @@ fn round_after_a_removal(creates: bool) -> AfterRound {
         todo.extend(upkeep::replied(&mut h, reply, now));
     }
     // What upkeep last said (for a failure's message).
-    let said: Vec<String> = h.0.iter().filter(|(k, _)| k.windows(4).any(|w| w == b"said")).map(|(_, v)| String::from_utf8_lossy(v).into_owned()).collect();
+    let said = crate::testhost::said(&h);
     AfterRound { h, net: n.net, said, content, hsh, old_key, root0, me: me_key.verifying_key().to_bytes(), ep: ep.to_vec() }
 }
 
@@ -749,7 +740,7 @@ fn where_a_delegates_new_contracts_stay_on_its_node_the_salt_rotates_and_the_fil
     let row: serde_json::Value = serde_json::from_slice(&files_rows[b"k/file1".as_slice()].value).unwrap();
     assert_eq!(row["key"].as_str(), Some(table::hex(&a.old_key).as_str()), "the row untouched: {said:?}");
     assert_eq!(read_file(&a.net, &a.old_key, &a.root0).as_deref(), Some(a.content.as_slice()), "the file still reads: nothing burned");
-    assert!(said.iter().any(|l| l.contains("left to a page")), "it says so: {said:?}");
+    assert!(said.iter().any(|l| l.starts_with("files-left-to-page: ")), "it says so: {said:?}");
 }
 
 #[test]

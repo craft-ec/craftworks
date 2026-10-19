@@ -79,7 +79,7 @@ fn drive<H: Host>(h: &mut H, r: Round) -> Vec<Io> {
     let (out, want) = match step(h, &r, m) {
         Ok(x) => x,
         Err(why) => {
-            identity::upkeep_say(h, &r.member, &format!("keeper: {why}"));
+            crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::KEEPER_FAILED, &why);
             (Vec::new(), Vec::new())
         }
     };
@@ -128,7 +128,7 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
                 out.extend(put.map(|p| update(p.state)));
                 m.epoch = epoch;
                 identity::upkeep_set_keeper_mandate(h, &public, &m);
-                identity::upkeep_say(h, &public, &format!("keeper: epoch {epoch} opened with no page open ({} piece(s))", m.hosted.len()));
+                crate::upkeep::followed(h, &public, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::KEEPER_EPOCH, &format!("epoch {epoch} opened with no page open ({} piece(s))", m.hosted.len()));
             }
         }
     }
@@ -208,7 +208,7 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
                             break;
                         }
                     }
-                    identity::upkeep_say(h, &public, &format!("keeper: {} claimed for claims epoch {} with no page open", c.amount, c.epoch));
+                    crate::upkeep::followed(h, &public, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::KEEPER_CLAIMED, &format!("{} claimed for claims epoch {} with no page open", c.amount, c.epoch));
                     a.claimed = ce;
                     break;
                 }
@@ -230,7 +230,7 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
             }
             Step::Done(Some(p)) => {
                 late.push(Io::Update { id: p.id, delta: p.state });
-                identity::upkeep_say(h, &public, &format!("keeper: its claim for claims epoch {next} pointed to with no page open"));
+                crate::upkeep::followed(h, &public, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::KEEPER_POINTED, &format!("its claim for claims epoch {next} pointed to with no page open"));
                 a.pointed = Some(next);
             }
             // (Not claimed, not accepted yet, or pointed to already: asked again on a later wake-up.)
@@ -292,7 +292,7 @@ fn step<H: Host>(h: &mut H, r: &Round, mut m: KeeperMandate) -> Result<(Vec<Io>,
             Step::Done(put) => {
                 if let Some(put) = put {
                     out.push(update(put.state));
-                    identity::upkeep_say(h, &public, &format!("keeper: height {} answered with no page open ({} piece(s))", p.height, p.ids.len()));
+                    crate::upkeep::followed(h, &public, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::KEEPER_ANSWERED, &format!("height {} answered with no page open ({} piece(s))", p.height, p.ids.len()));
                 }
                 a.upto = p.height;
                 a.pending = None;

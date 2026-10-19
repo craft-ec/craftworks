@@ -70,7 +70,7 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     let puts = run(&mut h, &got);
     let wp = container(&ctx, &tl, &got, &chain, q.seq);
     let [Io::Update { id, delta }] = &puts[..] else {
-        let said: Vec<String> = h.0.iter().filter(|(k, _)| k.starts_with(b"identity_upkeep/said")).map(|(_, v)| String::from_utf8_lossy(v).into()).collect();
+        let said = crate::testhost::said(&h);
         panic!("one witness update: {puts:?}; said {said:?}")
     };
     assert_eq!(*id, wp.id());

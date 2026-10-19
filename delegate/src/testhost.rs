@@ -13,3 +13,13 @@ impl Host for Map {
         true
     }
 }
+
+/// Every step upkeep RECORDED (`upkeep::followed`, the one record), for every member: `step: why`.
+pub fn said(m: &Map) -> Vec<String> {
+    m.0.iter()
+        .filter(|(k, _)| k.starts_with(craftworks_identity::UPKEEP_DECIDED))
+        .filter_map(|(_, v)| bincode::deserialize::<Vec<craftworks_identity::Decided>>(v).ok())
+        .flatten()
+        .map(|d| format!("{}: {}", d.step, d.why))
+        .collect()
+}

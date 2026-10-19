@@ -135,7 +135,7 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
         }
         let Some(q) = craftworks_wallet::queue::Queued::decode(&it) else { continue };
         match witness::entry(&ctx, &lot, &got, &q, &r.member, height, &m.standing) {
-            Err(why) => identity::upkeep_say(h, &r.member, &format!("witness: {why}")),
+            Err(why) => crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::WITNESS_FAILED, &why),
             Ok(tokens::Step::Want(w)) => {
                 if settled.len() != before {
                     set_done(h, &r.member, settled);
@@ -149,7 +149,7 @@ fn step<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate) -> (Vec<Io>, Vec<[u8;
             }
             // Not yet decidable: asked again on a later wake-up (never settled).
             Ok(tokens::Step::Done(witness::Verdict::Later(_))) => {}
-            Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => identity::upkeep_say(h, &r.member, &format!("witness: refused seq {}: {why}", q.seq)),
+            Ok(tokens::Step::Done(witness::Verdict::Refused(why))) => crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::WITNESS_REFUSED, &format!("seq {}: {why}", q.seq)),
             Ok(tokens::Step::Done(witness::Verdict::Sign { at, entry, owner })) => {
                 sign_into(h, &r.member, &owner, &at, entry, height, &mut out);
                 seen.insert(k);
@@ -183,7 +183,7 @@ pub(crate) fn sign_into<H: Host>(h: &mut H, member: &[u8; 32], owner: &[u8; 32],
             true
         }
         Err(w) => {
-            identity::upkeep_say(h, member, &format!("witness: not signed ({w:?})"));
+            crate::upkeep::followed(h, member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::WITNESS_NOT_SIGNED, &format!("{w:?}"));
             false
         }
     }

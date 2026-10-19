@@ -130,7 +130,8 @@ export async function start(ctx) {
       const known = !!life.MACHINES.group.events[d.step] && !life.MACHINES.group.events[d.step].to;
       const detail = { by: "node", why: known ? d.why : `${d.step}: ${d.why}`, at: d.at, seq: d.seq, ...(d.did ? { to: d.did.replace(/^did:craftec:/, "").slice(0, 6) } : {}) };
       try {
-        life.transition("group", d.space, known ? d.step : "node-step", detail);
+        // (A step about no space — the node's keeper, witness, re-key turns: `steps::ACCOUNT` — is the account's.)
+        life.transition("group", /^0+$/.test(String(d.space)) ? "account" : d.space, known ? d.step : "node-step", detail);
       } catch (e) {
         ctx.log("upkeep", { what: `the node's step ${d.step} not recorded: ${e?.message ?? e}` });
       }
@@ -172,8 +173,6 @@ export async function start(ctx) {
     if (r.upkeep && r.upkeep.codes !== Core.upkeep_codes_hash(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode))
       await ctx.background("upkeep: auth.identity.upkeepCodes", auth.identity.upkeepCodes(bagCode, tailCode, idlogCode, sealedCode, pieceCode, blockCode, devicesCode));
     ctx.log("upkeep", { what: r.upkeep ? `the delegate watches the inbox (${r.upkeep.wakeups} wake-up(s) so far)` : `the delegate: ${r.refused ?? JSON.stringify(r)}` });
-    // What it did with no page open (admissions, re-keys): its last lines, each said once a page opens.
-    for (const line of String(r.upkeep?.said ?? "").split("\n").filter(Boolean)) ctx.log("upkeep said", { what: line });
   }
   ctx.background("upkeep: handOver", handOver());
   addEventListener("craftworks:auth", () => ctx.background("upkeep: handOver", handOver()));

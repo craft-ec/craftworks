@@ -521,7 +521,10 @@ impl Reading {
             if let Some(st) = &state {
                 let address = sealed_bag_address(&self.space, "writers");
                 for p in craftworks_bag_contract::read(&address, st).unwrap_or_default() {
-                    let Some(v) = open_bag_item(&self.space, &self.epochs, "writers", craftworks_bag_contract::payload(&p)) else { (blind = true, continue).1 };
+                    let Some(v) = open_bag_item(&self.space, &self.epochs, "writers", craftworks_bag_contract::payload(&p)) else {
+                        blind = true;
+                        continue;
+                    };
                     let Some(w) = v["w"].as_str().and_then(unhex32) else { continue };
                     listed.insert(w);
                     named.extend(v["pub"].as_str().map(|t| (w, t.to_string())));

@@ -240,6 +240,6 @@ fn a_posted_root_the_delegate_does_not_build_is_not_signed() {
         sent.extend(wake(&mut h, &w.got, n));
     }
     assert!(statement_updates(&w, &sent).is_empty(), "a root it did not build is never signed: {sent:?}");
-    let said: Vec<String> = h.0.iter().filter(|(k, _)| k.starts_with(b"identity_upkeep/said")).map(|(_, v)| String::from_utf8_lossy(v).into()).collect();
-    assert!(said.iter().any(|s| s.contains("statement of epoch 5") && s.contains("not signed")), "said: {said:?}");
+    let said = crate::testhost::said(&h);
+    assert!(said.iter().any(|s| s.starts_with("statement-not-signed: epoch 5")), "said: {said:?}");
 }

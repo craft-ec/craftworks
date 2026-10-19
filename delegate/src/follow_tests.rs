@@ -24,17 +24,8 @@ const SEED: [u8; 32] = [0x31; 32];
 const CODE: &str = "ab12-cd34-ef56-7890";
 const NOW: u64 = 1_800_000_000_000;
 
-#[derive(Default, Clone)]
-struct Secrets(HashMap<Vec<u8>, Vec<u8>>);
-impl Host for Secrets {
-    fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.0.get(key).cloned()
-    }
-    fn set_secret(&mut self, key: &[u8], value: &[u8]) -> bool {
-        self.0.insert(key.to_vec(), value.to_vec());
-        true
-    }
-}
+/// (The tests' one host: `testhost::Map`.)
+use crate::testhost::Map as Secrets;
 
 use craftworks_identity::hex;
 fn unhex(s: &str) -> Vec<u8> {
@@ -95,11 +86,6 @@ impl Net {
     fn bag_items(&self, address: [u8; 32]) -> Vec<Vec<u8>> {
         self.st.get(&id(BAG, &address)).and_then(|s| craftworks_bag_contract::read(&address, s)).unwrap_or_default().iter().map(|p| craftworks_bag_contract::payload(p).to_vec()).collect()
     }
-    fn drop_in(&mut self, address: [u8; 32], item: &serde_json::Value) {
-        let mut items = self.st.get(&id(BAG, &address)).and_then(|s| craftworks_bag_contract::read(&address, s)).unwrap_or_default();
-        items.push(craftworks_bag_contract::grind(&address, item.to_string().as_bytes()));
-        self.st.insert(id(BAG, &address), craftworks_bag_contract::encode(&address, &items));
-    }
 }
 
 /// An ACCOUNT from its words' entropy: its DID, data seed, key log, and its space member (MLS: its credential names the
@@ -144,10 +130,6 @@ impl Person {
     /// ENTERED BY ITSELF from the group's info (`aad`: its proof, if any): the commit it publishes.
     fn enter(&self, info: &[u8], aad: &[u8]) -> (Account, Vec<u8>) {
         self.sm.enter(SPACE, info, aad).unwrap()
-    }
-    /// Their INBOX opened with their key: each item (JSON).
-    fn inbox(&self, net: &Net) -> Vec<serde_json::Value> {
-        net.bag_items(identity::inbox_address(&self.did)).iter().filter_map(|i| identity::open_with(&identity::inbox_seed(&self.data), i)).map(|b: Vec<u8>| serde_json::from_slice(&b).unwrap()).collect()
     }
 }
 

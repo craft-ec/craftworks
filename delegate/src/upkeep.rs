@@ -96,7 +96,7 @@ enum Step {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Round {
+pub(crate) struct Round {
     member: [u8; 32],
     me: String,
     space: [u8; 32],

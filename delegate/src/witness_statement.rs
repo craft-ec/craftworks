@@ -15,7 +15,7 @@
 use crate::reads::Round;
 use crate::upkeep::Io;
 use crate::witness_round::{bag_items, chain_items, sign_into};
-use craftworks_identity::{self as identity, Host, WitnessMandate};
+use craftworks_identity::{Host, WitnessMandate};
 use craftworks_reputation as R;
 use craftworks_rules::{statement, tokens, witness};
 use std::cell::RefCell;
@@ -179,7 +179,7 @@ fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64,
     }
     let st = match built {
         Err(why) => {
-            identity::upkeep_say(h, &r.member, &format!("witness: the statement of epoch {e}: {why}"));
+            crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::STATEMENT_FAILED, &format!("epoch {e}: {why}"));
             return Next::Done;
         }
         Ok(tokens::Step::Want(w)) if w.is_empty() => return Next::Pause,
@@ -188,13 +188,13 @@ fn epoch<H: Host>(h: &mut H, r: &Round, m: &WitnessMandate, e: u64, height: u64,
         Ok(tokens::Step::Done((st, _))) => st,
     };
     let Some((root, _)) = st.tree(&mut BTreeMap::new()) else {
-        identity::upkeep_say(h, &r.member, &format!("witness: the statement of epoch {e}: its tree does not build"));
+        crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::STATEMENT_FAILED, &format!("epoch {e}: its tree does not build"));
         return Next::Done;
     };
     // THE COMPARISON: only a posted root this build reproduces is signed.
     if !posted.contains(&root) {
         let hex = |b: &[u8; 32]| b[..6].iter().map(|x| format!("{x:02x}")).collect::<String>();
-        identity::upkeep_say(h, &r.member, &format!("witness: the statement of epoch {e}: built root {}…, posted {} — not signed", hex(&root), posted.iter().map(hex).collect::<Vec<_>>().join(", ")));
+        crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::STATEMENT_NOT_SIGNED, &format!("epoch {e}: built root {}…, posted {} — not signed", hex(&root), posted.iter().map(hex).collect::<Vec<_>>().join(", ")));
         settled.push(unmatched_key(e, &posted));
         return Next::Done;
     }

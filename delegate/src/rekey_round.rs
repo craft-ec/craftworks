@@ -166,7 +166,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
     let Some((_, spaces)) = identity::upkeep_mandate(h, &member) else { return Vec::new() };
     let Some(m) = spaces.iter().find(|m| m.space == space).cloned() else { return next_space(h, c, member, me, rest) };
     let Some((roster, epochs)) = space_of(h, &member, &m) else {
-        identity::upkeep_say(h, &member, &format!("{}: its group does not load here: not re-keyed", m.name));
+        crate::upkeep::followed(h, &member, &m.space, craftworks_rules::steps::UNLOADABLE, &format!("{}: its group does not load here: its files not re-keyed", m.name));
         return next_space(h, c, member, me, rest);
     };
     // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
@@ -185,40 +185,27 @@ fn next_space<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut re
     begin(h, c, member, me, space, rest)
 }
 
-/// Why the last wake-up began no round (a page shows it: `identity::upkeep_status`).
-pub const WHY: &[u8] = b"identity_upkeep/rekey/why";
-fn why<H: Host>(h: &mut H, w: u64, what: &str) {
-    h.set_secret(WHY, format!("wake-up {w}: {what}").as_bytes());
-}
 
 /// A WAKE-UP: a round begun (none running, the time come, a member whose page is away), or a stuck one dropped.
 pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     let w = identity::upkeep_wakeups(h);
-    let io = woke_(h);
-    if !io.is_empty() {
-        why(h, w, "a round begun");
-    }
-    io
-}
-fn woke_<H: Host>(h: &mut H) -> Vec<Io> {
-    let w = identity::upkeep_wakeups(h);
     if let Some(r) = load(h) {
         if !crate::upkeep::stuck(h, r.moved, r.moved_ms) {
-            why(h, w, "a round is running");
             return Vec::new();
         }
-        identity::upkeep_say(h, &r.member, "a re-key round did not finish: dropped");
+        crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::STALLED, &format!("{}: its files' re-key round did not finish: dropped", r.name));
         keep(h, None);
     }
     let last = h.get_secret(LAST).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(0);
     let next_at = h.get_secret(NEXT_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(u64::MAX);
     if last != 0 && w.saturating_sub(last) < EVERY && w < next_at {
-        why(h, w, &format!("the last round was at wake-up {last}; the next at {}", (last + EVERY).min(next_at)));
         return Vec::new();
     }
     h.set_secret(NEXT_AT, &u64::MAX.to_le_bytes());
     let Some(c) = Held::of(h) else {
-        why(h, w, "the contracts it needs were not handed over yet (a page hands them)");
+        for m in identity::upkeep_members(h) {
+            crate::upkeep::followed(h, &m, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::REKEY_NO_CODES, "the contracts a re-key needs were not handed over yet (a page hands them)");
+        }
         return Vec::new();
     };
     // Members take turns: the one after the member served last first.
@@ -226,19 +213,20 @@ fn woke_<H: Host>(h: &mut H) -> Vec<Io> {
     if let Some(i) = h.get_secret(LAST_MEMBER).and_then(|l| members.iter().position(|m| m.as_slice() == l.as_slice())) {
         members.rotate_left(i + 1);
     }
-    let mut seen_why = Vec::new();
+    // (A member passed over: why, recorded — quiet; the same reason once.)
+    let idle = |h: &mut H, m: &[u8; 32], why: &str| crate::upkeep::followed(h, m, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::REKEY_IDLE, why);
     for member in members {
         if identity::upkeep_since_tick(h, &member) < crate::upkeep::PAGE_AWAY {
-            seen_why.push("a page is open");
+            idle(h, &member, "a page is open: it re-keys");
             continue;
         }
         let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else {
-            seen_why.push("no mandate");
+            idle(h, &member, "no mandate handed over");
             continue;
         };
         let mut all: Vec<[u8; 32]> = spaces.iter().filter(|m| m.kind == "server").map(|m| m.space).collect();
         if all.is_empty() {
-            seen_why.push("no spaces");
+            idle(h, &member, "no spaces to re-key");
             continue;
         }
         h.set_secret(LAST, &w.to_le_bytes());
@@ -247,7 +235,6 @@ fn woke_<H: Host>(h: &mut H) -> Vec<Io> {
         let io = begin(h, &c, member, me, first, all);
         return issue(h, &c, io);
     }
-    why(h, w, &if seen_why.is_empty() { "no member here".to_string() } else { seen_why.join(", ") });
     Vec::new()
 }
 
@@ -290,7 +277,7 @@ fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> 
                 return Vec::new();
             }
             if refused {
-                identity::upkeep_say(h, &r.member, "a write was refused (the network holds more): the next round reads again");
+                crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_WRITE_REFUSED, &format!("{}: a write was refused (the network holds more): the next round reads again", r.name));
                 return next_space(h, c, r.member, r.me.clone(), r.rest.clone());
             }
             // A listing, a flush's blocks or its step answered: the rows themselves now (a flush's step first).
@@ -306,7 +293,7 @@ fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> 
                         if !still {
                             if let Some(x) = unhex32(&secret) {
                                 io.extend(old.iter().map(|a| Io::Put { code: crate::upkeep::Code::Piece, params: a.to_vec(), state: recode::burned(&x) }));
-                                identity::upkeep_say(h, &r.member, &format!("{} old piece(s) burned", old.len()));
+                                crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_BURNED, &format!("{}: {} old piece(s) burned", r.name, old.len()));
                             }
                         }
                     }
@@ -323,14 +310,14 @@ fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> 
             };
             match res {
                 Err(why) => {
-                    identity::upkeep_say(h, &r.member, &format!("{}…: not re-keyed — {why}", due.short()));
+                    crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_NOT_REKEYED, &format!("{}: {}…: not re-keyed — {why}", r.name, due.short()));
                     next_due(h, &c, r, now_ms)
                 }
                 Ok(io) => match rec.end() {
                     Some(End::Done { row, old }) => {
                         let burn = rec.burnable().map(|x| (old_key_of(&due), old, table::hex(&x)));
                         let root_id = rec.root.map(|root| table::hex(&crate::upkeep::id_of(&c.piece, &craftworks_files::hashed_address(&rec.new_key, &root)))).unwrap_or_default();
-                        identity::upkeep_say(h, &r.member, &format!("{}…: re-keyed with no page open (key {}…, root contract {}…)", due.short(), &table::hex(&rec.new_key)[..8], &root_id[..root_id.len().min(12)]));
+                        crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_REKEYED, &format!("{}: {}…: re-keyed with no page open (key {}…, root contract {}…)", r.name, due.short(), &table::hex(&rec.new_key)[..8], &root_id[..root_id.len().min(12)]));
                         write_row(h, &c, r, &due, &row, burn, now_ms)
                     }
                     _ => {
@@ -377,7 +364,7 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
     let st = rekey::salt(&r.reading.rows("files"));
     if let (Some(removals), Some(was)) = (p.rotate, st.clone()) {
         let Some(new) = identity::upkeep_random(h) else { return next_space(h, c, r.member, r.me.clone(), r.rest.clone()) };
-        identity::upkeep_say(h, &r.member, "a member removed: a new salt (the space's files re-key)");
+        crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_NEW_SALT, &format!("{}: a member removed: a new salt (the space's files re-key)", r.name));
         let rows = rekey::rotation(&r.reading.rows("files"), &was, new, removals);
         return write_step(h, c, r, rows, After::Replan, false);
     }
@@ -401,9 +388,11 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
         let name = r.name.clone();
         let files = r.reading.rows("files");
         let notes = if r.reading.feeds_unread.is_empty() { String::new() } else { format!(" ({:?})", r.reading.feeds_unread) };
-        identity::upkeep_say(
+        crate::upkeep::followed(
             h,
             &r.member,
+            &r.space,
+            craftworks_rules::steps::FILES_READ,
             &format!(
                 "{name}: {} row(s) of files read{notes}; {} file(s) due, {} at my turn now{}",
                 files.len(),
@@ -437,14 +426,14 @@ fn next_due<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> 
                     return write_row(h, c, r, &due, &row, None, now_ms);
                 }
                 if !crate::upkeep::creates() {
-                    identity::upkeep_say(h, &r.member, &format!("{}…: left to a page — its new pieces would stay on this node", due.short()));
+                    crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_LEFT, &format!("{}: {}…: its new pieces would stay on this node", r.name, due.short()));
                     continue;
                 }
                 r.step = Step::Recoding { rec, due };
                 keep(h, Some(&r));
                 return io;
             }
-            Err(why) => identity::upkeep_say(h, &r.member, &format!("{}…: left to a page — {why}", due.short())),
+            Err(why) => crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_LEFT, &format!("{}: {}…: {why}", r.name, due.short())),
         }
     }
     next_space(h, c, r.member, r.me.clone(), r.rest.clone())
@@ -478,7 +467,7 @@ fn write_step<H: Host>(h: &mut H, c: &Held, mut r: Round, rows: Vec<(Vec<u8>, Op
             sent.io
         }
         Err(why) => {
-            identity::upkeep_say(h, &r.member, &format!("not written: {why}"));
+            crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_NOT_WRITTEN, &format!("{}: {why}", r.name));
             next_space(h, c, r.member, r.me.clone(), r.rest.clone())
         }
     }

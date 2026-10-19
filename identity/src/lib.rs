@@ -415,7 +415,6 @@ pub enum Answer {
         groups: Vec<([u8; 32], u64, Vec<u8>)>,
         /// Spaces of the last mandate not taken (upkeep's group is newer); what upkeep last did or met.
         stale: Vec<[u8; 32]>,
-        said: Option<String>,
         /// What it DECIDED about each request (the `member` lifecycle's moves, by the node): the page moves the machine.
         decided: Vec<Decided>,
         /// The wake-up its last admission round for this member began at (None: never).
@@ -542,13 +541,6 @@ pub fn upkeep_status<H: Host>(h: &H, m: Option<&[u8; KEY_LEN]>) -> Answer {
             .and_then(|m| upkeep_mandate(h, m).map(|(_, ms)| ms.into_iter().filter(|x| upkeep_moved(h, m, &x.space)).map(|x| (x.space, x.epoch, x.state)).collect()))
             .unwrap_or_default(),
         stale: mine(&|m| h.get_secret(&of(UPKEEP_STALE, m))).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default(),
-        // Its lines, and why the last wake-up began no re-key round (`identity_upkeep/rekey/why`).
-        said: {
-            let lines = mine(&|m| h.get_secret(&of(UPKEEP_SAID, m))).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
-            let why = h.get_secret(b"identity_upkeep/rekey/why").and_then(|b| String::from_utf8(b).ok()).map(|w| format!("re-key: {w}"));
-            let all: Vec<String> = lines.lines().map(str::to_string).chain(why).filter(|l| !l.is_empty()).collect();
-            (!all.is_empty()).then(|| all.join("\n"))
-        },
         decided: m.map(|m| upkeep_decided(h, m)).unwrap_or_default(),
         round_at: m.and_then(|m| upkeep_round_at(h, m)),
         next: m.and_then(|m| u64_of(h.get_secret(&of(UPKEEP_NEXT, m)))).filter(|n| *n > 0),
@@ -573,7 +565,6 @@ pub const UPKEEP_CODES_HASH: &[u8] = b"identity_upkeep/codes";
 pub const UPKEEP_MANDATE: &[u8] = b"identity_upkeep/mandate/";
 pub const UPKEEP_MOVED: &[u8] = b"identity_upkeep/moved/";
 pub const UPKEEP_STALE: &[u8] = b"identity_upkeep/stale/";
-pub const UPKEEP_SAID: &[u8] = b"identity_upkeep/said/";
 pub const UPKEEP_DECIDED: &[u8] = b"identity_upkeep/decided/";
 /// The wake-up the member's last admission round began at (said in the status: a member never served shows).
 pub const UPKEEP_ROUND_AT: &[u8] = b"identity_upkeep/round-at/";
@@ -668,15 +659,6 @@ pub fn upkeep_moved<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &[u8; 32]) -> bool
 }
 pub fn upkeep_set_moved<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: &[u8; 32], moved: bool) -> bool {
     h.set_secret(&[UPKEEP_MOVED, &m[..], &space[..]].concat(), &[u8::from(moved)])
-}
-/// What upkeep did, SAID: the last 12 lines (each with upkeep's clock, s), newest last — a page shows them.
-pub fn upkeep_say<H: Host>(h: &mut H, m: &[u8; KEY_LEN], what: &str) {
-    let had = h.get_secret(&of(UPKEEP_SAID, m)).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
-    let mut lines: Vec<String> = had.lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
-    lines.push(format!("[{}] {what}", upkeep_now(h).unwrap_or(0)));
-    let over = lines.len().saturating_sub(12);
-    lines.drain(..over);
-    h.set_secret(&of(UPKEEP_SAID, m), lines.join("\n").as_bytes());
 }
 /// Wake-ups since the member's page last handed the mandate over.
 pub fn upkeep_since_tick<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> u64 {

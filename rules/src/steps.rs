@@ -29,6 +29,30 @@ pub const KEYS_WRITE: &str = "keys-write";
 pub const KEYS_OPS_UNREAD: &str = "keys-ops-unread";
 pub const NODE_STEP: &str = "node-step";
 pub const NODE_DROPPED: &str = "node-dropped";
+// The node's OTHER rounds — a space's files re-keyed, an account's keeper and witness work: the same one record
+// (`upkeep::followed`), never free text. Not about a space: the account's (`ACCOUNT`).
+/// The space a step not about any space is recorded under (the page: the account's).
+pub const ACCOUNT: [u8; 32] = [0; 32];
+pub const REKEY_IDLE: &str = "rekey-idle";
+pub const REKEY_NO_CODES: &str = "rekey-no-codes";
+pub const FILES_READ: &str = "files-read";
+pub const FILES_NEW_SALT: &str = "files-new-salt";
+pub const FILES_REKEYED: &str = "files-rekeyed";
+pub const FILES_NOT_REKEYED: &str = "files-not-rekeyed";
+pub const FILES_LEFT: &str = "files-left-to-page";
+pub const FILES_BURNED: &str = "files-burned";
+pub const FILES_WRITE_REFUSED: &str = "files-write-refused";
+pub const FILES_NOT_WRITTEN: &str = "files-not-written";
+pub const KEEPER_FAILED: &str = "keeper-failed";
+pub const KEEPER_EPOCH: &str = "keeper-epoch-opened";
+pub const KEEPER_CLAIMED: &str = "keeper-claimed";
+pub const KEEPER_POINTED: &str = "keeper-claim-pointed";
+pub const KEEPER_ANSWERED: &str = "keeper-answered";
+pub const WITNESS_FAILED: &str = "witness-failed";
+pub const WITNESS_REFUSED: &str = "witness-refused";
+pub const WITNESS_NOT_SIGNED: &str = "witness-not-signed";
+pub const STATEMENT_FAILED: &str = "statement-failed";
+pub const STATEMENT_NOT_SIGNED: &str = "statement-not-signed";
 
 /// EVERY STEP: `(name, quiet)`.
 pub const ALL: &[(&str, bool)] = &[
@@ -80,6 +104,26 @@ pub const ALL: &[(&str, bool)] = &[
     (KEYS_OPS_UNREAD, false),
     (NODE_STEP, false),
     (NODE_DROPPED, false),
+    (REKEY_IDLE, true),
+    (REKEY_NO_CODES, false),
+    (FILES_READ, true),
+    (FILES_NEW_SALT, true),
+    (FILES_REKEYED, true),
+    (FILES_NOT_REKEYED, false),
+    (FILES_LEFT, false),
+    (FILES_BURNED, true),
+    (FILES_WRITE_REFUSED, false),
+    (FILES_NOT_WRITTEN, false),
+    (KEEPER_FAILED, false),
+    (KEEPER_EPOCH, true),
+    (KEEPER_CLAIMED, true),
+    (KEEPER_POINTED, true),
+    (KEEPER_ANSWERED, true),
+    (WITNESS_FAILED, false),
+    (WITNESS_REFUSED, false),
+    (WITNESS_NOT_SIGNED, false),
+    (STATEMENT_FAILED, false),
+    (STATEMENT_NOT_SIGNED, false),
 ];
 
 #[cfg(test)]
