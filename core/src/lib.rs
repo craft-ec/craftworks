@@ -4075,11 +4075,11 @@ mod js {
         }
         /// THE LIST an MLS entry is judged by (`mls::List`; the node's `GovList`): EVER on the list and not banned.
         pub fn entry_listed(&self, did: &str) -> bool {
-            self.0.ever_listed.contains(did) && !self.0.bans.contains(did)
+            self.0.entry_listed(did)
         }
-        /// …a self-entry's proof (JSON) by the list's rule now (`Gov::admits`).
+        /// …a self-entry's proof (JSON) by the list's rule now (`Gov::entry_admits`, the node's too).
         pub fn entry_admits(&self, did: &str, proof: &str, at: f64) -> bool {
-            serde_json::from_str::<serde_json::Value>(proof).is_ok_and(|p| self.0.admits(did, &p, at).is_ok())
+            self.0.entry_admits(did, proof.as_bytes(), at)
         }
         /// …and whether a member's commit may take `did` out (`Gov::may_be_taken_out`).
         pub fn may_be_taken_out(&self, did: &str) -> bool {

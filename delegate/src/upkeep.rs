@@ -570,10 +570,10 @@ fn entries<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, epoch: u64, 
 struct GovList<'a>(&'a craftworks_gov::Gov, u64);
 impl craftworks_mls::List for GovList<'_> {
     fn listed(&self, did: &str) -> bool {
-        self.0.ever_listed.contains(did) && !self.0.bans.contains(did)
+        self.0.entry_listed(did)
     }
     fn admits(&self, did: &str, proof: &[u8]) -> bool {
-        serde_json::from_slice::<serde_json::Value>(proof).is_ok_and(|p| self.0.admits(did, &p, self.1 as f64).is_ok())
+        self.0.entry_admits(did, proof, self.1 as f64)
     }
     fn may_take_out(&self, did: &str) -> bool {
         self.0.may_be_taken_out(did)

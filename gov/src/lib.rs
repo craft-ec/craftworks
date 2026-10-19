@@ -421,6 +421,15 @@ impl Gov {
 
     /// MAY AN ENTRY TAKE `did` OUT (a member's commit): only one the acts ever put out, or never listed (a stray) — no
     /// member removes a listed account on its own (the list decides).
+    /// THE LIST an ENTRY is judged by (page and node, `mls::List`): EVER listed and not banned — an answer that never
+    /// changes as more acts are read.
+    pub fn entry_listed(&self, did: &str) -> bool {
+        self.ever_listed.contains(did) && !self.bans.contains(did)
+    }
+    /// …a self-entry's PROOF by the list's rule now (`admits`).
+    pub fn entry_admits(&self, did: &str, proof: &[u8], at: f64) -> bool {
+        serde_json::from_slice::<Value>(proof).is_ok_and(|p| self.admits(did, &p, at).is_ok())
+    }
     pub fn may_be_taken_out(&self, did: &str) -> bool {
         self.ever_out.contains(did) || !self.ever_listed.contains(did)
     }
