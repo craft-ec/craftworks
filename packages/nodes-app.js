@@ -24,7 +24,7 @@ export async function mount(ctx, el) {
   (await ctx.require("where")).menu(PAGES.map(([k, label]) => ({ label, href: k ? `#/nodes/${k}` : "#/nodes", on: k === page })));
   const size = b => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : b >= 1e3 ? `${Math.round(b / 1e3)} KB` : `${b} B`);
   const craft = n => (Number(BigInt(n ?? "0") / 1000000n) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });
-  const cell = (t, cls) => Object.assign(document.createElement("td"), { textContent: t ?? "—", className: cls ?? "" });
+  const cell = (await ctx.require("theme")).cell;
   const table = (head, rows, foot) => {
     const t = document.createElement("table");
     t.createTHead().insertRow().append(...head.map(([x, cls]) => Object.assign(document.createElement("th"), { textContent: x, className: cls ?? "" })));

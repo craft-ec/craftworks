@@ -185,7 +185,7 @@ export async function start(ctx) {
 
   // A FILE (an image, a document, any file): its picture (an image's preview) or its kind's icon, its name, who, its
   // size and date; its actions in a ⋯ menu; a click opens it (`open`).
-  const sizeOf = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`);
+  const sizeOf = (await ctx.require("theme")).size;
   function file(it, { actions, by, open, below }) {
     const ref = it.files?.[0] ?? {};
     const image = kinds.mediaOf(ref)?.domain === "image";

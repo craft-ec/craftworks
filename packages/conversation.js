@@ -791,7 +791,7 @@ export async function start(ctx) {
   const MAIL = "mail";
   const MONTH = 30 * 24 * 3600 * 1000;
   const hexOf = (await ctx.require("node")).hex;
-  const newId = () => hexOf(crypto.getRandomValues(new Uint8Array(8)));
+  const newId = () => node.newHex(8);
   const { glue } = await ctx.require("node");
   // Kept mail is private: the account's table `mailbox` (not `mail`: that name is the public tail's).
   const kept = async () => (await ctx.require("storage")).table("mailbox");

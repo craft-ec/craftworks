@@ -1487,7 +1487,7 @@ export async function start(ctx) {
   // A SPACE's RETENTION (`roles`, from its `space`/`history` setting): days, at most the plan's.
   const setRetention = (spaceId, days) => (days == null ? retention.delete(spaceId) : retention.set(spaceId, Math.max(0, Math.min(HISTORY.days, days))));
   async function table(name, sp = null, opts = {}) {
-    if (sp && sp.kind !== "account") return merged(name, sp, opts);
+    if (space.shared(sp)) return merged(name, sp, opts);
     if (CHANNELS.has(name)) return channel(name);
     openedNames.add(name);
     const acc = await space.account.strict();

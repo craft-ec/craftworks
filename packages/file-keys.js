@@ -17,7 +17,7 @@
 // the next trigger, not in a loop.
 export async function start(ctx) {
   const [space, files, roles, keys, storage, driveStore] = await Promise.all(["space", "files", "roles", "keys", "storage", "drive-store"].map(n => ctx.require(n)));
-  const shared = sp => sp && sp.kind !== "account";
+  const shared = space.shared;
   const label = sp => (shared(sp) ? space.shown(sp) : "your files");
   const failed = new Map(); // row → the trigger count it failed at
   let triggers = 0;

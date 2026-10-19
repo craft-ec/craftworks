@@ -13,6 +13,8 @@ export async function start(ctx) {
   const bytes = h => glue.bytes_of(String(h));
   // A fresh random id: `n` random bytes as hex (every package's new ids).
   const newHex = n => hex(crypto.getRandomValues(new Uint8Array(n)));
+  // A DID as bytes (a DID string, or bytes already).
+  const didBytes = did => (typeof did === "string" ? glue.did_bytes(did) : did);
 
   // The node that served this page — at its own origin, so a gateway on https (try.freenet.org) is reached over wss —
   // unless `?node=` names another on this machine.
@@ -314,5 +316,5 @@ export async function start(ctx) {
   // `drop()`: close the connection as a sleep or a network change does (to see the recovery work).
   // WHAT IS IN FLIGHT now — each request's label and how long it has waited (ms): to see what a page waits on.
   const inFlight = () => waiters.map(w => ({ what: w.what, ms: Math.round(performance.now() - w.at) })).sort((a, b) => b.ms - a.ms);
-  return { hex, bytes, newHex, core, glue, ask, within, get, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
+  return { hex, bytes, newHex, didBytes, core, glue, ask, within, get, read, contract, onContract, changed, dataChanged, gets: () => new Map([...reads].map(([k, r]) => [k, { s: r.s, gets: r.gets ?? 0, what: r.what }])), slot, listen, url, drop: () => ws.close(), WAIT, idle, busy: () => waiters.length, inFlight, waits };
 }

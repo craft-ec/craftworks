@@ -36,7 +36,7 @@ export async function start(ctx) {
   const b64 = b => btoa(Array.from(b, c => String.fromCharCode(c)).join(""));
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
-  const shared = sp => sp && sp.kind !== "account";
+  const shared = space.shared;
   const table = async sp => {
     const t = shared(sp) ? await storage.table(space.tableOf(sp, "files"), sp) : await storage.table("files");
     await t.settled;

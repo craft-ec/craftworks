@@ -218,5 +218,7 @@ export async function start(ctx) {
 
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
-  return { isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, idOf, madeBy, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
+  // SHARED: a space others are in (every kind but the account's own).
+  const shared = sp => !!sp && sp.kind !== "account";
+  return { shared, isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, idOf, madeBy, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
 }

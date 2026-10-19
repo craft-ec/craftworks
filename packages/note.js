@@ -291,7 +291,7 @@ export async function mount(ctx, el) {
     who.textContent = "";
     ctx.background("note: ctx.require", ctx.require("directory").then(async d => {
       const name = async did => (did ? d.shown(did, await d.handle(did)) : "");
-      const when = t => (t ? new Date(t).toLocaleString() : "");
+      const when = (await ctx.require("theme")).when;
       const made = it.by ? `By ${await name(it.by)}${it.at ? `, ${when(it.at)}` : ""}` : "";
       const changed = it.edited ? ` · edited${it.editor && it.editor !== it.by ? ` by ${await name(it.editor)}` : ""} ${when(it.edited)}` : "";
       if (editing?.key === n.key) who.textContent = `${made}${changed}`;

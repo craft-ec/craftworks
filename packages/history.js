@@ -25,7 +25,7 @@ export async function start(ctx) {
   document.head.append(style);
   const h = (await ctx.require("theme")).h;
   const name = async did => (did ? directory.shown(did, await directory.handle(did)) : "someone");
-  const when = t => (t ? new Date(t).toLocaleString() : "");
+  const when = (await ctx.require("theme")).when;
   const stamp = it => it?.edited || it?.at || 0;
 
   // The versions shown in a dialog over `anchor`'s page (inside an open dialog when asked from one: outside it is inert).

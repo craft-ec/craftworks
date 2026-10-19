@@ -50,7 +50,7 @@ export async function start(ctx) {
   const idlogCode = await ctx.require("idlog-wasm");
   const CARD = "card";
 
-  const didBytes = did => (typeof did === "string" ? glue.did_bytes(did) : did);
+  const didBytes = (await ctx.require("node")).didBytes;
   // An account's public keys, from its key log (read first).
   async function keysOf(did) {
     const b = didBytes(did);

@@ -30,7 +30,7 @@ export async function start(ctx) {
   const enc = new TextEncoder();
   const dec = new TextDecoder();
   const bytes = (await ctx.require("node")).bytes;
-  const didBytes = did => (typeof did === "string" ? glue.did_bytes(did) : did);
+  const didBytes = (await ctx.require("node")).didBytes;
 
   // Drop an item (bytes) into the bag at `address`: a PUT the hosts merge.
   async function drop(address, payload, what) {

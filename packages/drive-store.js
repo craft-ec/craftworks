@@ -15,7 +15,7 @@
 //   await drive.drives()                                // the spaces whose Drive this person can pick (Drive in use)
 export async function start(ctx) {
   const [space, files, roles, kinds, items] = await Promise.all(["space", "files", "roles", "kinds", "items"].map(n => ctx.require(n)));
-  const shared = sp => sp && sp.kind !== "account";
+  const shared = space.shared;
   // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
   const usesDrive = async sp => !shared(sp) || (await ctx.optional("drive-store: roles.of", roles.of(sp).then(r => r.apps().includes("drive")), () => false));
   // THE DRIVES this person can pick from: theirs, and every space they are in that uses Drive.

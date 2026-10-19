@@ -31,7 +31,7 @@ export async function mount(ctx, el) {
   const clk = Core.clock();
   const short = h => (h ? `${h.slice(0, 8)}…` : "—");
   const craft = n => (Number(BigInt(n) / 1000000n) / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });
-  const cell = (t, cls) => Object.assign(document.createElement("td"), { textContent: t ?? "—", className: cls ?? "" });
+  const cell = (await ctx.require("theme")).cell;
   const code = t => {
     const td = document.createElement("td");
     td.append(Object.assign(document.createElement("code"), { textContent: t }));

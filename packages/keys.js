@@ -44,7 +44,7 @@ export async function start(ctx) {
   const CHANNEL = space.tables.channel;
   // The group's commits in one agreed order (the `ordering` capability's `tail`): each in its epoch's own log.
   const ordering = await ctx.require("ordering");
-  const { core, glue } = await ctx.require("node");
+  const { core, glue, newHex } = await ctx.require("node");
   const idlogCode = await ctx.require("idlog-wasm");
   // MLS is its own wasm package, loaded here only: no other page pays for it.
   const mlsGlue = await ctx.require("mls-glue");
@@ -632,7 +632,7 @@ export async function start(ctx) {
   // (the same on every device of the account); each space's group state in the account's table `spacekeys` (`s/<space>`,
   // the newest any device saved).
   const SPACEKEYS = "spacekeys";
-  const newId = () => hexOf(crypto.getRandomValues(new Uint8Array(8)));
+  const newId = () => newHex(8);
   let memberKeys = null;
   const keysOfMember = () =>
     (memberKeys ??= auth.identity.spaceMember().then(r => {

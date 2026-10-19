@@ -54,7 +54,7 @@ export async function start(ctx) {
 }`;
   document.head.append(style);
   const h = (await ctx.require("theme")).h;
-  const sizeOf = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`);
+  const sizeOf = (await ctx.require("theme")).size;
   const isImage = r => kinds.mediaOf(r)?.domain === "image";
 
   // `media`: a video or an audio goes through the media pipeline (`video-studio`: streamed, its poster or album cover,

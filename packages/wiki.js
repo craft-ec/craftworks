@@ -60,7 +60,7 @@ export async function mount(ctx, el) {
   // Where a page draws: the view's box being built (`ctx.view` render), or the page itself for the maker.
   let root = outer;
   const said = (text, ok = false) => h("p", { className: ok ? "said ok" : "said", textContent: text });
-  const when = t => (t ? new Date(t).toLocaleString() : "");
+  const when = (await ctx.require("theme")).when;
   const errText = e => e?.message ?? String(e);
   let editing = false; // an editor open: what changes underneath does not redraw it away
   let drawing = 0;

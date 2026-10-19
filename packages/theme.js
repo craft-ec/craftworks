@@ -269,5 +269,9 @@ export async function start() {
     e.append(...kids.flat(Infinity).filter(k => k != null && k !== false && k !== ""));
     return e;
   };
-  return { h, loading, action, ask };
+  // A TIME as people read it (empty when none); a SIZE in bytes; a table CELL ("—" when empty).
+  const when = t => (t ? new Date(t).toLocaleString() : "");
+  const size = n => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1073741824).toFixed(2)} GB`);
+  const cell = (t, cls) => Object.assign(document.createElement("td"), { textContent: t ?? "—", className: cls ?? "" });
+  return { h, when, size, cell, loading, action, ask };
 }
