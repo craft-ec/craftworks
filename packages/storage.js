@@ -1193,7 +1193,7 @@ export async function start(ctx) {
     bagPolls.set(sp.id, fns);
     ctx.background("storage: bag follow", ctx.require("index").then(index => index.watchSpace(sp, "writers", async () => {
       const b = await ctx.optional("storage: scope.bag", scope.bag(true), () => null);
-      if (b) for (const f of fns) f(b.set);
+      if (b) for (const f of fns) f(b.set, b);
     })));
   }
 
@@ -1205,9 +1205,14 @@ export async function start(ctx) {
     if (tables.has(at)) return lazy ? tables.get(at) : tables.get(at).then(t => (t.lazy ? t.whole().then(() => t) : t));
     const ready = (async () => {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
-      const [mine, others] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
+      const [mine, nowWriters] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
       const bag = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(), () => null) : null;
+      // A PUBLIC table: also every writer the space's OPEN writers list names for it — needing no key, it is what a
+      // member not keyed yet reads first (10-19, live: Wren's MLS view of Craftworks empty, so its writers were none and
+      // it read 0 feeds of `pub-keyops` — the key operations that would key it: a deadlock).
+      const pubWriters = scope.opts(name).public && bag?.pub ? [...bag.pub].filter(x => x.endsWith(`|${name}`)).map(x => x.split("|")[0]).filter(w => w !== scope.self) : [];
+      const others = [...new Set([...nowWriters, ...pubWriters])];
       const listed = o => !scope.bag || (bag ? bag.blind || bag.set.has(o) : false);
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
@@ -1300,8 +1305,10 @@ export async function start(ctx) {
       gathering.finally(() => (gathered = true));
       // New writers appear in the bag — read again now and then (one read for the whole space).
       if (scope.bag)
-        pollBag(sp, scope, set => {
-          set.forEach(o => o !== scope.self && others.includes(o) && !seen.has(o) && (seen.add(o), ctx.background("storage: gather", gather(o))));
+        pollBag(sp, scope, (set, b) => {
+          // (A public table: a writer the open list names for it NOW counts too — named after this table opened.)
+          const pubNow = o => scope.opts(name).public && !!b?.pub?.has(`${o}|${name}`);
+          set.forEach(o => o !== scope.self && (others.includes(o) || pubNow(o)) && !seen.has(o) && (seen.add(o), ctx.background("storage: gather", gather(o))));
           // A PUBLIC table's writers found but not opened: the list may name it now (fx 10-18: named after this table
           // first looked, a newcomer read it only when the writer's catalog happened to change — or never).
           for (const [o, open] of notOpened) if (opened.has(o)) notOpened.delete(o);
