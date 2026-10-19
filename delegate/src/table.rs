@@ -677,7 +677,7 @@ fn merge(feeds: &[([u8; 32], BTreeMap<Vec<u8>, Vec<u8>>)], caps: &BTreeMap<[u8; 
     let capped: Vec<([u8; 32], BTreeMap<Vec<u8>, Vec<u8>>)> = feeds
         .iter()
         .map(|(w, rows)| match caps.get(w) {
-            Some(cap) => (*w, rows.iter().filter(|(_, v)| craftworks_feed::open(v).is_some_and(|ver| ver.id.1 <= *cap)).map(|(k, v)| (k.clone(), v.clone())).collect()),
+            Some(cap) => (*w, rows.iter().filter(|(_, v)| craftworks_feed::within_cap(v, *cap)).map(|(k, v)| (k.clone(), v.clone())).collect()),
             None => (*w, rows.clone()),
         })
         .collect();

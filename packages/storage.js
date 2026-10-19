@@ -878,15 +878,14 @@ export async function start(ctx) {
     return ready;
   }
 
-  // A stored version's sequence in its feed (an envelope: magic ‖ writer ‖ seq ‖ …).
-  const seqOf = v => (v?.length >= 42 && v[0] === 0xcf && v[1] === 0x01 ? Number(new DataView(v.buffer, v.byteOffset + 34, 8).getBigUint64(0)) : Infinity);
-  // A feed as it stood at sequence `cap`: its versions up to there.
+  // A feed as it stood at sequence `cap`: its versions up to there (`feed::within_cap`, the node's too).
+  const withinCap = (v, cap) => !!v && feed.within_cap(v, cap);
   const capped = (f, cap) => ({
     owner: f.owner,
-    raw: () => (f.raw() ?? []).filter(([, v]) => seqOf(v) <= cap),
+    raw: () => (f.raw() ?? []).filter(([, v]) => withinCap(v, cap)),
     page: async o => {
       const p = await f.page(o);
-      return { ...p, rows: p.rows.filter(([, v]) => seqOf(v) <= cap) };
+      return { ...p, rows: p.rows.filter(([, v]) => withinCap(v, cap)) };
     },
     whole: () => f.whole?.(),
     answer: () => f.answer?.() ?? Promise.resolve(),
@@ -918,7 +917,7 @@ export async function start(ctx) {
             const t = await ctx.optional("storage: tail", tail(node, r.key, { ...scope.opts(r.key), catalog: cat }), () => null);
             await t?.answer();
             if (!t || t.absent) return;
-            const seqs = (t.raw() ?? []).map(([, v]) => seqOf(v)).filter(Number.isFinite);
+            const seqs = (t.raw() ?? []).map(([, v]) => (v ? feed.seq_of(v) : NaN)).filter(Number.isFinite);
             if (seqs.length) heads[r.key] = Math.max(...seqs);
           }),
         );
@@ -1690,7 +1689,7 @@ export async function start(ctx) {
             .map(o =>
               ctx.background("storage: tail", tail(o, name, { public: true }).then(t => {
                   const cap = caps?.get?.(o);
-                  all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, raw: () => (t.raw() ?? []).filter(([, v]) => seqOf(v) <= cap) } : t);
+                  all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, raw: () => (t.raw() ?? []).filter(([, v]) => withinCap(v, cap)) } : t);
                   t.onChange(remerge);
                   remerge();
                 })),

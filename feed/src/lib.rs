@@ -37,6 +37,16 @@ pub struct Version {
 }
 
 /// A stored value read back: `None` if it is not a version's envelope.
+/// WITHIN A CAP (page and node): a stored value that is a version at sequence ≤ `cap` (a departed writer's rows count up
+/// to where they stood; anything not a version, never).
+pub fn within_cap(b: &[u8], cap: u64) -> bool {
+    seq_of(b).is_some_and(|s| s <= cap)
+}
+/// A stored value's SEQUENCE in its writer's feed (a version's), or None.
+pub fn seq_of(b: &[u8]) -> Option<u64> {
+    open(b).map(|v| v.id.1)
+}
+
 pub fn open(b: &[u8]) -> Option<Version> {
     let rest = b.strip_prefix(&MAGIC)?;
     let (w, rest) = rest.split_first_chunk::<32>()?;
@@ -129,6 +139,17 @@ fn current(vs: &[Version]) -> Option<&Version> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// A departed writer's rows count up to its cap (page and node, `within_cap`): its versions at or below it; anything
+    /// not a version never.
+    #[test]
+    fn within_cap_counts_versions_up_to_the_cap() {
+        let v = envelope(([1; 32], 5), None, Some(b"x"));
+        assert_eq!(seq_of(&v), Some(5));
+        assert!(within_cap(&v, 5) && !within_cap(&v, 4));
+        assert!(!within_cap(b"not a version", u64::MAX) && seq_of(b"not a version").is_none());
+    }
     use super::*;
 
     const A: [u8; 32] = [0xA; 32];
@@ -232,6 +253,17 @@ mod js {
     pub fn version(writer: &[u8], seq: f64, after: &str, value: Option<Vec<u8>>) -> Result<Vec<u8>, JsValue> {
         let after = if after.is_empty() { None } else { Some(id_of(after)?) };
         Ok(envelope((key32(writer)?, seq as u64), after, value.as_deref()))
+    }
+
+    /// WITHIN A CAP (`within_cap`, the node's too).
+    #[wasm_bindgen]
+    pub fn within_cap(b: &[u8], cap: f64) -> bool {
+        super::within_cap(b, cap as u64)
+    }
+    /// A stored value's SEQUENCE (`seq_of`): a number, or NaN when it is not a version.
+    #[wasm_bindgen]
+    pub fn seq_of(b: &[u8]) -> f64 {
+        super::seq_of(b).map(|s| s as f64).unwrap_or(f64::NAN)
     }
 
     /// MERGE: `feeds` = `[[writer, [[key, value], …]], …]` (bytes, as each feed stores them). Returns the table's rows
