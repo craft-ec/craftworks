@@ -12,7 +12,8 @@ const pkgs = join(root, "packages");
 const bad = [];
 const bad0 = s => bad.push(s);
 // THE OS: what every app stands on (FOUNDATION §3) — stays in the page.
-const OS = new Set(["places-side", "home", "settings", "account", "spaces-app", "space-home", "store", "tag", "contact", "chat", "mail", "wallet-app", "nodes-app", "explorer-app"]);
+// (The page's LAYOUT is the OS's: its header, side and footer — the manifest's `layout`.)
+const OS = new Set(["header", "places-side", "footer", "home", "settings", "account", "spaces-app", "space-home", "store", "tag", "contact", "chat", "mail", "wallet-app", "nodes-app", "explorer-app"]);
 // APPS NOT YET IN THEIR FRAMES (10-15): only ever shorter.
 const NOT_YET = new Set([]);
 // FRAMED BY THE FRAME RUNTIME (FOUNDATION §3): the manifest's `framed` (the publisher's) — the app keeps its
