@@ -193,3 +193,15 @@ test("the group's steps are the one list's: the node's names known, an unknown o
   L.transition("group", "s", "out-plan", { by: "node" });
   assert.throws(() => L.transition("group", "s", "follow-plan", {}), e => e.kind === "bug", "the old prefixed names are gone");
 });
+
+test("a step repeated with the same reason is recorded once; a different one, or another step between, again", async () => {
+  const seen = [];
+  L.on("group", (key, to, from, event, d) => key === "once" && seen.push(`${event}:${d.why}`));
+  L.transition("group", "once", "keys-short", { why: "not whole" });
+  L.transition("group", "once", "keys-short", { why: "not whole" });
+  L.transition("group", "once", "keys-short", { why: "still not whole" });
+  L.transition("group", "once", "keys-in-step", { why: "placed" });
+  L.transition("group", "once", "keys-short", { why: "still not whole" });
+  await tick();
+  assert.deepEqual(seen, ["keys-short:not whole", "keys-short:still not whole", "keys-in-step:placed", "keys-short:still not whole"]);
+});

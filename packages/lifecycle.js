@@ -307,6 +307,7 @@ export async function start(ctx) {
     say();
   }
 
+  const lastStep = new Map(); // `${machine}|${key}` → the last step's `${event}|${why}` (null after a move)
   function transition(machine, key, event, detail = {}) {
     const m = MACHINES[machine];
     if (!m) throw met("lifecycle", new Fault("bug", `lifecycle: no machine "${machine}"`));
@@ -318,6 +319,11 @@ export async function start(ctx) {
     const ok = ev.guard ? ev.guard(detail) : true;
     if (ok !== true) throw met("lifecycle", new Fault("refused", `lifecycle: ${machine} ${event} refused`, { message: `${machine}: ${ok}`, d: { from, event } }));
     const to = ev.to ?? from;
+    // ONCE PER CHANGE (the node's record the same: `identity::upkeep_decide`): a STEP — nothing moved — repeating the
+    // last step of this key with the same reason is not recorded again; a different one, or a move, between them is.
+    const sig = `${event}|${detail.why ?? ""}`;
+    if (!ev.to && lastStep.get(`${machine}|${key}`) === sig) return to;
+    lastStep.set(`${machine}|${key}`, ev.to ? null : sig);
     states.set(`${machine}|${key}`, { s: to, since: Date.now(), event, detail });
     if (m.journal) {
       pending.push({ m: machine, key: String(key), from, to, event, at: Date.now(), v: String(ctx.shaOf?.(machine === "group" ? "keys" : "lifecycle") ?? "").slice(0, 12), ...detail });
