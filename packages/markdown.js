@@ -222,14 +222,15 @@ export async function start(ctx) {
   };
   function media(key, ref, alt, item = null) {
     const kind = kindOf(ref);
-    // Counted for its ITEM, and kept for others once it loads (`usage.trackItem`).
-    if (item && !ref.inline) ctx.background("markdown: ctx.require", ctx.require("usage").then(u => u.trackItem(item, [ref])));
+    // COUNTED for its ITEM once it is READ — loaded, or taken — and kept for others (`usage.trackItem`); a player counts
+    // its own plays (`media-look`).
+    const counted = () => item && !ref.inline && ctx.background("markdown: usage", ctx.require("usage").then(u => u.trackItem(item, [ref])));
     const spec = K.mediaOf(ref);
     if (spec?.view === "image") {
       const img = Object.assign(document.createElement("img"), { className: "cw-md-media", alt: alt || ref.name || "", title: ref.name || "" });
       const small = ref.preview ?? (ref.inline ? `data:${ref.type};base64,${ref.inline}` : null);
       if (small) img.src = small;
-      if (!ref.inline) whenSeen(img, () => ctx.background("markdown: urlOf", urlOf(key, ref).then(u => (img.src = u))));
+      if (!ref.inline) whenSeen(img, () => ctx.background("markdown: urlOf", urlOf(key, ref).then(u => ((img.src = u), counted()))));
       img.onclick = () => img.src && window.open(img.src, "_blank", "noopener");
       return img;
     }
@@ -243,9 +244,9 @@ export async function start(ctx) {
       );
       return ph;
     }
-    return link(key, ref, ref.name);
+    return link(key, ref, ref.name, counted);
   }
-  function link(key, ref, text) {
+  function link(key, ref, text, counted = () => {}) {
     const a = Object.assign(document.createElement("a"), { href: "#", textContent: text || ref.name || "file" });
     a.onclick = async e => {
       e.preventDefault();
@@ -255,6 +256,7 @@ export async function start(ctx) {
       document.body.append(d);
       d.click();
       d.remove();
+      counted();
     };
     return a;
   }

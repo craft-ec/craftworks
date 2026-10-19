@@ -363,6 +363,9 @@ export async function start(ctx) {
       "has", "is", "at", "about", "refs", "lists", "roles", "domains", "acts", "mayEdit", "needsReview", "drafts", "thread", "probe", "editorAt",
       "opened", "reading", "played", "showing", "settings", "policyIn", "config"]);
     const WRITES = { test: name => !READS.has(name) };
+    // The files this frame READ through its door (by their root), and the calls that read one.
+    const readHere = new Set();
+    const READ_FILE = new Set(["get", "range", "chunk", "stream"]);
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";
     frame.title = app;
@@ -393,11 +396,17 @@ export async function start(ctx) {
       cap: async (name, method, args, strict) => {
         if (!calls.has(`${name}.${method}`)) throw refuse(`${name}.${method}`, "not one of its calls");
         await checkKinds(`${name}.${method}`, Array.isArray(args) ? args : []);
-        if (WRITES.test(method)) gesture(`${name}.${method}`);
+        // A VIEW COUNTED (`usage.trackItem`) of files this frame READ through its door needs no gesture: the count is the
+        // reading. Of any other file, a gesture (an app never inflates what a keeper is paid for).
+        const viewOfRead = name === "usage" && method === "trackItem" && Array.isArray(args?.[1]) && args[1].length > 0 && args[1].every(f => f?.root && readHere.has(String(f.root)));
+        if (WRITES.test(method) && !viewOfRead) gesture(`${name}.${method}`);
         const c = await ctx.require(name);
         const f = c && Object.hasOwn(c, method) ? c[method] : undefined; // (its own calls only: never its prototype's)
         if (typeof f !== "function") throw Object.assign(new Error(`${name} has no call "${method}"`), { kind: "refused" });
-        return marshal(await syncSaid(`${name}.${method}`, (strict && typeof f.strict === "function" ? f.strict : f).apply(c, unmarshal(Array.isArray(args) ? args : []))), method);
+        const out = marshal(await syncSaid(`${name}.${method}`, (strict && typeof f.strict === "function" ? f.strict : f).apply(c, unmarshal(Array.isArray(args) ? args : []))), method);
+        // (A file READ — the call answered — is one this frame may count a view of.)
+        if (name === "files" && READ_FILE.has(method) && args?.[0]?.root) readHere.add(String(args[0].root));
+        return out;
       },
       // A HANDLE called (a function a call gave back).
       fn: async (id, args) => {

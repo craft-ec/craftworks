@@ -51,6 +51,8 @@ export async function start(ctx) {
   function classify(e) {
     if (e instanceof Fault) return e;
     if (e?.expected) return new Fault("refused-expected", text(e), { cause: e });
+    // A KIND it carries already (a fault that crossed an app's frame comes back an Error with its kind): kept.
+    if (KINDS.includes(e?.kind)) return new Fault(e.kind, text(e), { cause: e });
     if (extensionStack(e)) return new Fault("extension", "a browser extension", { message: text(e), cause: e });
     if (e?.name === "AbortError") return new Fault("cancelled", text(e), { cause: e });
     return new Fault("bug", text(e), { cause: e });

@@ -95,3 +95,9 @@ test("say: one wording per kind; a refusal says its own words", () => {
   assert.equal(F.say(new Error("only its author removes it")), "only its author removes it", "a plain refusal keeps its words");
   assert.equal(F.say(new F.Fault("transient", "reading notes", { message: "reading notes: no answer in 30 s" })), "Your node did not answer in time — try again in a moment.");
 });
+
+test("an error that carries a known kind keeps it (a refusal back from an app's frame is not a bug)", () => {
+  assert.equal(F.classify(Object.assign(new Error("usage.trackItem: only when you click or type in the app"), { kind: "refused" })).kind, "refused");
+  assert.equal(F.classify(Object.assign(new Error("x"), { kind: "no such kind" })).kind, "bug", "an unknown kind is not taken");
+  assert.equal(F.classify(new Error("x")).kind, "bug");
+});

@@ -62,9 +62,10 @@ export async function start(ctx) {
     if (sp)
       ctx.background("where: roles.of", roles
         .of.strict(sp)
-        .then(async r => (await r.settled, r)).then(r => {
-          const last = r.acts("app").filter(a => a.app === app).at(-1);
-          if (last && !last.on && !r.apps().includes(app) && ctx.space === sp.id && ctx.route === `/${app}`) location.replace(`#/s/${sp.id}`);
+        .then(async r => (await r.settled, r)).then(async r => {
+          // (Awaited: in an app's frame a space's roles answer through its door, each a promise.)
+          const last = (await r.acts("app")).filter(a => a.app === app).at(-1);
+          if (last && !last.on && !(await r.apps()).includes(app) && ctx.space === sp.id && ctx.route === `/${app}`) location.replace(`#/s/${sp.id}`);
         }));
     const p = personOf();
     const person = p && p !== me ? p : null;
