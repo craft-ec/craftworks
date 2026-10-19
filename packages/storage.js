@@ -941,7 +941,10 @@ export async function start(ctx) {
   // its blinded name), "listed" (a table found by its name: there) — or "unknown": R2 (FOUNDATION.md §2), "not
   // listed" is an answer only when the catalog was READ (present, or answered absent); a catalog silent or unreadable
   // lists nothing either way.
-  const decidedCatalog = cat => !cat?.state || cat.state.s === "present" || cat.state.s === "absent";
+  // DECIDED (R5, the one rule — `space.mine`'s too): no state kept (a table read whole), or the node answered present
+  // or absent. Anything else (unknown, unreadable) is never the answer "not in it".
+  const decided = st => !st || st.s === "present" || st.s === "absent";
+  const decidedCatalog = cat => decided(cat?.state);
   const placeOf = (cat, n) => {
     if (!decidedCatalog(cat)) return "unknown";
     const r = (plain(cat) ? cat.rows() : own(cat)).find(x => x.key === n && x.value);
@@ -1769,5 +1772,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { writersOf, currentWriters, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

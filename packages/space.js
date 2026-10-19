@@ -113,12 +113,13 @@ export async function start(ctx) {
   async function mine() {
     const acc = await account();
     if (!acc) return [];
-    const t = await (await ctx.require("storage")).table(SPACES);
+    const storage = await ctx.require("storage");
+    const t = await storage.table(SPACES);
     // DECIDED before it is read as the list (R5): a page opened straight at a space found nothing in a list shown before
     // its answer, and never looked again (10-13: a space's chat by a direct link showed no channel).
     const st = await t.decided?.();
     // COMPLETE only when every device's list was read (R5): an incomplete list is never the answer "not in it".
-    const complete = !st || st.s === "present" || st.s === "absent";
+    const complete = storage.decided(st);
     return Object.assign(
       t
       .rows()
