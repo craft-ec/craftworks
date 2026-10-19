@@ -2733,6 +2733,12 @@ Then B: sweep batches 3–5 (section ONE OWNER PER FACT).
   settings "Who sees it" (read, owner only, inherited by every app); Anyone → published + listed in Discover; a space
   taking requests ("ask") counts as public too (`Gov::is_public`).
 
+- [x] RELEASED 10-18/19: v406 (delegate abb53e8f: lifecycle build moves, BeeKEM-space round fix, fork keys over the
+      bridge) and v407 (delegate D3ya6fwC… = 156f624a build: KEY TREES MADE BY THE SPACE CREATOR ONLY, d025e71; tree
+      diagnostics 07328a6). Found live via the owner's page (owner OK to use it, 10-19): Craftworks' tree rooted by
+      HLt27K, RedFox's by a non-owner — the owner placed in neither, nobody ever added (any listed page reading no ops
+      made a root). Gate x3 PASS. Open: one gate run of 7 lost an account's own epoch 0 after a same-build relogin
+      ("another branch's") — not reproduced since; Ivvor (owner's space) catalog reads 0 rows — cause unmeasured.
 - [x] 10-18 later: v404 ran for NOBODY on the owner's node — auth/identity/members 0 of 9 pieces from it (its page ran
       v403's code: its login walked v403's build list, v401's build kept running). Republished as v405 (= v404 + reports
       keep `~previous`); still 0/9 there. Cause MEASURED: the owner node's GET reached B in 66 ms, B sent Found, the
