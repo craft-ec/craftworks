@@ -2684,6 +2684,24 @@ mod js {
         pub fn rank(&self) -> u32 {
             self.0.rank() as u32
         }
+        /// The listed fragments not back yet: what the next round asks (`files::ASK_ROUNDS` rounds, the node's too).
+        pub fn missing(&self) -> Vec<u8> {
+            self.0.missing()
+        }
+        pub fn k(&self) -> u32 {
+            self.0.k() as u32
+        }
+        /// Fragment `j` came back empty (not there).
+        pub fn none(&mut self, j: u8) {
+            self.0.none(j)
+        }
+        /// The fragments not there: what a reader makes again.
+        pub fn not_there(&self) -> Vec<u8> {
+            self.0.not_there()
+        }
+        pub fn rounds() -> u32 {
+            craftworks_files::ASK_ROUNDS as u32
+        }
         pub fn plain(&self) -> Result<js_sys::Uint8Array, JsValue> {
             Ok(js_sys::Uint8Array::from(
                 &self.0.plain().map_err(file_err)?[..],

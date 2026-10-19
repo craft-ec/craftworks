@@ -336,39 +336,34 @@ export async function start(ctx) {
   async function generation(ref, f, g, { urgent = false } = {}) {
     const listed = await f.listed(g);
     const d = new glue.FileDecoder(f.key, f.plan.size, g, JSON.stringify(listed));
-    // ROUNDS (owner 10-07: a book's part failed at 15 of 16 and opened on a reload): a fragment that did not come back
-    // — unanswered, or "not there" from a node too busy to look (report 6YRSRD: NotFound for pieces that exist) — is
-    // asked AGAIN, up to ROUNDS times with a pause, before the part is said lost. Only what is still missing then is
+    // ROUNDS (`files::ASK_ROUNDS` and `Decoder::missing`, the node's too): what did not come back is asked again, with
+    // a pause between rounds here (the page's pacing), before the part is said lost. Only what is still missing then is
     // repaired.
-    const ROUNDS = 3;
+    const ROUNDS = glue.FileDecoder.rounds();
     const PAUSE = [0, 2000, 5000];
-    let missing = listed.map(([j]) => j);
-    const kOf = Math.min(GEN, f.plan.chunks - g * GEN);
+    const kOf = d.k();
     for (let round = 0; round < ROUNDS && !d.done(); round++) {
-      if (round) await new Promise(r => setTimeout(r, PAUSE[round]));
-      const still = [];
+      if (round) await new Promise(r => setTimeout(r, PAUSE[round] ?? PAUSE.at(-1)));
+      const missing = Array.from(d.missing());
       await new Promise(resolve => {
         let left = missing.length;
         if (!left) return resolve();
         for (const j of missing)
           fetchState(core.file_fragment_id(f.key, g, j), `${ref.name}: part ${g + 1} of ${f.plan.gens}`, { urgent, root: ref.root }).then(state => {
-            if (!d.done()) {
-              if (!state) still.push(j);
-              else
-                try {
-                  d.add(j, state);
-                } catch (e) {
-                  ctx.failed("files", e, `${ref.name}: a fragment refused (${e.message ?? e})`);
-                }
-            }
+            if (!d.done() && !state) d.none(j);
+            else if (!d.done())
+              try {
+                d.add(j, state);
+              } catch (e) {
+                ctx.failed("files", e, `${ref.name}: a fragment refused (${e.message ?? e})`);
+              }
             if (d.done() || --left === 0) resolve();
           });
       });
-      missing = still;
-      if (!d.done() && round < ROUNDS - 1) ctx.log("files", { what: `${ref.name}: part ${g + 1}: ${d.rank()} of ${kOf} after round ${round + 1}; asking ${missing.length} again` });
+      if (!d.done() && round < ROUNDS - 1) ctx.log("files", { what: `${ref.name}: part ${g + 1}: ${d.rank()} of ${kOf} after round ${round + 1}; asking ${d.missing().length} again` });
     }
     if (!d.done()) throw new Error(`${ref.name}: part ${g + 1} could not be rebuilt (${d.rank()} of ${kOf} pieces found after ${ROUNDS} rounds)`);
-    const absent = missing; // listed fragments still not there after every round
+    const absent = Array.from(d.not_there()); // listed fragments not there however often asked
     const plain = d.plain();
     // READERS REPAIR: what a read had to rebuild around is made again and put back (in the background; a fragment is
     // deterministic, so a viewer's copy is the uploader's). Only with the file's burn hash — a piece's first write names it.

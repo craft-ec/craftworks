@@ -43,8 +43,9 @@ enum Phase {
     Inner(u8, u64),
     /// Leaf `n` asked.
     Leaf(u64),
-    /// Generation g's fragments asked: those still out.
-    Fragments { g: u64, out: Vec<(u8, [u8; 32])>, held: Vec<u8> },
+    /// Generation g's fragments asked (`round` of `files::ASK_ROUNDS`): those still out, those held (each in a secret of
+    /// its own), those that came back empty.
+    Fragments { g: u64, out: Vec<(u8, [u8; 32])>, held: Vec<u8>, empty: Vec<u8>, round: usize },
     /// Generation g's new pieces put: `(contract id, j, hash)` still unanswered, and the stored ones.
     Putting { g: u64, out: Vec<([u8; 32], u8, [u8; 32])>, ok: Vec<(u8, [u8; 32])> },
     /// Its index put: ids unanswered.
@@ -233,32 +234,39 @@ impl Recode {
             self.phase = Phase::Leaf(n);
             return Ok(vec![Io::Get { id: crate::upkeep::id_of(piece_hash, &files::hashed_address(&self.old_key, &leaf)), subscribe: false }]);
         }
-        let listed = self.listed[g as usize].clone();
-        for (j, _) in &listed {
-            h.set_secret(&[FRAG, &[*j]].concat(), &[]);
-        }
-        let out: Vec<(u8, [u8; 32])> = listed.iter().map(|(j, _)| (*j, crate::upkeep::id_of(piece_hash, &files::fragment_address(&self.old_key, g, *j)))).collect();
-        let io = out.iter().map(|(_, id)| Io::Get { id: *id, subscribe: false }).collect();
-        self.phase = Phase::Fragments { g, out, held: Vec::new() };
-        Ok(io)
-    }
-
-    /// Generation g decoded from the fragments held, coded under the new key, PUT.
-    fn code_gen<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], g: u64, held: &[u8]) -> Result<Vec<Io>, String> {
-        let plan = self.plan();
-        let mut d = files::Decoder::new(&self.old_key, &plan, g, self.listed[g as usize].clone());
-        for j in held {
-            let st = h.get_secret(&[FRAG, &[*j]].concat()).unwrap_or_default();
-            let _ = d.add(*j, &st);
-            if d.done() {
-                break;
-            }
-        }
         for (j, _) in &self.listed[g as usize] {
             h.set_secret(&[FRAG, &[*j]].concat(), &[]);
         }
-        if !d.done() {
-            return Err(format!("part {} could not be rebuilt ({} of {} pieces)", g + 1, d.rank(), plan.k(g)));
+        let all: Vec<u8> = self.listed[g as usize].iter().map(|(j, _)| *j).collect();
+        Ok(self.ask_fragments(piece_hash, g, &all, Vec::new(), Vec::new(), 0))
+    }
+    /// Round `round` of generation g's read: `ask` asked.
+    fn ask_fragments(&mut self, piece_hash: &[u8; 32], g: u64, ask: &[u8], held: Vec<u8>, empty: Vec<u8>, round: usize) -> Vec<Io> {
+        let out: Vec<(u8, [u8; 32])> = ask.iter().map(|j| (*j, crate::upkeep::id_of(piece_hash, &files::fragment_address(&self.old_key, g, *j)))).collect();
+        let io = out.iter().map(|(_, id)| Io::Get { id: *id, subscribe: false }).collect();
+        self.phase = Phase::Fragments { g, out, held, empty, round };
+        io
+    }
+    /// The generation's DECODER over what it holds (`files::Decoder`, the page's too).
+    fn decoder<H: Host>(&self, h: &H, g: u64, held: &[u8], empty: &[u8]) -> files::Decoder {
+        let mut d = files::Decoder::new(&self.old_key, &self.plan(), g, self.listed[g as usize].clone());
+        for j in held {
+            if d.done() {
+                break;
+            }
+            let _ = d.add(*j, &h.get_secret(&[FRAG, &[*j]].concat()).unwrap_or_default());
+        }
+        for j in empty {
+            d.none(*j);
+        }
+        d
+    }
+
+    /// Generation g decoded, coded under the new key, PUT.
+    fn code_gen<H: Host>(&mut self, h: &mut H, piece_hash: &[u8; 32], g: u64, d: files::Decoder) -> Result<Vec<Io>, String> {
+        let plan = self.plan();
+        for (j, _) in &self.listed[g as usize] {
+            h.set_secret(&[FRAG, &[*j]].concat(), &[]);
         }
         let plain = d.plain().map_err(|e| format!("part {}: {e:?}", g + 1))?;
         let pieces = files::encode(&self.new_key, &plan, g, &plain, files::EXTRA);
@@ -312,19 +320,34 @@ impl Recode {
                 let g = self.stored.len() as u64;
                 self.ask_gen(h, piece_hash, g)
             }
-            Phase::Fragments { g, mut out, mut held } => {
+            Phase::Fragments { g, mut out, mut held, mut empty, round } => {
                 let Some(at) = out.iter().position(|(_, w)| *w == id) else { return Ok(Vec::new()) };
                 let (j, _) = out.remove(at);
-                if let Some(st) = piece {
-                    h.set_secret(&[FRAG, &[j]].concat(), &st);
-                    held.push(j);
+                match piece {
+                    Some(st) => {
+                        h.set_secret(&[FRAG, &[j]].concat(), &st);
+                        held.push(j);
+                        empty.retain(|x| *x != j);
+                    }
+                    None if !empty.contains(&j) => empty.push(j),
+                    None => {}
                 }
-                let k = self.plan().k(g);
-                // Enough (k valid ones may decode; any extra is spare) — or every one answered.
-                if held.len() >= k + 2 || out.is_empty() {
-                    return self.code_gen(h, piece_hash, g, &held);
+                // DECODED on the first k valid, independent ones; or, every one back, the missing asked again (the
+                // rounds: `files::ASK_ROUNDS`, the page's too) — then lost.
+                if held.len() >= self.plan().k(g) || out.is_empty() {
+                    let d = self.decoder(h, g, &held, &empty);
+                    if d.done() {
+                        return self.code_gen(h, piece_hash, g, d);
+                    }
+                    if out.is_empty() {
+                        if round + 1 < files::ASK_ROUNDS {
+                            let again = d.missing();
+                            return Ok(self.ask_fragments(piece_hash, g, &again, held, empty, round + 1));
+                        }
+                        return Err(format!("part {} could not be rebuilt ({} of {} pieces found after {} rounds)", g + 1, d.rank(), d.k(), files::ASK_ROUNDS));
+                    }
                 }
-                self.phase = Phase::Fragments { g, out, held };
+                self.phase = Phase::Fragments { g, out, held, empty, round };
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),

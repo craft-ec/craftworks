@@ -505,12 +505,22 @@ pub fn read_chunk(
 }
 
 /// A GENERATION being rebuilt: fragments added as they arrive (each checked against the index), done on `k` independent.
+/// A generation's READ, in ROUNDS (page and node): every listed fragment asked; those not back (unanswered, or "not
+/// there" from a node too busy to look — report 6YRSRD) asked AGAIN (`Decoder::missing`), up to this many rounds in all,
+/// before the part is said lost (owner 10-07: a book's part failed at 15 of 16 and opened on a reload). Decoded on the
+/// first `k` valid, independent ones.
+pub const ASK_ROUNDS: usize = 3;
+
 pub struct Decoder {
     key: [u8; 32],
     plan: Plan,
     g: u64,
     k: usize,
     listed: Listed,
+    /// The fragments that came back (whatever they held): the rest are asked again.
+    answered: Vec<u8>,
+    /// Those that came back EMPTY (not there): what a reader makes again once it decodes.
+    empty: Vec<u8>,
     /// Rows in reduced echelon form: `(pivot, coefficients, payload)`.
     rows: Vec<(usize, Vec<u8>, Vec<u8>)>,
 }
@@ -523,8 +533,28 @@ impl Decoder {
             g,
             k: plan.k(g),
             listed,
+            answered: Vec::new(),
+            empty: Vec::new(),
             rows: Vec::new(),
         }
+    }
+    /// The listed fragments not back yet: what the next round asks.
+    pub fn missing(&self) -> Vec<u8> {
+        self.listed.iter().map(|(j, _)| *j).filter(|j| !self.answered.contains(j)).collect()
+    }
+    /// Fragment `j` came back EMPTY (not there): asked again next round.
+    pub fn none(&mut self, j: u8) {
+        if !self.empty.contains(&j) && !self.answered.contains(&j) {
+            self.empty.push(j);
+        }
+    }
+    /// The fragments not there (empty every time asked): what a reader makes again and puts back.
+    pub fn not_there(&self) -> Vec<u8> {
+        self.empty.clone()
+    }
+    /// How many it needs.
+    pub fn k(&self) -> usize {
+        self.k
     }
     pub fn done(&self) -> bool {
         self.rows.len() == self.k
@@ -534,6 +564,10 @@ impl Decoder {
     }
     /// Fragment `j` arrived: checked (its hash in the index), then eliminated against what is held.
     pub fn add(&mut self, j: u8, state: &[u8]) -> Result<(), Error> {
+        if !self.answered.contains(&j) {
+            self.answered.push(j);
+        }
+        self.empty.retain(|x| *x != j);
         let hash = self
             .listed
             .iter()

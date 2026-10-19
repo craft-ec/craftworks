@@ -403,3 +403,30 @@ fn a_fragment_made_again_is_the_one_stored() {
         }
     }
 }
+
+/// A generation's READ in rounds (`Decoder::missing` / `none` / `not_there`, page and node): what has not come back is
+/// asked again; one that came back empty is made again once it decodes — one still in flight never is.
+#[test]
+fn a_reads_rounds_ask_again_only_what_did_not_come_back() {
+    let u = upload(&vec![7u8; 300_000], None);
+    let at = |addr: [u8; 32]| u.index.iter().find(|p| p.address == addr).unwrap().state.clone();
+    let root = Root::open(&u.key, &u.root, &at(hashed_address(&u.key, &u.root))).unwrap();
+    let leaf = &root.children[0];
+    let listed = open_leaf(&u.key, &root.plan, 0, leaf, &at(hashed_address(&u.key, leaf))).unwrap()[0].clone();
+    let mut d = Decoder::new(&u.key, &root.plan, 0, listed.clone());
+    assert_eq!(d.missing().len(), listed.len(), "round one asks every listed fragment");
+    let frags = &u.frags[0];
+    // Fragment 0 not there, the next k arrive; the rest still in flight when it decodes.
+    d.none(frags[0].0);
+    for (j, p) in frags.iter().skip(1).take(d.k()) {
+        d.add(*j, &p.state).unwrap();
+    }
+    assert!(d.done());
+    assert_eq!(d.not_there(), vec![frags[0].0], "only the one that came back empty is made again");
+    assert!(d.missing().contains(&frags[0].0) && !d.missing().contains(&frags[1].0));
+    // An empty answer then a real one: there after all.
+    let mut e = Decoder::new(&u.key, &root.plan, 0, listed);
+    e.none(frags[0].0);
+    e.add(frags[0].0, &frags[0].1.state).unwrap();
+    assert!(e.not_there().is_empty());
+}
