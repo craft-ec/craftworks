@@ -228,12 +228,9 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
             continue;
         };
         let Ok(g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(space), &m.state) else { continue };
-        let mut dids: Vec<[u8; 32]> = leaves(&g, None, 0).iter().filter_map(|l| craftworks_account::did_bytes(&l.did)).collect();
-        if let Some(o) = craftworks_account::did_bytes(&m.owner) {
-            if !dids.contains(&o) {
-                dids.push(o);
-            }
-        }
+        // WHOSE DEVICES are read (`account::reading_dids`, the page's too): the group's members and the owner.
+        let group: Vec<String> = leaves(&g, None, 0).into_iter().map(|l| l.did).collect();
+        let dids: Vec<[u8; 32]> = craftworks_account::reading_dids(&group, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
         let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
         let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now(h).unwrap_or(0) * 1000, moved: identity::upkeep_wakeups(h), by_list: false };
         keep(h, Some(&r));

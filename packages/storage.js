@@ -1036,7 +1036,8 @@ export async function start(ctx) {
     const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
     for (const [i, m] of all.entries()) if (!real[i]) ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
     const members = all.filter((_, i) => real[i]);
-    const dids = [...new Set(members.map(m => m.did))];
+    // WHOSE DEVICES are read (`account::reading_dids`, the node's too): the group's members and the space's owner.
+    const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify(members.map(m => m.did)), sp.governance?.owner ?? undefined));
     const sets = await Promise.all(dids.map(d => directory.devices.strict(d)));
     const devices = dids.map((d, i) => [d, sets[i]]);
     return { st, members, devices, nodes: [...new Set(sets.flat())] };
@@ -1208,12 +1209,11 @@ export async function start(ctx) {
       const [mine, nowWriters] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
       const bag = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(), () => null) : null;
-      // A PUBLIC table: also every writer the space's OPEN writers list names for it — needing no key, it is what a
-      // member not keyed yet reads first (10-19, live: Wren's MLS view of Craftworks empty, so its writers were none and
-      // it read 0 feeds of `pub-keyops` — the key operations that would key it: a deadlock).
-      const pubWriters = scope.opts(name).public && bag?.pub ? [...bag.pub].filter(x => x.endsWith(`|${name}`)).map(x => x.split("|")[0]).filter(w => w !== scope.self) : [];
-      const others = [...new Set([...nowWriters, ...pubWriters])];
-      const listed = o => !scope.bag || (bag ? bag.blind || bag.set.has(o) : false);
+      // THE WRITERS (`account::table_writers`, the node's too): the members' devices the bag lists (all, a blind bag) and,
+      // a public table, the open list's writers for it. (The account: its directory's nodes, no bag.)
+      const named = bag?.pub ? [...bag.pub].filter(x => x.endsWith(`|${name}`)).map(x => x.split("|")[0]) : [];
+      const others = scope.bag && bag ? JSON.parse(glue.CraftworksCore.table_writers(JSON.stringify(nowWriters), JSON.stringify([...bag.set]), !!bag.blind, JSON.stringify(named), !!scope.opts(name).public, scope.self)) : nowWriters;
+      const listed = o => !scope.bag || (!!bag && others.includes(o));
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
       // Another writer's feed that does not open here (sealed under a key this node lacks — a node that has not

@@ -476,6 +476,31 @@ pub fn writers(members: &[(String, Vec<[u8; 32]>)], departed: &[(String, String)
     out.into_values().collect()
 }
 
+/// WHOSE DEVICES a space's tables are read from (page and node): its group's members, and its OWNER — the owner's
+/// acts always count, in the group or not (10-19: the node added the owner, the page did not).
+pub fn reading_dids(group: &[String], owner: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = group.to_vec();
+    out.extend(owner.map(str::to_string));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// THE WRITERS A SPACE's TABLE IS READ FROM (page and node): the members' devices the space's writers bag lists — all of
+/// them where the bag is BLIND (entries this reader cannot open: who they name is unknown) — and, a PUBLIC table, every
+/// writer the space's OPEN list names for it (needing no key: what a member not keyed yet reads first). Never `me`.
+/// 10-19: the page read the open list for public tables and every device on a blind bag; the node did neither.
+pub fn table_writers(devices: &[[u8; 32]], listed: &std::collections::BTreeSet<[u8; 32]>, blind: bool, named: &[[u8; 32]], public: bool, me: &[u8; 32]) -> Vec<[u8; 32]> {
+    let mut out: Vec<[u8; 32]> = devices.iter().filter(|d| blind || listed.contains(*d)).copied().collect();
+    if public {
+        out.extend(named.iter().copied());
+    }
+    out.retain(|d| d != me);
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn unhex32(h: &str) -> Option<[u8; 32]> {
     if h.len() != 64 {
         return None;
@@ -489,6 +514,19 @@ fn unhex32(h: &str) -> Option<[u8; 32]> {
 
 #[cfg(test)]
 mod tests {
+    /// THE WRITERS A TABLE IS READ FROM: listed devices only; every device on a blind bag; a public table also the
+    /// open list's writers; never this device. And the owner always among whose devices are read.
+    #[test]
+    fn table_writers_and_reading_dids_are_the_one_rule() {
+        let (a, b, c, me) = ([1u8; 32], [2u8; 32], [3u8; 32], [9u8; 32]);
+        let listed: std::collections::BTreeSet<[u8; 32]> = [a, me].into_iter().collect();
+        assert_eq!(table_writers(&[a, b, me], &listed, false, &[c], false, &me), vec![a], "listed only, not me, not the open list");
+        assert_eq!(table_writers(&[a, b, me], &listed, true, &[], false, &me), vec![a, b], "a blind bag: every device");
+        assert_eq!(table_writers(&[a, b], &listed, false, &[c, me], true, &me), vec![a, c], "a public table: the open list too");
+        assert_eq!(reading_dids(&["did:b".into(), "did:a".into()], Some("did:o")), vec!["did:a", "did:b", "did:o"]);
+        assert_eq!(reading_dids(&["did:o".into()], Some("did:o")), vec!["did:o"], "the owner once");
+    }
+
     /// THE ONE DEVICES STEP (page and node): a card read with a device answers; an UNREAD card asks the devices
     /// contract before anything is said (10-19: the node said "short" first); a failure is said only when nothing
     /// answered; a card with no device and no contract is none — not a failure.
