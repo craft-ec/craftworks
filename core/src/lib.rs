@@ -2353,6 +2353,12 @@ mod js {
         let p = craftworks_rules::rekey::plan(salt, &strs("out"), &strs("members"), &strs("gone"), &strs("banned"), &rows, &|app| anyone.iter().any(|a| a == app), v["me"].as_str().unwrap_or(""), v["now"].as_u64().unwrap_or(0));
         Ok(json!({ "rotate": p.rotate, "due": p.due.iter().map(|d| json!({ "id": d.id, "pub": d.public, "rank": d.rank, "wait": d.wait, "moved": d.moved })).collect::<Vec<_>>() }).to_string())
     }
+    /// AN EPOCH's DOOR ENTRIES (`members::door_entries`, the node's too): JSON items → JSON `[entry]`.
+    #[wasm_bindgen]
+    pub fn door_entries(items: &str, epoch: f64) -> String {
+        let v: Vec<Value> = serde_json::from_str(items).unwrap_or_default();
+        serde_json::to_string(&craftworks_rules::members::door_entries(&v, epoch as u64)).expect("a list encodes")
+    }
     /// THE GROUP's STEPS (`rules::steps::ALL`, the node's names): JSON `[[name, quiet]…]` — the page's table built from it.
     #[wasm_bindgen]
     pub fn group_steps() -> String {

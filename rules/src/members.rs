@@ -96,6 +96,12 @@ pub const INFO_PUBLISHERS: i64 = 2;
 
 /// Whether `me`'s node publishes epoch `epoch`'s group info: the OWNER's always; of the other members holding keys
 /// (`followers`), the first `INFO_PUBLISHERS` in turn for that epoch (`admission::turn` — the same ranking everywhere).
+/// AN EPOCH's DOOR ENTRIES (page and node): the opened door items that are an entry (`k: "enter"`) at that epoch,
+/// each its entry text.
+pub fn door_entries(items: &[serde_json::Value], epoch: u64) -> Vec<String> {
+    items.iter().filter(|v| v["k"] == "enter" && v["e"].as_u64() == Some(epoch)).filter_map(|v| v["entry"].as_str().map(str::to_string)).collect()
+}
+
 /// THE FOLLOWERS: the listed accounts the group holds (page and node — who takes turns on the group's work).
 pub fn followers(listed: &[String], in_group: &[String]) -> Vec<String> {
     listed.iter().filter(|d| in_group.contains(d)).cloned().collect()
@@ -115,6 +121,11 @@ mod tests {
     use super::*;
 
     /// THE FOLLOWERS (page and node): the listed the group holds — one listed not in the group, or in it unlisted, is not.
+    #[test]
+    fn door_entries_are_that_epochs_enter_items() {
+        let items = [serde_json::json!({ "k": "enter", "e": 3, "entry": "x" }), serde_json::json!({ "k": "enter", "e": 4, "entry": "y" }), serde_json::json!({ "k": "info", "e": 3 }), serde_json::json!({ "k": "enter", "e": 3, "entry": 1 })];
+        assert_eq!(door_entries(&items, 3), vec!["x"]);
+    }
     #[test]
     fn followers_are_the_listed_the_group_holds() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();

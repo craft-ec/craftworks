@@ -786,7 +786,7 @@ export async function start(ctx) {
       mls: () => m,
       space: sp.idBytes,
       channel: ch,
-      door: async e => (await doorItems(e)).filter(x => x?.k === "enter" && x.e === e && typeof x.entry === "string").map(x => x.entry),
+      door: async e => JSON.parse(glue.door_entries(JSON.stringify((await doorItems(e)).filter(Boolean)), e)),
       apply,
       // The WINNER of the position this device committed at (`logs.heal`): the first entry that applies to its group then.
       winner: async s => {

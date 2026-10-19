@@ -534,14 +534,8 @@ fn entries<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, epoch: u64, 
     };
     let name = format!("door-{epoch}");
     let address = crate::table::sealed_bag_address(&r.space, &name);
-    for p in door.as_deref().and_then(|st| craftworks_bag_contract::read(&address, st)).unwrap_or_default() {
-        let Some(v) = crate::table::open_bag_item(&r.space, &Default::default(), &name, craftworks_bag_contract::payload(&p)) else { continue };
-        if v["k"] == "enter" && v["e"].as_u64() == Some(epoch) {
-            if let Some(e) = v["entry"].as_str() {
-                all.push(e.as_bytes().to_vec());
-            }
-        }
-    }
+    let items: Vec<serde_json::Value> = door.as_deref().and_then(|st| craftworks_bag_contract::read(&address, st)).unwrap_or_default().iter().filter_map(|p| crate::table::open_bag_item(&r.space, &Default::default(), &name, craftworks_bag_contract::payload(p))).collect();
+    all.extend(members::door_entries(&items, epoch).into_iter().map(String::into_bytes));
     let Ok(mut g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(r.space), &r.state) else { return next_space(h, c, r) };
     let list = GovList(&gov, now_ms);
     for entry in ordering::order(all.iter().map(Vec::as_slice)) {
