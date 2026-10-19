@@ -2340,6 +2340,19 @@ mod js {
         let g: Vec<String> = serde_json::from_str(in_group).map_err(|e| JsValue::from_str(&format!("in_group: {e}")))?;
         Ok(craftworks_rules::members::publishes_info(me, owner, &craftworks_rules::members::followers(&l, &g), epoch as u64))
     }
+    /// THE FILE RE-KEY PLAN (`rules::rekey::plan`, the node's too). JSON in: `{ salt: {n, removals} | null, out: [did],
+    /// members: [did], gone: [did], banned: [did], rows: [{id, n, pub, app, moved}], anyone: [app], me, now }`. JSON out:
+    /// `{ rotate: removals | null, due: [{id, pub, rank, wait, moved}] }`.
+    #[wasm_bindgen]
+    pub fn rekey_plan(input: &str) -> Result<String, JsValue> {
+        let v: Value = serde_json::from_str(input).map_err(|e| JsValue::from_str(&format!("rekey_plan: {e}")))?;
+        let strs = |k: &str| -> Vec<String> { v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
+        let salt = v["salt"].as_object().map(|o| (o.get("n").and_then(Value::as_i64).unwrap_or(0), o.get("removals").and_then(Value::as_u64).unwrap_or(0) as usize));
+        let rows: Vec<craftworks_rules::rekey::Row> = v["rows"].as_array().map(|a| a.iter().filter_map(|r| Some(craftworks_rules::rekey::Row { id: r["id"].as_str()?.to_string(), n: r["n"].as_i64().unwrap_or(-2), public: r["pub"].as_bool().unwrap_or(false), app: r["app"].as_str().unwrap_or("drive").to_string(), moved: r["moved"].as_u64().unwrap_or(0) })).collect()).unwrap_or_default();
+        let anyone = strs("anyone");
+        let p = craftworks_rules::rekey::plan(salt, &strs("out"), &strs("members"), &strs("gone"), &strs("banned"), &rows, &|app| anyone.iter().any(|a| a == app), v["me"].as_str().unwrap_or(""), v["now"].as_u64().unwrap_or(0));
+        Ok(json!({ "rotate": p.rotate, "due": p.due.iter().map(|d| json!({ "id": d.id, "pub": d.public, "rank": d.rank, "wait": d.wait, "moved": d.moved })).collect::<Vec<_>>() }).to_string())
+    }
     /// AN ENTRY's OUTCOME (`guards::entry_outcome`, the node's too): "apply", "skip" or "defer".
     #[wasm_bindgen]
     pub fn guard_entry_outcome(taken: bool, whole: bool) -> String {

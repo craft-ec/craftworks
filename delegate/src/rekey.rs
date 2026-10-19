@@ -130,46 +130,17 @@ pub fn rank(id: &str, dids: &[String], me: &str) -> Option<usize> {
 /// THE PLAN for a space now: whether a new salt is due, and the rows due with this member's turn for each.
 /// `members`: the group's DIDs now (who a removal must have taken out); `me`: this member's DID.
 pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, now_ms: u64) -> Plan {
+    // THE ONE PLAN (`rules::rekey::plan`, the page's too): here only what it reads — the salt, the removals, the rows.
     let files = r.rows("files");
-    let st = salt(&files);
-    // (Who was put out: the replay's one list — a lapse too.)
-    let removals: Vec<&Value> = g.out_acts();
-    let rotate = st.as_ref().and_then(|s| {
-        if removals.len() <= s.removals {
-            return None;
-        }
-        // The group must have moved without them first (a removal in the acts, its commit not yet seen: the next pass).
-        let gone: Vec<&str> = removals[s.removals..].iter().filter_map(|a| a["did"].as_str().or_else(|| a["by"].as_str())).collect();
-        (!members.iter().any(|m| gone.contains(&m.as_str()))).then_some(removals.len())
-    });
-    let n_now = st.as_ref().map(|s| s.n).unwrap_or(0) + i64::from(rotate.is_some());
-    // WHO TAKES TURNS: the members, less anyone the acts put out (removed, banned, left) — a group this member holds
-    // from before the removal still lists them, and a removed member ranked first would hold every row up.
-    let ranked: Vec<String> = members.iter().filter(|m| !g.gone.contains(*m) && !g.bans.contains(*m)).cloned().collect();
-    // Its content's DOMAIN's rule (a Drive upload's is the file domain's), as the page's `file-keys`.
-    let reads_anyone = |app: &str| g.effective(if app == "drive" { "file" } else { app }, "read", f64::INFINITY) == "anyone";
-    let mut due = Vec::new();
-    for row in key_rows(&files) {
-        let public = row.public() && reads_anyone(row.app());
-        let n = row.n();
-        let is_due = n == -2 || (if n == -1 { !public } else { n < n_now });
-        if !is_due {
-            continue;
-        }
-        let public = if n == -2 { public } else { false };
-        // Not among those who take turns: never this member's row.
-        let Some(k) = rank(&row.id, &ranked, me) else { continue };
-        let k = k as u64;
-        let progress = files
-            .get(format!("p/{}", row.id).as_bytes())
-            .and_then(|p| serde_json::from_slice::<Value>(&p.value).ok())
-            .and_then(|v| v["at"].as_u64())
-            .unwrap_or(0);
-        let moved = row.at().max(progress);
-        let wait = craftworks_rules::guards::turn_wait(k, moved, now_ms, TAKEOVER_MS);
-        due.push(Due { row, public, wait, rank: k as usize, moved });
-    }
-    Plan { rotate, due }
+    let out: Vec<String> = g.out_acts().iter().filter_map(|a| a["did"].as_str().or_else(|| a["by"].as_str()).map(str::to_string)).collect();
+    let rows = key_rows(&files);
+    let progress = |id: &str| files.get(format!("p/{id}").as_bytes()).and_then(|p| serde_json::from_slice::<Value>(&p.value).ok()).and_then(|v| v["at"].as_u64()).unwrap_or(0);
+    let input: Vec<craftworks_rules::rekey::Row> = rows.iter().map(|k| craftworks_rules::rekey::Row { id: k.id.clone(), n: k.n(), public: k.public(), app: k.app().to_string(), moved: k.at().max(progress(&k.id)) }).collect();
+    let reads_anyone = |app: &str| g.effective(app, "read", f64::INFINITY) == "anyone";
+    let (gone, bans): (Vec<String>, Vec<String>) = (g.gone.iter().cloned().collect(), g.bans.iter().cloned().collect());
+    let p = craftworks_rules::rekey::plan(salt(&files).map(|s| (s.n, s.removals)), &out, members, &gone, &bans, &input, &reads_anyone, me, now_ms);
+    let due = p.due.into_iter().filter_map(|d| Some(Due { row: rows.iter().find(|k| k.id == d.id)?.clone(), public: d.public, wait: d.wait, rank: d.rank as usize, moved: d.moved })).collect();
+    Plan { rotate: p.rotate, due }
 }
 
 /// The ROWS a new salt writes: the old one kept (`salt/<n>`, for burning — when it is not kept already), the new one

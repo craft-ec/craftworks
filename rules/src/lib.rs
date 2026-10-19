@@ -11,6 +11,7 @@ pub mod keeper;
 pub mod members;
 pub mod misdeed;
 pub mod ordering;
+pub mod rekey;
 pub mod statement;
 pub mod tokens;
 pub mod wallet;

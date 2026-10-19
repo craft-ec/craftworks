@@ -16,48 +16,26 @@
 // and roles changing, a new epoch (`craftworks:keys`), and a takeover falling due. A row that failed is tried again on
 // the next trigger, not in a loop.
 export async function start(ctx) {
-  const [space, files, roles, keys, storage, driveStore, ordering] = await Promise.all(["space", "files", "roles", "keys", "storage", "drive-store", "ordering"].map(n => ctx.require(n)));
+  const [space, files, roles, keys, storage, driveStore] = await Promise.all(["space", "files", "roles", "keys", "storage", "drive-store"].map(n => ctx.require(n)));
   const shared = sp => sp && sp.kind !== "account";
   const label = sp => (shared(sp) ? space.shown(sp) : "your files");
   const failed = new Map(); // row → the trigger count it failed at
   let triggers = 0;
-  // This person's place among the members for a row: 0 does it; k takes over after k × TAKEOVER of no movement
-  // (`ordering`'s turns: one ranking, the delegate's too).
+  // (This person's place for a row comes in the plan: 0 does it; k takes over after k × TAKEOVER of no movement.)
   const { glue } = await ctx.require("node");
-  const rankFor = ordering.turn;
   const later = new Map(); // row → its takeover timer
   const seen = new Map(); // row → when this page first saw it due
 
-  // WHICH ROWS ARE DUE in a space, and what each is due to become (public or salted).
-  async function due(sp, r) {
-    const st = await files.salt(sp);
-    // Whether a row's content reads in public: its DOMAIN's rule (a Drive upload's is the file domain's).
-    const readsAnyone = row => !shared(sp) || !!r?.readsAnyone(!row.app || row.app === "drive" ? "file" : row.app);
-    const out = [];
-    for (const row of await files.rows.strict(sp)) {
-      const pub = !!row.pub && readsAnyone(row);
-      const n = row.n ?? -2;
-      if (n === -2) out.push({ row, pub }); // adopted
-      else if (n === -1 ? !pub : n < st.n) out.push({ row, pub: false }); // public no longer; an older salt
-    }
-    return out;
-  }
-
-  // A REMOVAL is in: the removed out of the group, this table writing with the newest epoch — then a new salt.
-  async function rotateIfRemoved(sp, r) {
-    // (Who was put out: the replay's one list — a lapse too.)
-    const acts = r.outActs();
-    const st = await files.salt(sp);
-    if (acts.length <= st.removals) return;
-    const gone = new Set(acts.slice(st.removals).map(a => a.did ?? a.by));
-    await ctx.background("file-keys: r.refresh", r.refresh());
-    if (r.members().some(m => gone.has(m.did))) return; // the group has not moved yet: the next trigger
+  // A NEW SALT, when the plan says one is due (`rules::rekey::plan`): written once this table seals with the newest
+  // epoch (what the removed cannot read) — else the next trigger (`craftworks:keys`).
+  async function rotate(sp, removals) {
     const g = await keys.group(sp).ready();
     await storage.sealNewest();
     const t = await storage.table(space.tableOf(sp, "files"), sp);
-    if (!g || (t.sealing && t.sealing.epoch < g.epoch)) return; // the newest epoch not here yet: `craftworks:keys`
-    await files.rotate(sp, acts.length);
+    if (!g || (t.sealing && t.sealing.epoch < g.epoch)) return false;
+    await files.rotate(sp, removals);
     ctx.log("file keys", { what: `${label(sp)}: a member removed — a new salt; its files re-key` });
+    return true;
   }
 
   // THIS PERSON OUT of a space (removed, or left: not in their list): what they uploaded there adopted into their own
@@ -76,22 +54,34 @@ export async function start(ctx) {
       r = await roles.of.strict(sp);
       await r.settled;
       if (r.left) return false;
-      await rotateIfRemoved(sp, r);
     }
     const me = await space.me.strict();
-    const dids = r ? r.members().map(m => m.did) : [me];
-    for (const { row, pub } of await due(sp, r)) {
-      const k = `${sp?.id ?? ""}/${row.id}`;
-      if (failed.get(k) === triggers) continue;
-      // Not among those who take turns: never this page's row.
-      const rank = rankFor(row.id, dids, me);
-      if (rank < 0) continue;
+    // THE ONE PLAN (`rules::rekey::plan`, the node's too): a new salt due, and the rows due with this page's turn.
+    const st = await files.salt(sp);
+    const rows = await files.rows.strict(sp);
+    const apps = [...new Set(rows.map(x => (!x.app || x.app === "drive" ? "file" : x.app)))];
+    const plan = JSON.parse(glue.rekey_plan(JSON.stringify({
+      salt: r ? { n: st.n, removals: st.removals } : null,
+      out: r ? r.outActs().map(a => a.did ?? a.by) : [],
+      members: r ? r.members().map(m => m.did) : [me],
+      gone: r ? r.goneList() : [],
+      banned: r ? r.bannedList() : [],
+      rows: await Promise.all(rows.map(async x => ({ id: x.id, n: x.n ?? -2, pub: !!x.pub, app: x.app ?? "drive", moved: await files.lastMoved(sp, x) }))),
+      anyone: apps.filter(a => !shared(sp) || !!r?.readsAnyone(a)),
+      me,
+      now: Date.now(),
+    })));
+    // (A rotation due and not written yet: the rows wait for it — they re-key under the new salt.)
+    if (plan.rotate != null && !(await rotate(sp, plan.rotate))) return true;
+    for (const { id, pub, rank, moved } of plan.due) {
+      const row = rows.find(x => x.id === id);
+      const k = `${sp?.id ?? ""}/${id}`;
+      if (!row || failed.get(k) === triggers) continue;
       if (rank > 0) {
-        // From when it last moved: its progress, or when this page first saw it due (a row due since a removal
-        // carries an old time of its own).
+        // From when it last moved, or when this page first saw it due (a row due since a removal carries an old time).
         if (!seen.has(k)) seen.set(k, Date.now());
         // (The one turn wait: `guards::turn_wait`.)
-        const wait = glue.turn_wait(rank, Math.max(seen.get(k), await files.lastMoved(sp, row)), Date.now());
+        const wait = glue.turn_wait(rank, Math.max(seen.get(k), moved), Date.now());
         if (wait > 0) {
           if (!later.has(k)) later.set(k, setTimeout(() => (later.delete(k), kick()), wait + 1000));
           continue;
