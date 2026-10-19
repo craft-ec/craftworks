@@ -2499,6 +2499,40 @@ mod js {
         Ok(hex(&craftworks_identity::epoch_table_key(&s, table)))
     }
 
+    /// A space's SEALED BAG items (`identity::bag_*`, the node's too). An OPEN bag (its writers list, an epoch's door)?
+    #[wasm_bindgen]
+    pub fn bag_is_open(name: &str) -> bool {
+        craftworks_identity::bag_is_open(name)
+    }
+    /// The epoch an open bag's items are sealed at (`identity::BAG_OPEN`).
+    #[wasm_bindgen]
+    pub fn bag_open_epoch() -> u32 {
+        craftworks_identity::BAG_OPEN
+    }
+    /// An open bag's key (hex): the space's own.
+    #[wasm_bindgen]
+    pub fn bag_open_key(space: &[u8]) -> Result<String, JsValue> {
+        let s: [u8; 32] = space.try_into().map_err(|_| err("a space's id is 32 bytes".into()))?;
+        Ok(hex(&craftworks_identity::bag_open_key(&s)))
+    }
+    /// An item SEALED: `plain` under `key` (hex), marked `epoch`; `nonce` 12 random bytes.
+    #[wasm_bindgen]
+    pub fn bag_seal(key: &str, epoch: u32, plain: &[u8], nonce: &[u8]) -> Result<Vec<u8>, JsValue> {
+        let k = unhex32(key).ok_or_else(|| err("a bag key is 32 bytes (hex)".into()))?;
+        let n: [u8; 12] = nonce.try_into().map_err(|_| err("a nonce is 12 bytes".into()))?;
+        Ok(craftworks_identity::bag_seal(&k, epoch, plain, n))
+    }
+    /// The epoch an item says it was sealed at; undefined: not an item.
+    #[wasm_bindgen]
+    pub fn bag_item_epoch(item: &[u8]) -> Option<u32> {
+        craftworks_identity::bag_item_epoch(item)
+    }
+    /// An item OPENED with `key` (hex); undefined: not this key's.
+    #[wasm_bindgen]
+    pub fn bag_open(key: &str, item: &[u8]) -> Option<Vec<u8>> {
+        craftworks_identity::bag_open(&unhex32(key)?, item)
+    }
+
     /// The address key (hex) of a space's table (`identity::space_table_key`).
     #[wasm_bindgen]
     pub fn space_table_key(space: &[u8], table: &str) -> Result<String, JsValue> {

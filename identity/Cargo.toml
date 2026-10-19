@@ -23,6 +23,8 @@ x25519-dalek = { version = "2", default-features = false, features = ["static_se
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 # An invite code's bag address (`invite_address`: SHA-256 of the code, as pages have always named it).
 sha2 = { version = "0.10", default-features = false }
+# A space's SEALED BAG items (`bag_seal` / `bag_open`, page and node): AES-256-GCM.
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 
 [dev-dependencies]
 craftec-register-contract = { workspace = true, features = ["testing"] }

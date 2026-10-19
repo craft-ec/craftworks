@@ -953,3 +953,18 @@ fn a_handover_carries_every_epoch_mls_and_generations_alike() {
     let Answer::EpochSecrets { epochs } = serve(&mut m, Request::EpochSecrets { space: x, below: gens[1] + 1 }, APP) else { panic!("history") };
     assert_eq!(epochs.iter().map(|(e, _)| *e).collect::<Vec<_>>(), (0..=4u64).chain([gens[0], gens[1]]).collect::<Vec<_>>());
 }
+
+/// A sealed bag item, page and node one format: opens with its key only, says its epoch; an open bag's under the
+/// space's own key.
+#[test]
+fn a_bag_item_opens_with_its_key_and_names_its_epoch() {
+    let k = [7u8; 32];
+    let item = bag_seal(&k, 3, b"{\"w\":1}", [1; 12]);
+    assert_eq!(bag_item_epoch(&item), Some(3));
+    assert_eq!(bag_open(&k, &item).as_deref(), Some(b"{\"w\":1}".as_slice()));
+    assert!(bag_open(&[8; 32], &item).is_none(), "another key opens nothing");
+    assert!(bag_item_epoch(&item[..16]).is_none() && bag_open(&k, &item[..16]).is_none(), "too short: not an item");
+    let open = bag_seal(&bag_open_key(&[2; 32]), BAG_OPEN, b"{}", [0; 12]);
+    assert!(bag_open(&space_table_key(&[2; 32], "bag-writers-open"), &open).is_some());
+    assert!(bag_is_open("writers") && bag_is_open("door-4") && !bag_is_open("acts"));
+}

@@ -968,6 +968,35 @@ pub fn inbox_public(data_seed: &[u8; 32]) -> [u8; 32] {
     x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(inbox_seed(data_seed))).to_bytes()
 }
 
+/// A space's SEALED BAG items (page and node, one format): `epoch (u32, big-endian) ‖ nonce (12) ‖ AES-256-GCM(JSON)`
+/// under the bag's key for that epoch — or, an OPEN bag's (`bag_is_open`), the space's own (`bag_open_key`), sealed
+/// `BAG_OPEN`: every member reads it whatever epochs they hold.
+pub const BAG_OPEN: u32 = 0xffff_ffff;
+/// The OPEN bags: a space's writers list and each epoch's door.
+pub fn bag_is_open(name: &str) -> bool {
+    name == "writers" || name.starts_with("door-")
+}
+/// An open bag's key: the space's own, from its id.
+pub fn bag_open_key(space: &[u8; 32]) -> [u8; 32] {
+    space_table_key(space, "bag-writers-open")
+}
+/// An item SEALED: `plain` under `key`, marked with the `epoch` it was sealed at.
+pub fn bag_seal(key: &[u8; 32], epoch: u32, plain: &[u8], nonce: [u8; 12]) -> Vec<u8> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    let ct = aes_gcm::Aes256Gcm::new(key.into()).encrypt(aes_gcm::Nonce::from_slice(&nonce), plain).expect("sealing never fails");
+    [epoch.to_be_bytes().as_slice(), &nonce, &ct].concat()
+}
+/// The epoch an item says it was sealed at (None: too short to be an item).
+pub fn bag_item_epoch(item: &[u8]) -> Option<u32> {
+    (item.len() >= 17).then(|| u32::from_be_bytes(item[..4].try_into().expect("4 bytes")))
+}
+/// An item OPENED with `key` (None: not an item, or not this key's).
+pub fn bag_open(key: &[u8; 32], item: &[u8]) -> Option<Vec<u8>> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    bag_item_epoch(item)?;
+    aes_gcm::Aes256Gcm::new(key.into()).decrypt(aes_gcm::Nonce::from_slice(&item[4..16]), &item[16..]).ok()
+}
+
 /// The ADDRESS key of a space's table (where its sealed tree blocks live, and the key its tail is opened under): from the
 /// space's id and the table, so every member names the same blocks. Its rows and blocks are sealed with the space's
 /// epoch keys, never with this. The ONE derivation.

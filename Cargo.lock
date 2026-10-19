@@ -739,6 +739,7 @@ dependencies = [
 name = "craftworks-identity"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "bincode",
  "blake3",
  "chacha20poly1305",

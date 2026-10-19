@@ -145,35 +145,22 @@ pub fn block_id(o: &data::Open, cid: &[u8; 32], sealed_hash: &[u8; 32], block_ha
     Some(crate::upkeep::id_of(if sealed { sealed_hash } else { block_hash }, &params))
 }
 
-/// The OPEN BAGS' seal (`index.spacePoint`'s `OPEN`: the writers list, each epoch's door): the space's key from its id,
-/// read whatever epochs a member holds — or none.
-pub const OPEN: u32 = 0xffff_ffff;
-
-/// An item of a space's sealed bag opened: `epoch (u32, big-endian) ‖ nonce (12) ‖ AES-GCM` under that epoch's key for
-/// the bag — or, the writers list's `OPEN`, the space's own (`index.spacePoint`).
+/// An item of a space's sealed bag opened (`identity::bag_open`, the page's too): under the epoch's key for the bag it
+/// says it was sealed at — or, an open bag's `BAG_OPEN`, the space's own.
 pub fn open_bag_item(space: &[u8; 32], epochs: &BTreeMap<u64, [u8; 32]>, name: &str, item: &[u8]) -> Option<serde_json::Value> {
-    use aes_gcm::aead::{Aead, KeyInit};
-    if item.len() < 17 {
-        return None;
-    }
-    let epoch = u32::from_be_bytes(item[..4].try_into().ok()?);
-    let key = if epoch == OPEN && (name == "writers" || name.starts_with("door-")) {
-        identity::space_table_key(space, "bag-writers-open")
+    let epoch = identity::bag_item_epoch(item)?;
+    let key = if epoch == identity::BAG_OPEN && identity::bag_is_open(name) {
+        identity::bag_open_key(space)
     } else {
         identity::epoch_table_key(epochs.get(&(epoch as u64))?, &format!("bag-{name}"))
     };
-    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&key).ok()?;
-    let plain = cipher.decrypt(aes_gcm::Nonce::from_slice(&item[4..16]), &item[16..]).ok()?;
-    serde_json::from_slice(&plain).ok()
+    serde_json::from_slice(&identity::bag_open(&key, item)?).ok()
 }
 
-/// An item for one of a space's OPEN bags (its writers list, an epoch's door), sealed `OPEN` (as `index.spacePoint` seals
-/// it): what a page writes there.
+/// An item for one of a space's OPEN bags (its writers list, an epoch's door), sealed `BAG_OPEN` (`identity::bag_seal`,
+/// the page's too): what a page writes there.
 pub fn seal_open_item(space: &[u8; 32], value: &serde_json::Value, nonce: [u8; 12]) -> Vec<u8> {
-    use aes_gcm::aead::{Aead, KeyInit};
-    let cipher = aes_gcm::Aes256Gcm::new_from_slice(&identity::space_table_key(space, "bag-writers-open")).expect("a 32-byte key");
-    let ct = cipher.encrypt(aes_gcm::Nonce::from_slice(&nonce), value.to_string().as_bytes()).expect("sealing never fails");
-    [OPEN.to_be_bytes().as_slice(), &nonce, &ct].concat()
+    identity::bag_seal(&identity::bag_open_key(space), identity::BAG_OPEN, value.to_string().as_bytes(), nonce)
 }
 
 impl Reading {

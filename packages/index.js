@@ -171,7 +171,6 @@ export async function start(ctx) {
   const sealedAddress = async (sp, name) => refAddress(`space ${glue.space_table_key(sp.idBytes, `bag-${name}`)}`);
   // A space's sealed bag FOLLOWED: `fn` on each change the node pushes (the door's copy current already).
   const watchSpace = async (sp, name, fn) => onContract(Core.bag_id(bagCode, await sealedAddress(sp, name)), fn);
-  const aes = async keyHex => crypto.subtle.importKey("raw", bytes(keyHex), "AES-GCM", false, ["encrypt", "decrypt"]);
   // Sealed with the space's newest epoch — or, for its WRITERS list, with the SPACE's OWN key (from its id: `OPEN`):
   // every member reads it whatever epochs they hold — behind, ahead, on another branch of a fork, or missing the
   // early epochs (10-07: sealed with epoch 0, a member whose history stopped above it read 0 writers, so no acts and
@@ -179,20 +178,14 @@ export async function start(ctx) {
   // devices and branches only. Entries sealed with an epoch (before) are still read by whoever holds that epoch.
   // OPEN BAGS (the space's own key): its writers list, and each epoch's DOOR (`door-<epoch>`: the group info, in parts,
   // and the entries of a device entering by itself — FOUNDATION "Members and keys" 4).
-  const OPEN = 0xffffffff;
-  const isOpen = name => name === "writers" || name.startsWith("door-");
-  const openKeyHex = sp => glue.space_table_key(sp.idBytes, "bag-writers-open");
-  const openKey = sp => aes(openKeyHex(sp));
+  // (The format, the open bags and their key: `identity::bag_*`, the node's too.)
+  const OPEN = glue.bag_open_epoch();
+  const isOpen = name => glue.bag_is_open(name);
   async function spacePoint(sp, name, item, { epoch = -1 } = {}) {
     const access = await ctx.require("access");
-    const k = isOpen(name) ? { epoch: OPEN, key: openKeyHex(sp) } : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
+    const k = isOpen(name) ? { epoch: OPEN, key: glue.bag_open_key(sp.idBytes) } : await access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes });
     if (!k.key) throw new Error(`no key of the space here (${k.why})`);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aes(k.key), enc.encode(JSON.stringify(item))));
-    const out = new Uint8Array(4 + 12 + ct.length);
-    new DataView(out.buffer).setUint32(0, k.epoch);
-    out.set(iv, 4);
-    out.set(ct, 16);
+    const out = glue.bag_seal(k.key, k.epoch, enc.encode(JSON.stringify(item)), crypto.getRandomValues(new Uint8Array(12)));
     await drop(await sealedAddress(sp, name), out, `the space's ${name}`);
   }
   async function spacePointers(sp, name) {
@@ -204,17 +197,16 @@ export async function start(ctx) {
     const unread = new Map();
     let raw = 0;
     for (const p of await read(await sealedAddress(sp, name), `the space's ${name}`, { follow: isOpen(name) })) {
-      if (p.length < 17) continue;
+      const epoch = glue.bag_item_epoch(p);
+      if (epoch === undefined) continue;
       raw += 1;
-      const epoch = new DataView(p.buffer, p.byteOffset).getUint32(0);
-      const key = await ctx.cache(keys, epoch, () => (epoch === OPEN ? openKey(sp) : access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => (k.key ? aes(k.key) : null))), null);
-      if (!key) {
-        unread.set(epoch, (unread.get(epoch) ?? 0) + 1);
-        continue;
-      }
+      // (An open bag's `OPEN` items open with the space's own key; anything else, with that epoch's.)
+      const key = await ctx.cache(keys, epoch, () => (epoch === OPEN && isOpen(name) ? Promise.resolve(glue.bag_open_key(sp.idBytes)) : access.keyAt(`bag-${name}`, epoch, { space: sp.idBytes }).then(k => k.key || null)), null);
+      const plain = key ? glue.bag_open(key, p) : undefined;
       try {
+        if (!plain) throw new Error("no key opens it");
         // `sealedAt`: the epoch it was sealed with (an entry only this branch reads, or one every member does: `OPEN`).
-        const v = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: p.subarray(4, 16) }, key, p.subarray(16))));
+        const v = JSON.parse(dec.decode(plain));
         out.push(v && typeof v === "object" ? { ...v, sealedAt: epoch } : v);
       } catch {
         unread.set(epoch, (unread.get(epoch) ?? 0) + 1);
