@@ -75,7 +75,7 @@ export async function start(ctx) {
     const me = await space.account.strict();
     if (!me) throw space.loginNeeded();
     const sp = await enterSpace(d, why, { proof, extra });
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     await r.refresh?.();
     if (!r.roster().includes(me.id)) await r.act({ act: "join", ...proof });
     await ctx.background("conversation: forgetAsk", forgetAsk(d.id));
@@ -94,7 +94,7 @@ export async function start(ctx) {
   // PUT ON THE LIST (`added`) by one who may — the one way a member puts someone on a list (an invite, Let in, a
   // conversation's people): refused by the guard "may list" (the node's too) before it is written.
   async function listIn(sp, did) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     const why = r.mayList(did);
     if (why) throw new Error(why);
     await r.act({ act: "added", did });
@@ -173,7 +173,7 @@ export async function start(ctx) {
   // A SPACE's OWNER's branch, as its devices announced it in the space's writers list (`keys`: `{ w, epoch, branch }`):
   // the newest — the branch every member's diff is against.
   async function ownerBranches(sp) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     await r.settled;
     // Its owner as its acts say — or, a member whose keys are behind (the acts unread), as the space's record says.
     // Its devices NOW (the one map: `storage.writersOf`).
@@ -200,7 +200,7 @@ export async function start(ctx) {
   // on the owner's keys now, BEHIND (an older epoch), on ANOTHER BRANCH, or not announced — and who caught them up.
   // `Map did → { state, epoch, branch, devices, repairedBy }`, and the owner's own `{ epoch, branch }`.
   async function keyStatus(sp) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     await r.settled;
     const ptrs = await index.spacePointers(sp, "writers");
     const owns = await ctx.optional("conversation: ownerBranches", ownerBranches(sp), () => []);
@@ -422,7 +422,7 @@ export async function start(ctx) {
 
   // A space's MEMBERS: its people, as `roles` has them (the accounts its group's nodes' credentials name).
   async function members(sp) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     await r.refresh();
     return r.members().map(m => m.did);
   }
@@ -453,14 +453,14 @@ export async function start(ctx) {
   const hex4 = () => node.newHex(2);
   const codeOf = text => String(text ?? "").trim().toLowerCase().replace(/[^0-9a-f]/g, "").replace(/(.{4})(?=.)/g, "$1-");
   async function createInvite(sp, { days = 7, uses = 0 } = {}) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     const code = [hex4(), hex4(), hex4(), hex4()].join("-");
     await index.openRequests(code);
     await r.act({ act: "invite", code, expires: days ? Date.now() + days * 86400000 : 0, uses });
     await index.request(code, { kind: "space", desc: descOf(sp), at: Date.now() });
     return code;
   }
-  const revokeInvite = async (sp, code) => (await (await ctx.require("roles")).of(sp)).act({ act: "revoke-invite", code });
+  const revokeInvite = async (sp, code) => (await (await ctx.require("roles")).of.strict(sp)).act({ act: "revoke-invite", code });
   async function join(text) {
     const me = await space.account.strict();
     if (!me) throw space.loginNeeded();
@@ -504,7 +504,7 @@ export async function start(ctx) {
   // `lapsed` act (not a ban: they enter again when they give again); the node's follower takes their entry out. Who.
   async function lapse(sp) {
     const me = await space.account.strict();
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     const lv = levelOfGroup(r);
     if (!me || !lv || r.left || !r.role(me.id)) return [];
     const ordering = await ctx.require("ordering");
@@ -572,7 +572,7 @@ export async function start(ctx) {
   };
   // REJECT (one who may invite): a `reject` act (the request ended, for every member's Settings), and the asker told.
   async function reject(sp, did, why = null) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     await r.act({ act: "reject", did, ...(why ? { why: String(why).slice(0, 200) } : {}) });
     await ctx.background("conversation: index.send", index.send(did, { kind: "rejected", space: sp.id, from: (await space.me.strict()), ...(why ? { why: String(why).slice(0, 200) } : {}), at: Date.now() }));
   }
@@ -580,7 +580,7 @@ export async function start(ctx) {
   // request WAITS while its newest item is a join, made after the asker's last let in / reject, from one not listed and
   // in standing (the guard). The space's own requests bag, and its codes' (codes made before they carried the space).
   async function requestsOf(sp) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     await r.refresh();
     const inside = new Set(r.roster());
     const items = [...(await index.requests(openCode(sp.id))).map(q => ({ ...q, code: "ask" }))];
@@ -632,7 +632,7 @@ export async function start(ctx) {
     return r ? parseAsk(r) : null;
   }
   async function setJoin(sp, how) {
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     if (how === "open" || how === "ask") await index.openRequests(openCode(sp.id));
     await r.act({ act: "policy", path: "", action: "join", who: how === "open" ? "anyone" : how === "ask" ? "ask" : "members" });
     // Open or asked: listed in Discover, its acts published (who is in, how to join).
@@ -654,7 +654,7 @@ export async function start(ctx) {
   const audienceKey = (sp, who) => `audience:${sp.id}/${who}`;
   async function audience(sp, who) {
     const groups = await ctx.require("groups");
-    const r = await (await ctx.require("roles")).of(sp);
+    const r = await (await ctx.require("roles")).of.strict(sp);
     const g = await groups.of(audienceKey(sp, who), {
       name: `${space.shown(sp)} · ${who.startsWith("role:") ? (r.roles().find(x => `role:${x.id}` === who)?.name ?? "a role") : who.startsWith("list:") ? "chosen people" : who}`,
       // Its capabilities: the space's (whatever kind is kept for this audience).

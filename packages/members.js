@@ -111,7 +111,7 @@ export async function start(ctx) {
 
     // OUR CHECK, from the list (`roles`: its roster, owner, acts) and its accounts' cards.
     async function check() {
-      const r = await (await ctx.require("roles")).of(sp);
+      const r = await (await ctx.require("roles")).of.strict(sp);
       // (The acts as they are NOW — an act just written elsewhere, the add of this very member, read before judging.)
       await r.refresh?.();
       const roster = r.roster();

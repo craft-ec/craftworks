@@ -35,7 +35,9 @@ export async function run(boot) {
   function report(k, source, why, d = {}) {
     if (!manifest) return;
     // (Its key without ids — a timeout naming a contract would make every one a new report.)
-    const msg = String(why ?? "").replace(/[0-9a-f]{8,}/gi, "…").slice(0, 160);
+    // (An id — hex with a letter in it, or a long run — blanked; a NUMBER kept: an epoch, a count, a size is the
+    // report's diagnosis.)
+    const msg = String(why ?? "").replace(/\b(?=[0-9]*[a-f])[0-9a-f]{8,}\b|[0-9a-f]{16,}/gi, "…").slice(0, 160);
     (healthIndex ??= require("index").catch(() => ((healthIndex = null), null))).then(ix => ix?.health?.({ k, s: String(source ?? "page").slice(0, 24), to: tag(msg), why: msg, d: { ...where(), ...d } })).catch(() => {});
   }
   // HOW EACH VISIT WENT (owner 10-12: "not only an error collector" — a page that never finishes says nothing by
