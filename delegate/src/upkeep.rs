@@ -555,8 +555,11 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             io.extend(next_space(h, &c, r));
             io
         }
-        // An answer this step does not wait for (a late one): nothing.
-        _ => Vec::new(),
+        // R2 (FOUNDATION "The node's rounds"): an answer this step did not ask for — late, duplicated, the wrong kind —
+        // moves nothing and is kept nowhere. Every (state, answer) cell is named: the table is the compiler's to check.
+        (Step::Acts | Step::CatchUp { .. } | Step::Log { .. } | Step::KeyFileRead { .. } | Step::ListFiles, Reply::Put { .. } | Reply::Updated { .. })
+        | (Step::Commit { .. } | Step::Next { .. } | Step::Keys { .. } | Step::KeyFileWrite { .. }, Reply::Got { .. })
+        | (Step::Keys { .. }, Reply::Put { .. } | Reply::Updated { .. }) => Vec::new(),
     }
 }
 

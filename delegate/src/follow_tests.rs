@@ -848,3 +848,80 @@ fn k5_a_large_operation_is_stored_as_a_file_and_read_back() {
     crate::upkeep::CREATES.with(|f| f.set(crate::upkeep::NEW_CONTRACTS_REACH_THE_NETWORK));
     assert!(said.iter().any(|s| s.starts_with("keys-in-step: ")), "said: {said:?}");
 }
+
+/// THE ROUNDS' MODEL TEST (FOUNDATION "The node's rounds": R2, R3) — over the real follow round (and the files round
+/// beside it: every answer reaches both), the node's clock a second on at every event: before EVERY answer, a STRAY of
+/// every kind (a Got, a Put ok and refused, an Updated ok and refused — of a contract no step asked for); then, seeded,
+/// the answer delivered or never coming. R2: a stray changes no round — not its step, not its moved time. R3: a round
+/// whose answers stopped is dropped as stuck within `STUCK` wake-ups, its step recorded.
+#[test]
+fn rounds_model_strays_move_nothing_and_a_stalled_round_is_dropped() {
+    use craftworks_identity::Host;
+    let rounds = |h: &crate::testhost::Map| (h.get_secret(upkeep::ROUND), h.get_secret(crate::rekey_round::ROUND));
+    let mut checked = (0, 0);
+    for seed in 1..=16u64 {
+        let b = person(0x55);
+        let mut w = bee_world(&[json!({ "act": "added", "did": b.id(), "at": 10 })], &b);
+        let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut next = move || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        let mut now = NOW;
+        let mut tick = |h: &mut crate::testhost::Map| {
+            now += 1000;
+            identity::upkeep_set_clock(h, now / 1000);
+            now
+        };
+        let t = tick(&mut w.h);
+        let mut todo = upkeep::woke(&mut w.h, t);
+        let mut dropped = false;
+        let mut steps = 0;
+        while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
+            steps += 1;
+            assert!(steps < 5000, "seed {seed}: the round ends");
+            for kind in 0..5u8 {
+                let stray_id = {
+                    let mut x = [0u8; 32];
+                    x[..8].copy_from_slice(&next().to_le_bytes());
+                    x[31] = 0xEE;
+                    x
+                };
+                let stray = match kind {
+                    0 => Reply::Got { id: stray_id, state: Some(vec![1, 2, 3]) },
+                    1 => Reply::Put { id: stray_id, ok: true },
+                    2 => Reply::Put { id: stray_id, ok: false },
+                    3 => Reply::Updated { id: stray_id, ok: true },
+                    _ => Reply::Updated { id: stray_id, ok: false },
+                };
+                let before = rounds(&w.h);
+                let t = tick(&mut w.h);
+                let out = upkeep::replied(&mut w.h, stray.clone(), t);
+                assert!(out.is_empty(), "seed {seed}: a stray {stray:?} sent {out:?}");
+                assert_eq!(rounds(&w.h), before, "seed {seed}: a stray {stray:?} changed a round (R2)");
+                checked.0 += 1;
+            }
+            let reply = w.net.answer(&io);
+            // The answer NEVER COMES (at most once a run, seeded): the rest of the round waits on it.
+            if !dropped && next() % 6 == 0 {
+                dropped = true;
+                todo.clear();
+                continue;
+            }
+            let t = tick(&mut w.h);
+            todo.extend(upkeep::replied(&mut w.h, reply, t));
+        }
+        // R3: a round left waiting is dropped within STUCK wake-ups (by wake-ups alone: the clock not moved on).
+        if dropped && rounds(&w.h).0.is_some_and(|b| !b.is_empty()) {
+            let w0 = u64::from_le_bytes(w.h.get_secret(identity::UPKEEP_WAKEUPS).unwrap().try_into().unwrap());
+            w.h.set_secret(identity::UPKEEP_WAKEUPS, &(w0 + crate::upkeep::STUCK).to_le_bytes());
+            let _ = upkeep::woke(&mut w.h, now);
+            assert!(w.said().iter().any(|s| s.starts_with("stalled: ")), "seed {seed}: a round left waiting was not dropped (R3): {:?}", w.said());
+            checked.1 += 1;
+        }
+    }
+    assert!(checked.0 >= 100 && checked.1 >= 3, "the model ran its cells: {checked:?} (strays, stalls)");
+    println!("rounds model: {} strays, {} stalls checked", checked.0, checked.1);
+}

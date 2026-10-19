@@ -147,6 +147,59 @@ Callers: `const st = await t.decided(); if (st.s === "absent") create…; else i
 | **job** (per background task) | `IDLE → RUNNING → IDLE`, `PAUSED`, `STOPPED` | upkeep, renew, sync, usage flush, heartbeat: each declares the states it needs (e.g. upkeep needs session `OPEN` + account group `MEMBER`) and is `PAUSED` otherwise; `HIDDEN` pauses jobs that only serve the screen |
 
 
+### The node's rounds: one table each (10-20)
+
+The node (the identity delegate, no page open) runs ROUNDS: a space's FOLLOW round (`upkeep`: its acts and key
+operations read, the keys kept to the list — BeeKEM, or MLS for a space not moved yet), a space's FILES round
+(`rekey_round`: a removal's new salt, each due file re-keyed), and the account's KEEPER and WITNESS rounds (`reads`).
+Each is a state machine driven by answers that come back one at a time; prior art: Erlang's `gen_statem` (a
+function per state over every event, an unexpected message handled explicitly, never dropped by a default) and a
+correlated request/response (an answer moves only the step that asked for it).
+
+**Invariants** (every cell below keeps them):
+- **R1 one at a time**: one round of each kind on a node; a page asking (`FollowNow`) sets aside another member's follow
+  round, never its own.
+- **R2 an answer moves only the step that asked for it** (`waits_for` / `wants`): any other answer — late, duplicate,
+  another round's, the wrong kind — moves nothing and refreshes nothing, its own cell in every state (no `_ =>`).
+- **R3 every state leaves**: by its answer, or STUCK (`upkeep::stuck`: `STUCK` wake-ups or `STUCK_MS` of the node's
+  time since it last MOVED, R2's answers only) and dropped at the next wake-up, the step recorded (`STALLED`).
+- **R4 nothing changes from a short read** (`guards::whole`): applied what the check takes, nobody out, no key change.
+- **R5 nothing is kept that is not published**: a generation is kept only when its operations can be written from
+  here (`upkeep::creates`: a contract made on the node reaches nobody today — the change is a page's).
+- **R6 one record**: every outcome a named step (`rules::steps`), the page's lifecycle the same.
+
+**Follow round** (`upkeep::Step`; events: the step's ANSWER — `Got` / `Put ok` / `Put refused` — a STRAY answer, a
+WAKE-UP, a page ASKING):
+
+| State | Got (its own) | Put / Updated (its own) | stray answer | wake-up | page asks |
+|---|---|---|---|---|---|
+| (none) | — | — | nothing | next member's round begins (each in turn) | its round begins |
+| `Acts` (read) | read on; whole → BeeKEM: cards needed → `Acts` (by list); none → reconcile; MLS → `CatchUp` | impossible (asks only GETs) | nothing (R2) | stuck → dropped (R3) | same member: left; other: set aside, its own begins |
+| `CatchUp{epoch}` | log + door both in → an entry applied → `CatchUp{epoch+1}`; none → follow out (`Log`) or done | impossible | nothing | stuck → dropped | as above |
+| `Log` | position taken meanwhile → done (`MOVED_MEANWHILE`); else the commit written → `Commit` | impossible | nothing | stuck → dropped | as above |
+| `Commit` | impossible | ok → held, next epoch's log → `Next`; refused → done (`COMMIT_REFUSED`) | nothing | stuck → dropped | as above |
+| `Next` | impossible | → door announced, done (`COMMIT`) | nothing | stuck → dropped | as above |
+| `KeyFileRead` | a part kept; whole → checked, kept by its key → next file, or reconcile | impossible | nothing | stuck → dropped | as above |
+| `KeyFileWrite` | impossible | next part / the index / the root; stored → its row and listing → next file, or `Keys` | nothing | stuck → dropped | as above |
+| `Keys{table}` | impossible | all answered → more rows → `Keys`; none → `ListFiles` (files written) or done; refused → done (`KEYS_REFUSED`) | nothing | stuck → dropped | as above |
+| `ListFiles` | read on; whole → `Keys{files}` | impossible | nothing | stuck → dropped | as above |
+
+**Files round** (`rekey_round::Step`):
+
+| State | Got (its own) | Put / Updated (its own) | stray answer | wake-up |
+|---|---|---|---|---|
+| (none) | — | — | nothing | due (`EVERY`, or the soonest row's turn) and a member whose page is away → `Reading` |
+| `Reading` | read on; whole → a new salt (`Writing{Replan}`), a file due → `Recoding`, else done | impossible | nothing | stuck → dropped |
+| `Recoding` | its read (`file_io::FileRead`) on | its write (`file_io::FileWrite`) on; stored → `Writing{Row}`; failed → next file | nothing | stuck → dropped |
+| `Writing{after}` | impossible | all answered → `Replan`: read again; `Row`: old pieces burned, next file; refused → done | nothing | stuck → dropped |
+
+**Keeper and witness rounds** (`reads::Round`): `(none) → waiting{asked} → (none)`; an answer it asked for is taken, any
+other nothing (R2); paused (its step left work for later) kept; stuck → dropped.
+
+A **model test** drives these over the real code with seeded random sequences — the real answers, duplicates, strays,
+answers that never come, refusals — and checks R2 and R3 after every event; it fails on a tree where a stray answer
+moves or refreshes a round.
+
 ### Members and keys: one member list, keys that follow it (owner 10-16: "fix it")
 
 Every encrypted thing — a space, a PRO/VIP group, a direct or group chat, an audience (a role, chosen people), a circle

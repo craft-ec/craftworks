@@ -257,6 +257,17 @@ pub fn replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
 }
 fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> {
     let Some(mut r) = load(h) else { return Vec::new() };
+    // R2 (FOUNDATION "The node's rounds"): an answer moves the round — and counts as it moving (R3) — only when its
+    // CURRENT step asked for it; one it issued earlier, late or duplicated, moves nothing and refreshes nothing.
+    let own = match (&r.step, &reply) {
+        (Step::Reading, Reply::Got { id, .. }) => r.reading.wants(id),
+        (Step::Writing { waiting, .. }, Reply::Put { id, .. } | Reply::Updated { id, .. }) => waiting.contains(id),
+        (Step::Recoding { rec, .. }, Reply::Got { id, .. } | Reply::Put { id, .. } | Reply::Updated { id, .. }) => rec.wants(id),
+        (Step::Reading, Reply::Put { .. } | Reply::Updated { .. }) | (Step::Writing { .. }, Reply::Got { .. }) => false,
+    };
+    if !own {
+        return Vec::new();
+    }
     r.moved = identity::upkeep_wakeups(h);
     r.moved_ms = identity::upkeep_now_ms(h);
     match (r.step.clone(), reply) {
@@ -328,10 +339,8 @@ fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> 
                 },
             }
         }
-        _ => {
-            keep(h, Some(&r));
-            Vec::new()
-        }
+        // (Not its own: answered above, R2. Named so the table stays whole.)
+        (Step::Reading, Reply::Put { .. } | Reply::Updated { .. }) | (Step::Writing { .. }, Reply::Got { .. } | Reply::Put { .. } | Reply::Updated { .. }) => Vec::new(),
     }
 }
 

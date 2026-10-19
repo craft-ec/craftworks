@@ -607,6 +607,10 @@ struct AfterRound {
 /// A member removed from a space with one file, then a re-key round woken with no page open — on a network where a
 /// contract the delegate makes does (`creates`) or does not reach it.
 fn round_after_a_removal(creates: bool) -> AfterRound {
+    round_after_a_removal_with(creates, false)
+}
+/// …`strays`: before every answer, a STRAY of every kind (a contract no step asked for), checked to change no round (R2).
+fn round_after_a_removal_with(creates: bool, strays: bool) -> AfterRound {
     use craftworks_identity::{Host, Mandate};
     upkeep::CREATES.with(|c| c.set(creates));
     // The member on this node: a real account (its DID, data seed), its MLS member, a space it owns.
@@ -686,10 +690,44 @@ fn round_after_a_removal(creates: bool) -> AfterRound {
     let mut todo = crate::rekey_round::woke(&mut h);
     assert!(!todo.is_empty(), "a round begins: the page is away");
     let mut steps = 0;
+    let mut first: Option<upkeep::Reply> = None;
     while let Some(io) = (!todo.is_empty()).then(|| todo.remove(0)) {
         steps += 1;
         assert!(steps < 5000, "the round ends");
+        if strays {
+            // A LATE ANSWER the round asked for EARLIER (its first one, again) — never while it asks that contract anew.
+            if let Some(late @ upkeep::Reply::Got { id, .. }) = first.clone() {
+                let asking = |x: &Io| matches!(x, Io::Get { id: g, .. } if *g == id);
+                if !asking(&io) && !todo.iter().any(asking) {
+                    use craftworks_identity::Host;
+                    let before = (h.get_secret(crate::rekey_round::ROUND), h.get_secret(upkeep::ROUND));
+                    identity::upkeep_set_clock(&mut h, now / 1000 + steps as u64 * 8 + 6);
+                    assert!(upkeep::replied(&mut h, late.clone(), now).is_empty(), "a late answer sent something");
+                    assert_eq!((h.get_secret(crate::rekey_round::ROUND), h.get_secret(upkeep::ROUND)), before, "a late answer changed a round (R2)");
+                }
+            }
+            use craftworks_identity::Host;
+            for kind in 0..5u8 {
+                let mut id = [0xEEu8; 32];
+                id[..8].copy_from_slice(&(steps as u64 * 8 + kind as u64).to_le_bytes());
+                let stray = match kind {
+                    0 => upkeep::Reply::Got { id, state: Some(vec![1, 2, 3]) },
+                    1 => upkeep::Reply::Put { id, ok: true },
+                    2 => upkeep::Reply::Put { id, ok: false },
+                    3 => upkeep::Reply::Updated { id, ok: true },
+                    _ => upkeep::Reply::Updated { id, ok: false },
+                };
+                let before = (h.get_secret(crate::rekey_round::ROUND), h.get_secret(upkeep::ROUND));
+                // (The node's clock a second on: an answer that refreshed a round's moved time would show.)
+                identity::upkeep_set_clock(&mut h, now / 1000 + steps as u64 * 8 + kind as u64);
+                assert!(upkeep::replied(&mut h, stray.clone(), now).is_empty(), "a stray {stray:?} sent something");
+                assert_eq!((h.get_secret(crate::rekey_round::ROUND), h.get_secret(upkeep::ROUND)), before, "a stray {stray:?} changed a round (R2)");
+            }
+        }
         let reply = n.answer(&io);
+        if first.is_none() && matches!(reply, upkeep::Reply::Got { .. }) {
+            first = Some(reply.clone());
+        }
         todo.extend(upkeep::replied(&mut h, reply, now));
     }
     // What upkeep last said (for a failure's message).
@@ -804,4 +842,15 @@ fn a_members_devices_contract_is_asked_for_only_when_their_card_says_or_nothing_
     assert_eq!(read(vec![("nodes", nodes), ("devices", "1".into())]), (vec![a], true));
     // CONTROL: nothing on the card counts — asked, as for an account that made one before cards said so.
     assert_eq!(read(vec![("nodes", "[]".into())]), (vec![], true));
+}
+
+/// THE ROUNDS' MODEL TEST, the FILES round (FOUNDATION "The node's rounds", R2): the same re-key after a removal with a
+/// STRAY of every kind before every answer — none changes a round, and the round still re-keys the file whole.
+#[test]
+fn files_round_strays_move_nothing() {
+    let a = round_after_a_removal_with(true, true);
+    let files_rows = files_after(&a);
+    let st = rekey::salt(&files_rows).expect("a salt");
+    let row: serde_json::Value = serde_json::from_slice(&files_rows[b"k/file1".as_slice()].value).unwrap();
+    assert_eq!(row["key"].as_str(), Some(table::hex(&files::content_key(&a.hsh, Some(&st.s))).as_str()), "re-keyed all the same: {:?}", a.said);
 }
