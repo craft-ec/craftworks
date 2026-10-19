@@ -734,7 +734,7 @@ fn one_stuck_rule_by_wakeups_or_time() {
     let clock = |h: &mut crate::testhost::Map, secs: u64, at: u64| h.set_secret(UPKEEP_CLOCK, &[secs.to_le_bytes(), at.to_le_bytes()].concat());
     clock(&mut h, 1000, 10);
     h.set_secret(UPKEEP_WAKEUPS, &10u64.to_le_bytes());
-    let (w, ms) = (10, crate::upkeep::now_ms(&h));
+    let (w, ms) = (10, craftworks_identity::upkeep_now_ms(&h));
     assert!(!crate::upkeep::stuck(&h, w, ms), "just moved");
     h.set_secret(UPKEEP_WAKEUPS, &(10 + crate::upkeep::STUCK - 1).to_le_bytes());
     clock(&mut h, 1000, 10 + crate::upkeep::STUCK - 1);

@@ -170,7 +170,7 @@ fn mandate<H: Host>(h: &H, r: &Round) -> Option<Mandate> {
 /// THE ROUND's step over a space (`identity::Decided`: the `group` lifecycle's `follow-<step>` move, by the node — its
 /// plan, its commit, an entry skipped, a stall, each with why). Never free text beside it.
 pub(crate) fn followed<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], step: &str, why: &str) {
-    let at = identity::upkeep_now(h).unwrap_or(0) * 1000;
+    let at = identity::upkeep_now_ms(h);
     identity::upkeep_decide(h, member, identity::Decided { seq: 0, space: *space, did: String::new(), q: [0; 16], at, step: step.into(), why: why.into() });
 }
 
@@ -224,7 +224,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
         let group: Vec<String> = leaves(&g, None, 0).into_iter().map(|l| l.did).collect();
         let dids: Vec<[u8; 32]> = craftworks_account::reading_dids(&group, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
         let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
-        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now(h).unwrap_or(0) * 1000, moved: identity::upkeep_wakeups(h), by_list: false };
+        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false };
         keep(h, Some(&r));
         return io;
     }
@@ -295,12 +295,8 @@ fn running<H: Host>(h: &H) -> bool {
 /// wake-ups, or for `STUCK_MS` of the node's time — by TIME too, never only by wake-ups (which may not come: I2).
 /// `moved`: the wake-up count when it last moved; `moved_ms`: the node's time then.
 pub fn stuck<H: Host>(h: &H, moved: u64, moved_ms: u64) -> bool {
-    let now = identity::upkeep_now(h).unwrap_or(0) * 1000;
+    let now = identity::upkeep_now_ms(h);
     identity::upkeep_wakeups(h).saturating_sub(moved) >= STUCK || now.saturating_sub(moved_ms) >= STUCK_MS
-}
-/// The node's time now (ms), as a round's `moved_ms` notes it.
-pub fn now_ms<H: Host>(h: &H) -> u64 {
-    identity::upkeep_now(h).unwrap_or(0) * 1000
 }
 /// A round not moved for this long (the node's time) is stalled.
 const STUCK_MS: u64 = 3 * 60 * 1000;
@@ -669,7 +665,7 @@ fn door_io<H: Host>(h: &mut H, c: &Held, member: &[u8; 32], space: &[u8; 32], ep
     if let Some(r) = identity::upkeep_random(h) {
         let branch = hex(&identity::epoch_log_key(secret).verifying_key().to_bytes());
         let writers = crate::table::sealed_bag_address(space, "writers");
-        let at = identity::upkeep_now(h).unwrap_or(0) * 1000;
+        let at = identity::upkeep_now_ms(h);
         let item = crate::table::seal_open_item(space, &serde_json::json!({ "w": hex(member), "epoch": epoch, "branch": branch, "ih": ih, "at": at, "by": "node" }), r[..12].try_into().expect("12 of 32"));
         io.push(Io::Put { code: Code::Bag, params: writers.to_vec(), state: craftworks_bag_contract::encode(&writers, &[craftworks_bag_contract::grind(&writers, &item)]) });
     }

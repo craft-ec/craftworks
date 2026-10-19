@@ -802,6 +802,11 @@ pub fn upkeep_now<H: Host>(h: &H) -> Option<u64> {
     Some(then.saturating_add(wakeups.saturating_sub(at).saturating_mul(UPKEEP_EVERY)))
 }
 
+/// The node's time in MS (0 before its clock is known) — the one form every round's `moved_ms`, `at` and `stuck` read.
+pub fn upkeep_now_ms<H: Host>(h: &H) -> u64 {
+    upkeep_now(h).unwrap_or(0) * 1000
+}
+
 /// `MEMBER ‖ public key` → the member (seed, DID, PIN hash, home, data key): one secret, one write.
 pub const MEMBER: &[u8] = b"identity_member/";
 /// `PIN ‖ PIN hash` → the public key of the member with that PIN (empty: none).

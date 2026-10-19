@@ -59,7 +59,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         reads::save(h, ROUND, None);
         return Vec::new();
     };
-    drive(h, Round { member, started: identity::upkeep_wakeups(h), started_ms: crate::upkeep::now_ms(h), ..Round::default() })
+    drive(h, Round { member, started: identity::upkeep_wakeups(h), started_ms: identity::upkeep_now_ms(h), ..Round::default() })
 }
 
 /// An ANSWER from the network: kept if this round asked for it, then the round driven on.

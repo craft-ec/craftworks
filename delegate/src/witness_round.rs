@@ -52,7 +52,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         reads::save(h, ROUND, None);
         return Vec::new();
     };
-    let r = Round { member, started: identity::upkeep_wakeups(h), started_ms: crate::upkeep::now_ms(h), ..Round::default() };
+    let r = Round { member, started: identity::upkeep_wakeups(h), started_ms: identity::upkeep_now_ms(h), ..Round::default() };
     drive(h, r)
 }
 
@@ -74,7 +74,7 @@ fn drive<H: Host>(h: &mut H, r: Round) -> Vec<Io> {
     let (out, want, paused) = step(h, &r, &m);
     if paused {
         // PAUSED (seals left for the next wake-up): the round kept, as of now (never dropped as stuck while it seals).
-        let r = Round { started: identity::upkeep_wakeups(h), started_ms: crate::upkeep::now_ms(h), ..r };
+        let r = Round { started: identity::upkeep_wakeups(h), started_ms: identity::upkeep_now_ms(h), ..r };
         reads::save(h, ROUND, Some(&r));
         return out;
     }
