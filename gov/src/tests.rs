@@ -527,3 +527,12 @@ fn who_may_take_whom_out_is_the_replays_own_rule() {
     let r = gov(&[act("g", "no", 1, json!({"act":"grant","did":A,"role":"admin"})), act("x", "na", 2, json!({"act":"remove","did":O}))]);
     assert_eq!(r.role(O, true).as_deref(), Some("owner"));
 }
+
+/// WHOSE CARDS the keys' check needs: the listed, the owner, and everyone an act moved — one put out is found too (the
+/// node read only the listed and the owner, 10-19).
+#[test]
+fn check_dids_is_the_listed_the_owner_and_everyone_an_act_moved() {
+    let acts = vec![serde_json::json!({ "act": "added", "did": "did:x" }), serde_json::json!({ "act": "remove", "did": "did:gone" }), serde_json::json!({ "act": "join", "by": "did:j" }), serde_json::json!({ "act": "role", "did": "did:r" })];
+    let got = crate::check_dids(&["did:a".into()], "did:o", &acts);
+    assert_eq!(got, vec!["did:a", "did:gone", "did:j", "did:o", "did:x"], "a role act moves nobody");
+}

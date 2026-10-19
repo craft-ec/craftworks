@@ -34,6 +34,16 @@ pub fn entry_move(a: &Value) -> Option<(bool, String)> {
     Some((moves, target?.as_str()?.to_string()))
 }
 
+/// WHOSE CARDS the keys' check needs (page and node): the listed, the owner, and everyone an act let in or put out —
+/// whom to take out is found by their card too (10-19: the node read only the listed and the owner, so it could not take
+/// out an account it never learned).
+pub fn check_dids(roster: &[String], owner: &str, acts: &[Value]) -> Vec<String> {
+    let mut out: Vec<String> = roster.iter().cloned().chain((!owner.is_empty()).then(|| owner.to_string())).chain(acts.iter().filter_map(|a| entry_move(a).map(|(_, d)| d))).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 pub fn moves_entries(act: &str) -> Option<bool> {
     match act {
         "added" | "admitted" | "member" | "join" | "transfer" => Some(true),

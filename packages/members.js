@@ -129,7 +129,8 @@ export async function start(ctx) {
         if (mv) moves.push({ inn: mv[0], did: mv[1], act: await sha(a.id) });
       }
       // Cards of the listed AND of everyone an act moved (whom to take out is found by their card too).
-      const found = await Promise.all([...new Set([...roster, ...(owner ? [owner] : []), ...moves.map(m => m.did)])].map(async d => [d, await memberOf(d)]));
+      // WHOSE CARDS (`gov::check_dids`, the node's too): the listed, the owner, everyone an act moved.
+      const found = await Promise.all(JSON.parse(glue.check_dids(JSON.stringify(roster), owner ?? "", JSON.stringify(r.acts()))).map(async d => [d, await memberOf(d)]));
       const unmapped = found.filter(([, m]) => m.why);
       // (Said ONCE per change — never a report every round for the same card.)
       const um = unmapped.map(([d, m]) => `${d.slice(12, 20)}: ${m.why}`).join("; ");

@@ -404,15 +404,8 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 let known = keys_round::known(h, &r.member, &r.space);
                 let asked = keys_round::asked(h, &r.member, &r.space);
                 let recently = |d: &str| asked.iter().any(|(k, t)| k == d && now_ms.saturating_sub(*t) < keys_round::ASK_AGAIN_MS);
-                let mut want: Vec<String> = gov
-                    .roster
-                    .iter()
-                    .chain(std::iter::once(&m.owner))
-                    .filter(|d| !known.iter().any(|(k, ..)| k == *d) && !r.reading.beekem.iter().any(|(k, ..)| k == *d) && !recently(d))
-                    .cloned()
-                    .collect();
-                want.sort();
-                want.dedup();
+                // WHOSE CARDS (`gov::check_dids`, the page's too): the listed, the owner, everyone an act moved.
+                let mut want: Vec<String> = craftworks_gov::check_dids(&gov.roster.iter().cloned().collect::<Vec<_>>(), &m.owner, &gov.counted).into_iter().filter(|d| !known.iter().any(|(k, ..)| k == d) && !r.reading.beekem.iter().any(|(k, ..)| k == d) && !recently(d)).collect();
                 want.truncate(keys_round::CARDS_A_ROUND);
                 keys_round::asking(h, &r.member, &r.space, &want, now_ms);
                 let want: Vec<[u8; 32]> = want.iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();

@@ -2357,6 +2357,13 @@ mod js {
     pub fn moves_entries(act: &str) -> Option<String> {
         craftworks_gov::moves_entries(act).map(|i| if i { "in" } else { "out" }.to_string())
     }
+    /// WHOSE CARDS the keys' check needs (`gov::check_dids`, the node's too): JSON roster, the owner, JSON acts.
+    #[wasm_bindgen]
+    pub fn check_dids(roster: &str, owner: &str, acts: &str) -> Result<String, JsValue> {
+        let r: Vec<String> = serde_json::from_str(roster).map_err(|e| JsValue::from_str(&format!("roster: {e}")))?;
+        let a: Vec<Value> = serde_json::from_str(acts).map_err(|e| JsValue::from_str(&format!("acts: {e}")))?;
+        Ok(serde_json::to_string(&craftworks_gov::check_dids(&r, owner, &a)).expect("a list encodes"))
+    }
     /// WHOM a counted act lets in or puts out (`gov::entry_move`, the node's too): `[in?, did]`, or undefined.
     #[wasm_bindgen]
     pub fn entry_move(act: &str) -> Option<String> {
