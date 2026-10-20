@@ -2859,3 +2859,20 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
       read refused without a gesture, and Docs' `fail` showed nothing: `ctx.say` awaited in a frame); `ctx.view` `hold`
       held the editor's FIRST drawing (held only while on screen). Regressions share/share2/share3 PASS.
 - [ ] S4 Sheets; S5 Slides — each on S1+S2 (Slides: a slide's position a field — Automerge has no move).
+
+## Next (owner 10-20), in this order
+1. v412 release (gate running): Docs word processor, journal fix, copy through the host, onMove, Not-saved fix.
+2. ONE FEED (owner: "all app and capability need to use the single feed for all"): `feed(source, { kinds, sort,
+   window })` — a feed is a history of items composed from its SOURCE: Home (global public items), Yours (your
+   personal space's and what you wrote in shared spaces), Saved, Following, Friends, Shared (with you), a space's, a
+   person's. Reading, shown/hidden, order, windows and paging ONE implementation; pointedPosts/boardPosts/profiles
+   become readers behind sources, never chosen by a page. Seen live: Craftworks' public post "First?" on its board but
+   not in the public feed for Wren (the reverse on the owner's page) — two readers judging one post.
+   SIDEBAR the same in every app: Home · Yours · Saved · Following · Friends · Shared · Spaces · Discover (PUBLIC SPACES
+   with the app's capability enabled — not items) · ＋ New.
+3. Sheets and Slides (built, not yet on fx): test, commit. Close (×) beside the app name (built).
+4. BLOG stepped up (Blogger/WordPress): a space = a blog of several writers (Visibility public, Join invite only,
+   Approval by editors — all exist). New: FRONT PAGE (header: name, description, cover; theme: classic / magazine /
+   minimal; cards, categories, About, author pages, search); POST PAGE (reading layout, next/previous); ADMIN (Posts:
+   published / drafts / scheduled / awaiting approval; Writers; Comments; Appearance; Settings; Stats from signals);
+   WRITER's EDITOR = doc-editor (save draft, submit, publish, schedule).
