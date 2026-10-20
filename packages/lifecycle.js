@@ -228,7 +228,9 @@ export async function start(ctx) {
         const room = DAY_CAP - t.rows().length;
         const these = batch.filter(e => dayOf(e.at) === day);
         if (room < these.length && capSaid !== day) (capSaid = day), ctx.log("lifecycle", { what: `the journal of ${day} is full (${DAY_CAP} moves): later moves not kept` });
-        for (const e of these.slice(0, Math.max(0, room))) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }));
+        // (A BACKGROUND write, never the person's save — said so: a click while it ran made it look like theirs, and its
+        // refusal was shown as "Not saved", 10-20.)
+        for (const e of these.slice(0, Math.max(0, room))) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }), false);
       }
     } catch (e) {
       ctx.log("lifecycle", { what: `${batch.length} move(s) not kept in the journal: ${e?.message ?? e}` });
@@ -248,7 +250,7 @@ export async function start(ctx) {
       }
     };
     const old = t.rows().filter(r => r.value && isMove(r)).slice(0, 64);
-    for (const r of old) await t.remove(r.key);
+    for (const r of old) await t.remove(r.key, false);
     return old.length;
   }
   // THE JOURNAL WRITTEN NOW (not 3 s later): before what reloads the page — a login loads it again as soon as the
