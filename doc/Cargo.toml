@@ -1,0 +1,19 @@
+[package]
+name = "craftworks-doc"
+version = "0.1.0"
+edition = "2021"
+description = "A co-edited document (ARCHITECTURE §7 'Live co-editing'): one CRDT for page and node — Automerge, vendored."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# IN A PAGE (core, wasm-bindgen): the browser's randomness for a new document's provisional actor (replaced at once by
+# the editor's own: `Doc::with_actor`).
+page = ["getrandom/wasm_js", "dep:wasm-bindgen", "dep:js-sys"]
+
+[dependencies]
+automerge = { path = "../vendor/automerge-0.12.0", default-features = false, features = ["utf16-indexing"] }
+getrandom = { version = "0.4", optional = true }
+wasm-bindgen = { version = "=0.2.128", optional = true }
+js-sys = { version = "0.3", optional = true }

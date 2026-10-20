@@ -2841,6 +2841,15 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
       (`files.adopt`; before, a shared item's files stayed keyed to the old place, unreadable to who it was shared
       with — notes passed only for having none). fx/fy pw/share3.mjs 8/8 (100 KB files: keyed, not inline); control
       (folderGroup/folderInto off): fails at 3 and 4 only; share.mjs and share2.mjs regressions PASS.
-- [ ] S2 the CRDT in core (Automerge or Loro: wasm size, rich text, lists), changes as rows in each editor's feed,
+- [~] S2 the CRDT — LIBRARY CHOSEN: Automerge 0.12.0 (scout 10-20: the only one that builds as a plain Rust dependency on
+      wasm32 with no JS — Loro hard-codes wasm-bindgen getrandom + Date.now; +962 KB; no move op: a slide's position a
+      field). Vendored vendor/automerge-0.12.0 (crates.io sha256 2fb84913…); crate `doc` (craftworks-doc): create (the
+      maker's first change: the text object) / load(rows, any order) / apply / splice / mark / marks / save / heads,
+      UTF-16 positions; 4 native tests (every order and duplicates → one text and marks; a row ahead of its base waits;
+      snapshot + later rows; emoji = 2 units). Its OWN package (`doc-glue` + `doc-wasm`, 1,306,806 B after -Os) — NEVER
+      in the core (2,655,440 B unchanged): only what co-edits loads it.
+      NEXT: the service (rows in each editor's feed of the item's table, admitted by `edit` at their time; snapshot
+      file), then the browser check through Docs.
+- [ ] S2 (was) the CRDT in core (Automerge or Loro: wasm size, rich text, lists), changes as rows in each editor's feed,
       snapshots as files.
 - [ ] S3 Docs; S4 Sheets; S5 Slides — each on S1+S2.
