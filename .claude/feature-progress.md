@@ -2833,8 +2833,14 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
       `share.with` refuses non-members by name under members-only; only the author or the space's admins share a space's
       item; `keepAll` (lifecycle job, 10 min) takes whoever left the space off every shared item from it (`groups.keep`).
       fx/fy probe pw/share2.mjs 9/9; control (rule check + keep off): fails at 2 and 4 only; pw/share.mjs regression PASS.
-- [ ] S1b FOLDERS: a folder shared → every file under its path moved into its group; a file added or moved into a
-      shared folder goes into the group (inherits its people and roles).
+- [x] S1b FOLDERS: a folder shared → everything under its path moves into its group (`drive-store.folderInto`: in a
+      space this person's own, or all for its admins — others' said); a file uploaded, added, made or moved into a
+      shared folder goes into its group (`folderGroup`: the deepest shared folder of a path) and inherits its people
+      and roles; moved out, back to the place. A Drive lists its place's shared groups (a space's: those naming it;
+      yours: those naming none). ONE way an item changes place: `share.moveTo` — its FILES adopted there first
+      (`files.adopt`; before, a shared item's files stayed keyed to the old place, unreadable to who it was shared
+      with — notes passed only for having none). fx/fy pw/share3.mjs 8/8 (100 KB files: keyed, not inline); control
+      (folderGroup/folderInto off): fails at 3 and 4 only; share.mjs and share2.mjs regressions PASS.
 - [ ] S2 the CRDT in core (Automerge or Loro: wasm size, rich text, lists), changes as rows in each editor's feed,
       snapshots as files.
 - [ ] S3 Docs; S4 Sheets; S5 Slides — each on S1+S2.

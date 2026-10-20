@@ -11,10 +11,13 @@
 //   await drive.list(space)                             // [{ id, ref, at, folder, from, aud }], newest first (null: yours)
 //   await drive.folders(space)                          // ["/", "/Photos", …]
 //   await drive.mkdir(space, path)   await drive.move(space, id, folder)   await drive.remove(space, id)
+//   await drive.folderInto(group, path, space)          // a folder SHARED: what is under it moved into its group (`share`)
+// A SHARED FOLDER (`share`: its own group) holds everything under its path: added, moved or made there, it goes into
+// the folder's group and has its people and roles; moved out, back to the place.
 //   await drive.onChange(space, fn)
 //   await drive.drives()                                // the spaces whose Drive this person can pick (Drive in use)
 export async function start(ctx) {
-  const [space, files, roles, kinds, items] = await Promise.all(["space", "files", "roles", "kinds", "items"].map(n => ctx.require(n)));
+  const [space, files, roles, kinds, items, sh] = await Promise.all(["space", "files", "roles", "kinds", "items", "share"].map(n => ctx.require(n)));
   const shared = space.shared;
   // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
   const usesDrive = async sp => !shared(sp) || (await ctx.optional("drive-store: roles.of", roles.of(sp).then(r => r.apps().includes("drive")), () => false));
@@ -25,7 +28,27 @@ export async function start(ctx) {
     return all.filter((_, i) => on[i]);
   }
   const me = async () => space.me.strict();
-  const place = async sp => (shared(sp) ? { spaces: [sp] } : { people: [await me()] });
+  // A DRIVE's PLACE: the space's (or yours) — and its SHARED groups (`share`: a shared file or FOLDER is its own group,
+  // `item:<space>/<id>` in a space, `item:<id>` of a person): a space's Drive reads the groups naming it; yours, those
+  // naming no space (yours, and what people shared with you).
+  const groupsOf = async sp => {
+    return (await sh.groups()).filter(g => sh.parentId(g) === (shared(sp) ? sp.id : null));
+  };
+  const base = async sp => (shared(sp) ? { spaces: [sp] } : { people: [await me()] });
+  const place = async sp => {
+    const b = await base(sp);
+    return { ...b, spaces: [...(b.spaces ?? []), ...(await groupsOf(sp))] };
+  };
+  const under = (f, path) => f === path || f.startsWith(`${path === "/" ? "" : path}/`);
+  const groupIdOf = ref => (String(ref).startsWith("space:") ? String(ref).slice(6, String(ref).indexOf("/")) : null);
+  // THE SHARED FOLDER a path is in (the deepest), as its group — or null: the place's own.
+  async function folderGroup(sp, path) {
+    const gs = await groupsOf(sp);
+    if (!gs.length) return null;
+    const fs = (await items.inPlaces.strict({ spaces: gs }, "folder", { withVotes: false })).filter(f => under(clean(path), clean(f.meta?.folder)));
+    const deepest = fs.sort((a, b) => clean(b.meta?.folder).length - clean(a.meta?.folder).length)[0];
+    return deepest ? gs.find(g => g.id === groupIdOf(deepest.ref)) ?? null : null;
+  }
   const hex = (await ctx.require("node")).hex;
   // A FILE's id: its own (its first index root; an inline file's own hash) — the same file listed twice is one entry.
   const fidOf = async ref => ref.id ?? ref.root ?? hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ref.inline ?? ""))).slice(0, 32);
@@ -80,11 +103,19 @@ export async function start(ctx) {
     if (from?.app && from.app !== "drive" && !from.saved) return null;
     const fid = await fidOf(ref);
     const meta = { folder: clean(folder ?? (from?.app === "drive" ? "/" : typeFolder(ref))), fid, ...(from ? { from } : {}) };
+    // IN A SHARED FOLDER: its group holds it (its people and roles, inherited) — one entry, its file adopted there.
+    const fg = await folderGroup(sp, meta.folder);
+    if (fg) {
+      const had = (await items.inPlaces.strict({ spaces: [fg] }, "file", { withVotes: false })).find(it => it.meta?.fid === fid);
+      if (had) return had.ref;
+      const ref2 = await files.adopt(ref, fg, { app: from?.app ?? "drive" });
+      return items.submit({ board: fg.id, title: ref.name ?? "", body: "", kind: "file", files: [ref2], meta, audience: "members", at, write });
+    }
     // Yours always; the space's too when it is one that uses Drive. Listed once (the same file: one entry).
     const where = [null, ...(shared(sp) && (await usesDrive(sp)) ? [sp] : [])];
     let id = null;
     for (const w of where) {
-      const had = (await entries(w)).find(it => it.meta?.fid === fid);
+      const had = (await items.inPlaces.strict(await base(w), "file", { withVotes: false })).find(it => it.meta?.fid === fid);
       if (had) {
         id ??= had.ref;
         continue;
@@ -114,14 +145,44 @@ export async function start(ctx) {
     for (const f of [...all]) for (let p = f; p !== "/"; p = p.slice(0, p.lastIndexOf("/")) || "/") all.add(p);
     return [...all].sort();
   }
-  const mkdir = async (sp, path) => items.submit({ board: shared(sp) ? sp.id : null, title: clean(path), body: "", kind: "folder", meta: { folder: clean(path) }, audience: shared(sp) ? "members" : "private" });
+  // A FOLDER made — in a shared folder, in its group.
+  async function mkdir(sp, path) {
+    const fg = await folderGroup(sp, path);
+    return items.submit({ board: fg?.id ?? (shared(sp) ? sp.id : null), title: clean(path), body: "", kind: "folder", meta: { folder: clean(path) }, audience: fg || shared(sp) ? "members" : "private" });
+  }
+  // MOVED to a folder: within its place, its folder changed; into or out of a SHARED folder, the item moves to that
+  // folder's group or back to the place (`share.moveTo`: its file adopted there).
   async function move(sp, id, folder) {
     const it = (await entries(sp)).find(x => x.ref === id);
     if (!it) throw new Error("that file is not in this Drive");
-    await items.editItem(id, it.body ?? "", { meta: { ...(it.meta ?? {}), folder: clean(folder) } });
+    const meta = { ...(it.meta ?? {}), folder: clean(folder) };
+    const to = await folderGroup(sp, folder);
+    const now = groupIdOf(it.ref);
+    const inGroup = (await groupsOf(sp)).some(g => g.id === now);
+    if ((to?.id ?? null) === (inGroup ? now : null)) return items.editItem(id, it.body ?? "", { meta });
+    return sh.moveTo(it, to ?? (shared(sp) ? sp : null), meta);
+  }
+  // A FOLDER SHARED (`share`): what is under its path in its place moves into its group — this person's own entries,
+  // or everyone's for the space's admins; said how many stayed (another member's).
+  async function folderInto(g, path, sp = null) {
+    const self = await me();
+    const admin = shared(sp) ? await ctx.optional("drive-store: admin", roles.of(sp).then(r => r.isAdmin(self)), () => false) : true;
+    let left = 0;
+    for (const kind of ["file", "folder"])
+      for (const it of await items.inPlaces.strict(await base(sp), kind, { withVotes: false })) {
+        // (Under its path; the shared folder's own entry has moved already.)
+        if (!under(clean(it.meta?.folder), clean(path)) || (kind === "folder" && clean(it.meta?.folder) === clean(path))) continue;
+        if (shared(sp) && it.by !== self && !admin) {
+          left += 1;
+          continue;
+        }
+        await sh.moveTo(it, g);
+      }
+    if (left) ctx.log("drive", { what: `${clean(path)} shared: ${left} entr${left === 1 ? "y" : "ies"} of other members stayed in the space (its admins move them)` });
+    return left;
   }
   const remove = async (sp, id) => items.remove(id);
   const onChange = async (sp, f) => items.onChange(f);
 
-  return { upload, add, list: ctx.total("drive-store.list", () => [], list), folders, mkdir, move, remove, onChange, drives, usesDrive };
+  return { upload, add, list: ctx.total("drive-store.list", () => [], list), folders, mkdir, move, folderInto, remove, onChange, drives, usesDrive };
 }

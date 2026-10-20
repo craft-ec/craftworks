@@ -16,6 +16,8 @@
 //   await share.groups()           // the item groups this person is in (by them or with them)
 //   share.isShared(ref)            // its ref names an item group this person is in
 //   await share.privateIn(spaceId, kind, title)   // a space's PRIVATE item's group (its maker alone; `items.submit`)
+//   await share.moveTo(item, place, meta?)        // an item to a group, a space or yours (null): its files adopted there
+//   share.parentId(group)                         // the space a group's item is in (its key), or null: a person's
 // IN A SPACE its setting rules (`share`/`with`, The space): shared with its MEMBERS only (the default — and anyone who
 // leaves the space taken off, `keepAll`), or with people outside it too. Only its author or the space's admins share it.
 //   share.button(it)               // the bar's "👥 Share with…" (`actions`): opens the dialog — people, roles, add,
@@ -106,9 +108,21 @@ export async function start(ctx) {
       if (it.by !== me && !r.isAdmin(me)) throw new Error("only its author or the space's admins share it");
     } else if (!String(ref).startsWith(`${me}/`)) throw new Error("only your own items are shared");
     const sp = await newGroup(psp, it.id, it.title || `A shared ${it.kind}`, it.kind);
-    const moved = await items.submit({ board: sp.id, title: it.title, body: it.body, kind: it.kind, files: it.files, meta: it.meta, at: it.at, audience: "members" });
-    await items.remove(ref);
+    const moved = await moveTo(it, sp);
+    // A FOLDER: what is under its path moves in with it (`drive-store`: its entries, each by `moveTo`).
+    if (it.kind === "folder") await (await ctx.require("drive-store")).folderInto(sp, it.meta?.folder ?? it.title, psp);
     return { sp, ref: moved };
+  }
+
+  // AN ITEM MOVED to a place — a group (shared; into a shared folder) or back to a space or yours (`to` null): its FILES
+  // adopted there first (`files.adopt`: listed with their key, copied under that place's salt — its people read them),
+  // then the same kind, body, meta and time written there and the original removed. The one way an item changes place.
+  async function moveTo(it, to, meta = it.meta) {
+    const files = await ctx.require("files");
+    const fs = await Promise.all((it.files ?? []).map(f => files.adopt(f, to, { app: it.meta?.from?.app ?? null })));
+    const moved = await items.submit({ board: to?.id ?? null, title: it.title, body: it.body, kind: it.kind, files: fs, meta, at: it.at, audience: to ? "members" : "private" });
+    await items.remove(it.ref);
+    return moved;
   }
 
   async function people(ref) {
@@ -232,5 +246,5 @@ export async function start(ctx) {
   }
   (await ctx.require("lifecycle")).job("share keep", { every: 600e3, delay: 60e3, needs: async () => !!(await space.me()) || "nobody is logged in", run: () => keepAll() });
 
-  return { with: shareWith, privateIn, keepAll, people, revoke, setRole, handOn, groups: mine, isShared, open, button: buttonOf(open) };
+  return { with: shareWith, privateIn, keepAll, moveTo, parentId, people, revoke, setRole, handOn, groups: mine, isShared, open, button: buttonOf(open) };
 }
