@@ -17,6 +17,7 @@
 //   share.isShared(ref)            // its ref names an item group this person is in
 //   await share.privateIn(spaceId, kind, title)   // a space's PRIVATE item's group (its maker alone; `items.submit`)
 //   await share.moveTo(item, place, meta?)        // an item to a group, a space or yours (null): its files adopted there
+//   await share.setAudience(ref, audience)        // WHO SEES IT changed after it was made (the picker's value): moved
 //   share.parentId(group)                         // the space a group's item is in (its key), or null: a person's
 // IN A SPACE its setting rules (`share`/`with`, The space): shared with its MEMBERS only (the default — and anyone who
 // leaves the space taken off, `keepAll`), or with people outside it too. Only its author or the space's admins share it.
@@ -114,19 +115,60 @@ export async function start(ctx) {
     return { sp, ref: moved };
   }
 
-  // AN ITEM MOVED to a place — a group (shared; into a shared folder) or back to a space or yours (`to` null): its FILES
-  // adopted there first (`files.adopt`: listed with their key, copied under that place's salt — its people read them),
-  // then the same kind, body, meta and time written there and the original removed. The one way an item changes place.
-  async function moveTo(it, to, meta = it.meta) {
+  // AN ITEM MOVED — to a place (a group: shared; into a shared folder; back to a space or yours, `to` null) or to
+  // another AUDIENCE where it is (`setAudience`): where it goes decided by the one routing (`items.route`), its FILES
+  // adopted there first (`files.adopt`: listed with their key, copied under that place's salt — its people read them;
+  // public exactly when it is), then the same kind, body, meta and time written there and the original removed. The
+  // one way an item changes place. (Its comments and votes stay with the old ref.)
+  async function relocate(it, { board = null, audience, meta = it.meta }) {
     const files = await ctx.require("files");
-    const fs = await Promise.all((it.files ?? []).map(f => files.adopt(f, to, { app: it.meta?.from?.app ?? null })));
+    const at = await items.route({ board, audience, kind: it.kind, title: it.title, meta });
+    const pub = at.audience === "public";
+    const fs = await Promise.all((it.files ?? []).map(f => files.adopt(f, at.place, { app: it.meta?.from?.app ?? null, pub })));
     // A DOCUMENT's text is its own table's (`codoc`): taken whole before it moves, its new table's first row after.
-    const codoc = it.kind === "doc" ? await ctx.require("codoc") : null;
+    const codoc = (await ctx.require("kinds")).coedited(it.kind) ? await ctx.require("codoc") : null;
     const snap = codoc ? await codoc.snapshot(it.ref) : null;
-    const moved = await items.submit({ board: to?.id ?? null, title: it.title, body: it.body, kind: it.kind, files: fs, meta, at: it.at, audience: to ? "members" : "private" });
+    const moved = await items.submit({ board: at.board, title: it.title, body: it.body, kind: it.kind, files: fs, meta: at.meta, at: it.at, audience: at.audience });
     if (codoc) await codoc.seed(moved, snap);
     await items.remove(it.ref);
     return moved;
+  }
+  const moveTo = (it, to, meta = it.meta) => relocate(it, { board: to?.id ?? null, audience: to ? "members" : "private", meta });
+
+  // WHERE AN ITEM IS and WHO SEES IT, as the audience picker names it: its HOME (the space it belongs to; yours: null)
+  // and its audience there — a private item's group, a circle, a narrower audience's group each read back to theirs.
+  async function placeOf(it) {
+    const id = spaceOf(it.ref);
+    if (!id) return { home: null, audience: it.private ? "private" : "public" };
+    const all = await space.mine.strict();
+    const sp = all.find(s => s.id === id);
+    if (!sp) throw new Error("you are not in that item's space");
+    const g = sp.group ?? "";
+    const find = pid => all.find(s => s.id === pid) ?? null;
+    if (g.startsWith("circle:")) return { home: null, audience: g.slice(7) };
+    if (g.startsWith("level:")) return { home: null, audience: "public", level: true };
+    if (g.startsWith("audience:")) return { home: find(/^audience:([0-9a-f]{64})\//.exec(g)?.[1]), audience: it.meta?.aud ?? "members" };
+    if (g.startsWith(KEY)) return { home: parentId(sp) ? find(parentId(sp)) : null, audience: "private", group: sp };
+    return { home: sp, audience: it.pub ? "public" : "members" };
+  }
+  // WHO SEES IT, changed after it was made (owner 10-20: "after docs created, there is no way to change its policy"):
+  // its author, or its space's admins; the item moved to that audience where it is. One shared with chosen people
+  // keeps them (its sharing is changed in Share: the people taken off first).
+  async function setAudience(ref, audience) {
+    const me = await space.me.strict();
+    const it = await items.get.strict(ref);
+    if (!it) throw new Error("no such item");
+    const at = await placeOf(it);
+    if (at.level) throw new Error("a level's item: who sees it is its level");
+    if (at.audience === audience) return ref;
+    let admin = false;
+    if (at.home) {
+      const { r } = await ruleOf(at.home);
+      admin = r.isAdmin(me);
+    }
+    if (it.by !== me && !admin) throw new Error(at.home ? "only its author or the space's admins change who sees it" : "only your own items");
+    if (at.group && ((await people(ref)) ?? []).length > 1) throw new Error("it is shared with chosen people: take them off in Share first");
+    return relocate(it, { board: at.home?.id ?? null, audience });
   }
 
   async function people(ref) {
@@ -176,6 +218,10 @@ export async function start(ctx) {
     await r.act({ act: "transfer", did });
   }
 
+  // THE PAGE FOLLOWS ITS ITEM: an item moved (its ref changed) — the address showing it now shows it where it is.
+  const follow = (from, to) => {
+    for (const f of [encodeURIComponent(from), from]) if (location.hash.includes(f)) return void (location.hash = location.hash.replace(f, encodeURIComponent(to)));
+  };
   // THE DIALOG: who has it, each one's role (owner fixed), add from your contacts or by their id, remove; hand it on.
   const h = (await ctx.require("theme")).h;
   async function open(first) {
@@ -217,15 +263,30 @@ export async function start(ctx) {
         const did = who.value.trim();
         if (!/^did:craftec:[1-9A-HJ-NP-Za-km-z]{20,64}$/.test(did)) return fail(new Error("a person's id: did:craftec:…"));
         said.textContent = "Sharing…";
-        shareWith(ref, [{ did, role: as.value }]).then(at => ((ref = at), (who.value = ""), (said.textContent = ""), draw()), fail);
+        shareWith(ref, [{ did, role: as.value }]).then(at => (at !== ref && follow(ref, at), (ref = at), (who.value = ""), (said.textContent = ""), draw()), fail);
       } },
       who, opts, as, h("button", { type: "submit", textContent: "Add" }),
     );
-    d.append(h("h3", { textContent: "Share" }), list, add, said, h("form", { method: "dialog" }, h("button", { textContent: "Done" })));
+    // WHO SEES IT (the one picker, as when it was made): changed here, moved where that audience reads it.
+    const whoBox = h("div", { style: "display:grid;gap:6px" });
+    const drawWho = async () => {
+      const it = await items.get.strict(ref);
+      const at = it ? await placeOf(it) : null;
+      if (!it || at.level || (at.group && ((await people(ref)) ?? []).length > 1)) return whoBox.replaceChildren();
+      const pick = await (await ctx.require("audience")).picker({ space: at.home, kind: it.kind, initial: at.audience });
+      const save = h("button", { type: "button", className: "cw-btn", textContent: "Change", onclick: async () => {
+        save.disabled = true;
+        said.textContent = "Moving it…";
+        await setAudience(ref, pick.value()).then(at2 => ((ref = at2), (said.textContent = "Who sees it: changed"), follow(first, at2), drawWho(), draw()), fail);
+        save.disabled = false;
+      } });
+      whoBox.replaceChildren(h("h4", { textContent: "Who sees it", style: "margin:0" }), pick.el, save);
+    };
+    d.append(h("h3", { textContent: "Share" }), whoBox, h("h4", { textContent: "People", style: "margin:0" }), list, add, said, h("form", { method: "dialog" }, h("button", { textContent: "Done" })));
     document.body.append(d);
     d.addEventListener("close", () => d.remove());
     d.showModal();
-    await draw().catch(fail);
+    await Promise.all([draw(), drawWho()]).catch(fail);
   }
 
   // KEPT TO ITS SPACE (its rule members-only): each space item's group this person owns — whoever is no longer in the
@@ -250,5 +311,5 @@ export async function start(ctx) {
   }
   (await ctx.require("lifecycle")).job("share keep", { every: 600e3, delay: 60e3, needs: async () => !!(await space.me()) || "nobody is logged in", run: () => keepAll() });
 
-  return { with: shareWith, privateIn, keepAll, moveTo, parentId, people, revoke, setRole, handOn, groups: mine, isShared, open, button: buttonOf(open) };
+  return { with: shareWith, privateIn, keepAll, moveTo, setAudience, parentId, people, revoke, setRole, handOn, groups: mine, isShared, open, button: buttonOf(open) };
 }

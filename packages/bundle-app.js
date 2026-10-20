@@ -26,10 +26,11 @@ export async function mount(ctx, el) {
   async function list() {
     const sp = at.space && !at.outside ? at.space : null;
     // DISCOVER (and someone else's, or a space from outside): the bundles they show in public — as every app's.
-    const feed = at.sub === "feed";
+    // (Following, Friends, Saved, Shared: `where`'s pages, each read by the one feed.)
+    const feed = at.following || at.friends || at.saved || at.shared;
     const others = feed || at.who === "discover" || at.who === "person" || at.outside;
     const place = feed ? { feed: true } : at.who === "discover" ? { discover: true } : at.who === "person" ? { by: at.person } : at.outside ? { outside: at.space } : sp ? { board: sp.id } : { by: await (await ctx.require("space")).me() };
-    const read = async () => bar.reorder(await items.list(place, bar.sort(), "bundle", bar.options())).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }));
+    const read = async () => bar.reorder(await (feed ? at.read({ kinds: ["bundle"], sort: bar.sort(), ...bar.options() }) : items.list(place, bar.sort(), "bundle", bar.options()))).map(b => ({ ref: b.ref, title: b.title || "untitled", members: Array.isArray(b.meta?.members) ? b.meta.members : [], item: b }));
     // WHO SEES a new one: in your space just you, or anyone (public — listed in Discover); in a shared space its members,
     // or anyone.
     const who = h("select", { ariaLabel: "Who sees it" }, ...(sp ? [["members", "Its members"], ["public", "Anyone (public)"]] : [["private", "Only you"], ["public", "Anyone (public)"]]).map(([v, t]) => h("option", { value: v, textContent: t })));
@@ -100,7 +101,7 @@ export async function mount(ctx, el) {
     said.hidden = true;
     at = await where.of({ kind: "bundle", app: "bundle", yours: "Your bundles" });
     const mine = at.who === "mine";
-    at.tabs(mine || at.who === "discover" ? [{ label: "Following", href: "#/bundle/feed", on: mine && at.sub === "feed", role: "feed" }] : [], { yoursOn: mine && !at.sub });
+    at.tabs([], { yoursOn: mine && !at.sub });
     root.replaceChildren(theme.loading("Reading the bundles…"));
     const s = at.sub;
     // A BUNDLE's OWN PAGE (`…/p/<ref>`): the one item page — its comments, votes, who sees it, its EDITIONS and copies

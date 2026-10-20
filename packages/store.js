@@ -4,6 +4,7 @@
 export async function mount(ctx, el) {
   const installed = await ctx.require("installed");
   const h = (await ctx.require("theme")).h;
+  const { byCategory } = await ctx.require("app-icons");
   el.innerHTML = `<style>@layer components {
     .st { padding: 16px; }
     .st ul { list-style: none; padding: 0; display: grid; gap: 10px; }
@@ -21,18 +22,18 @@ export async function mount(ctx, el) {
     read: async () => [...(await installed.list()).map(a => a.route)].sort(),
     draw: haveList => {
       const have = new Set(haveList);
-      const byCat = [...(ctx.apps ?? [])].sort((a, b) => String(a.category).localeCompare(String(b.category)) || a.name.localeCompare(b.name));
-      return h(
+      // BY CATEGORY (`app-icons.byCategory`: the one grouping, Home's too).
+      return h("div", {}, ...byCategory(ctx.apps ?? []).flatMap(([c, apps]) => [h("h4", { textContent: c }), h(
         "ul",
         {},
-        ...byCat.map(a => {
+        ...apps.map(a => {
           const on = have.has(a.route);
           const b = h("button", { type: "button", className: on ? "" : "main", textContent: installed.system(a.route) ? "System" : on ? "Remove" : "Install", disabled: installed.system(a.route) });
           b.onclick = () => installed.set(a.route, !on).then(() => v.refresh(), e => ((said.textContent = ctx.say(e)), (said.hidden = false)));
           const needs = (a.needs ?? []).length ? `In a space, it needs: ${a.needs.join(", ")}` : "Your own space only";
-          return h("li", {}, h("span", { className: "ic", textContent: a.icon ?? "▫️" }), h("div", {}, h("strong", { textContent: `${a.name} · ${a.category ?? ""}` }), h("small", { textContent: a.about ?? "" }), h("small", { textContent: needs })), b);
+          return h("li", {}, h("span", { className: "ic", textContent: a.icon ?? "▫️" }), h("div", {}, h("strong", { textContent: a.name }), h("small", { textContent: a.about ?? "" }), h("small", { textContent: needs })), b);
         }),
-      );
+      )]));
     },
     // (Nothing installed is still a catalog to draw.)
     empty: () => false,

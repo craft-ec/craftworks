@@ -86,3 +86,21 @@ fn a_mark_grows_at_its_end_not_at_its_start() {
     let m = &a.marks().unwrap()[0];
     assert_eq!((m.start, m.end), (3, 7), "at its start: shifted, not joined");
 }
+
+/// CELLS: each key's last write wins, the same in every order; a cleared key is gone; two editors setting different
+/// keys at once keep both.
+#[test]
+fn cells_merge_per_key() {
+    let (mut a, first) = Doc::create(A).unwrap();
+    let mut b = Doc::load(B, &[&first]).unwrap();
+    let a1 = a.set("c:A1", Some("1")).unwrap();
+    let b1 = b.set("c:B1", Some("=A1*2")).unwrap();
+    let a2 = a.set("c:A1", Some("5")).unwrap();
+    let a3 = a.set("c:C1", Some("gone")).unwrap();
+    let a4 = a.set("c:C1", None).unwrap();
+    let rows: Vec<&[u8]> = vec![&first, &a1, &b1, &a2, &a3, &a4];
+    for order in [vec![0, 1, 2, 3, 4, 5], vec![5, 4, 3, 2, 1, 0]] {
+        let d = Doc::load(&[0xC; 16], &order.iter().map(|&i| rows[i]).collect::<Vec<_>>()).unwrap();
+        assert_eq!(d.cells().unwrap(), vec![("c:A1".into(), "5".into()), ("c:B1".into(), "=A1*2".into())]);
+    }
+}

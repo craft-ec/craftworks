@@ -58,7 +58,7 @@ export async function start(ctx) {
   const ACTIONS = G.actions();
   // WHICH POLICY GOVERNS a domain (THE ONE resolver, for every app and every action): its domain's own (`kinds`:
   // text, video, audio, note, caption, file …), else the space's. `DOMAINS`: every domain a policy can name.
-  const DOMAINS = ["text", "video", "audio", "image", "book", "caption", "note", "file", "chat", "form", "wiki", "vote", "bundle", "doc"];
+  const DOMAINS = ["text", "video", "audio", "image", "book", "caption", "note", "file", "chat", "form", "wiki", "vote", "bundle", "doc", "sheet", "slides"];
   // A space's CAPABILITIES: what its owner enables — its domains and the features on them. Apps compose from these:
   // an app shows the space when the space enables what the app `needs` (its manifest entry), and draws only what is on.
   const FEATURES = ["comments", "reactions", "mail", "contact"];

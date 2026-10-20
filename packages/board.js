@@ -34,8 +34,8 @@ export async function mount(ctx, el) {
     const inSpace = at.space ? { board: at.space.id } : {};
     if (s.startsWith("p/")) return { ...inSpace, post: s.slice(2) };
     if (s === "submit" && !at.others) return { ...inSpace, submit: true };
-    if (at.who === "mine" && s === "feed") return { feed: true };
-    if (at.saved) return { saved: true };
+    // Following, Friends, Saved, Shared: `where`'s pages, each read by the one feed (`at.read`).
+    if (at.saved || at.following || at.friends || at.shared) return { via: true, saved: at.saved };
     if (at.who === "person") return { by: at.person };
     return at.space ? inSpace : { by: me };
   };
@@ -43,11 +43,10 @@ export async function mount(ctx, el) {
   const setActions = async w => {
     // THE TABS (`where`'s, in every app's order): Your posts · Feed · Create post · Discover — a space's: Posts and
     // Create post; a person's: none. Each lit only on its own page.
-    const page = !w.post && !w.submit && !w.feed && !w.saved;
+    const page = !w.post && !w.submit && !w.via;
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Posts", href: base(), on: page }] : []),
-        ...(at.who === "mine" || at.who === "discover" ? [{ label: "Following", href: "#/board/feed", on: !!w.feed, role: "feed" }] : []),
       ],
       { yoursOn: page && w.by === me, create: { label: "Post", href: at.space ? `${base()}/submit` : "#/board/submit", on: !!w.submit } },
     );
@@ -211,7 +210,7 @@ export async function mount(ctx, el) {
     const host = h("div", { style: "display:contents" });
     listView = ctx.view(host, {
       // SAVED: `where`'s (what you saved, of Board's kinds).
-      read: async () => (w.saved ? await at.read() : bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()))),
+      read: async () => (w.via ? bar.reorder(await at.read({ sort: bar.sort(), ...bar.options() })) : bar.reorder(await posts.list(w.discover ? { discover: true } : outside ? { outside } : w.board ? { board: w.board } : w.feed ? { feed: true } : { by: w.by }, bar.sort(), "post", bar.options()))),
       draw: list => h("div", { style: "display:contents" }, ...list.map(p => postCard(p)), bar.older("Older posts", list.length)),
       looks: { empty: () => h("div", { style: "display:contents" }, h("p", { className: "none", textContent: empty() }), bar.older("Older posts", 0)), loading: () => theme.loading("Reading the posts…") },
     });

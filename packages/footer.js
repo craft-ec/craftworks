@@ -40,6 +40,7 @@ async function mountDock(ctx, el) {
     .cw-viewer .card .ic { font-size: 36px; }
     .cw-viewer .card small { color: var(--cw-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cw-viewer .card.here { outline: 2px solid var(--cw-accent); }
+    .cw-viewer .cats h4 { max-width: 1000px; margin: 18px auto 10px; color: var(--cw-muted); font-size: var(--cw-text-sm); }
     .cw-viewer .all { max-width: 1000px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 18px 8px; }
     .cw-viewer .all a { display: grid; justify-items: center; gap: 6px; text-decoration: none; color: inherit; font-size: 13px; }
     .cw-viewer .all a span:first-child { font-size: 44px; }
@@ -71,7 +72,8 @@ async function mountDock(ctx, el) {
   function draw() {
     const here = ctx.route;
     const pins = (ctx.apps ?? []).filter(a => pinned.has(a.route));
-    const recent = [...open.keys()].reverse().map(appOf).filter(a => a && !pinned.has(a.route)).slice(0, 8);
+    // THE DOCK (owner 10-21): Home | the pinned apps | the LAST FOUR opened (not pinned) | the browser (every app).
+    const recent = [...open.keys()].reverse().map(appOf).filter(a => a && !pinned.has(a.route)).slice(0, 4);
     dock.replaceChildren(
       icon({ icon: "🏠", name: "Home" }, { href: "#/", here: here === "/", label: "Home" }),
       ...(pins.length ? [h("span", { className: "sep" })] : []),
@@ -79,7 +81,7 @@ async function mountDock(ctx, el) {
       ...(recent.length ? [h("span", { className: "sep" })] : []),
       ...recent.map(a => icon(a, { href: open.get(a.route).hash, here: here === a.route, isOpen: true })),
       h("span", { className: "sep" }),
-      h("button", { type: "button", ariaLabel: "Open apps and all apps", textContent: "▦", onclick: () => viewer() }, h("span", { className: "tip", textContent: "Apps" })),
+      h("button", { type: "button", ariaLabel: "Browser: open apps and all apps", textContent: "▦", onclick: () => viewer() }, h("span", { className: "tip", textContent: "Browser" })),
     );
   }
 
@@ -87,6 +89,8 @@ async function mountDock(ctx, el) {
   // knows; the installed list filled in when it answers (audit 10-13: a slow node's read held the overlay for minutes,
   // and each click stacked another). One at a time: opening it again closes the one before.
   let closeViewer = null;
+  let byCategory = null;
+  ctx.background("footer: app-icons", ctx.require("app-icons").then(m => (byCategory = m.byCategory)));
   function viewer() {
     closeViewer?.();
     const v = h("div", { className: "cw-viewer", role: "dialog", ariaLabel: "Apps" });
@@ -98,8 +102,10 @@ async function mountDock(ctx, el) {
     closeViewer = close;
     v.onclick = e => (e.target === v || e.target.closest("a")) && close();
     const openList = [...open.entries()].reverse().map(([route, o]) => [appOf(route), o]).filter(([a]) => a);
-    const grid = h("div", { className: "all" });
-    const fill = all => grid.replaceChildren(...[...all].sort((x, y) => x.name.localeCompare(y.name)).map(a => h("a", { href: open.get(a.route)?.hash ?? ctx.entryOf(a) }, h("span", { textContent: a.icon ?? "▫️" }), h("span", { textContent: a.name }))));
+    // ALL APPS, BY CATEGORY (`app-icons.byCategory`: the one grouping — Home's and the App Store's too).
+    const grid = h("div", { className: "cats" });
+    const tileOf = a => h("a", { href: open.get(a.route)?.hash ?? ctx.entryOf(a) }, h("span", { textContent: a.icon ?? "▫️" }), h("span", { textContent: a.name }));
+    const fill = all => grid.replaceChildren(...(byCategory ? byCategory([...all]) : [["", [...all].sort((x, y) => x.name.localeCompare(y.name))]]).flatMap(([c, apps]) => [c ? h("h4", { textContent: c }) : null, h("div", { className: "all" }, ...apps.map(tileOf))]));
     fill(ctx.apps ?? []);
     v.append(
       h("h3", { textContent: "OPEN" }),

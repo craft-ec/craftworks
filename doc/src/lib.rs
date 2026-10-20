@@ -10,6 +10,9 @@ use automerge::{ActorId, AutoCommit, ObjId, ObjType, ReadDoc, ScalarValue, Value
 
 /// The document's text object's key at its root.
 const TEXT: &str = "text";
+/// Its CELLS: a map of keys to values, the last write winning per key — a sheet's cells (`c:A1`) and formats, a deck's
+/// slides' fields (`s:<id>:title`). Made in the maker's first change with the text: never two maps.
+const CELLS: &str = "cells";
 
 pub struct Doc {
     am: AutoCommit,
@@ -30,6 +33,7 @@ impl Doc {
     pub fn create(actor: &[u8]) -> Result<(Doc, Vec<u8>), String> {
         let mut am = AutoCommit::new().with_actor(ActorId::from(actor));
         am.put_object(ROOT, TEXT, ObjType::Text).map_err(|e| e.to_string())?;
+        am.put_object(ROOT, CELLS, ObjType::Map).map_err(|e| e.to_string())?;
         let first = am.save_incremental();
         Ok((Doc { am }, first))
     }
@@ -105,6 +109,40 @@ impl Doc {
                 },
             })
             .collect())
+    }
+
+    fn cells_obj(&self) -> Result<ObjId, String> {
+        match self.am.get(ROOT, CELLS).map_err(|e| e.to_string())? {
+            Some((Value::Object(ObjType::Map), id)) => Ok(id),
+            _ => Err("no cells in this document (made before cells, or its maker's first change not read yet)".into()),
+        }
+    }
+
+    /// A CELL set (or, `None`, cleared). Returns the change.
+    pub fn set(&mut self, key: &str, value: Option<&str>) -> Result<Vec<u8>, String> {
+        let c = self.cells_obj()?;
+        match value {
+            Some(v) => self.am.put(&c, key, v).map_err(|e| e.to_string())?,
+            None => self.am.delete(&c, key).map_err(|e| e.to_string())?,
+        }
+        Ok(self.am.save_incremental())
+    }
+
+    /// Its cells now (key order), each the winning value of its key.
+    pub fn cells(&self) -> Result<Vec<(String, String)>, String> {
+        let c = match self.cells_obj() {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        };
+        let mut out = Vec::new();
+        for k in self.am.keys(&c) {
+            if let Some((Value::Scalar(v), _)) = self.am.get(&c, k.as_str()).map_err(|e| e.to_string())? {
+                if let ScalarValue::Str(s) = v.as_ref() {
+                    out.push((k.to_string(), s.to_string()));
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// A SNAPSHOT: the whole document, compacted (kept as a FILE; its rows then need not be read).
@@ -185,6 +223,19 @@ mod page {
         /// A snapshot (kept as a file).
         pub fn save(&mut self) -> Vec<u8> {
             self.0.save()
+        }
+        /// A cell set (`value` none: cleared): its change.
+        pub fn set(&mut self, key: &str, value: Option<String>) -> Result<Vec<u8>, JsValue> {
+            self.0.set(key, value.as_deref()).map_err(err)
+        }
+        /// Its cells: `{ key: value }` (JSON).
+        pub fn cells(&self) -> Result<String, JsValue> {
+            let cs = self.0.cells().map_err(err)?;
+            let o = js_sys::Object::new();
+            for (k, v) in cs {
+                js_sys::Reflect::set(&o, &JsValue::from_str(&k), &JsValue::from_str(&v))?;
+            }
+            js_sys::JSON::stringify(&o).map(String::from).map_err(|_| JsValue::from_str("cells not written"))
         }
         pub fn heads(&mut self) -> js_sys::Array {
             self.0.heads().into_iter().map(JsValue::from).collect()

@@ -2876,3 +2876,16 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
    minimal; cards, categories, About, author pages, search); POST PAGE (reading layout, next/previous); ADMIN (Posts:
    published / drafts / scheduled / awaiting approval; Writers; Comments; Appearance; Settings; Stats from signals);
    WRITER's EDITOR = doc-editor (save draft, submit, publish, schedule).
+
+## 10-21: built on fx (v1031), committed — not yet released
+- [x] Sheets + Slides (office-app; sheet-grid, slide-deck; doc crate CELLS map), close × beside the app name.
+- [x] WHO SEES IT after making (share.setAudience → share.relocate over items.route, the one routing). A public doc of a
+      person's own space keeps its changes in the maker's PUBLIC TAIL (directory.publicOf) — before, each reader opened
+      a table of their own and read it empty. Gap: a public SPACE doc read from outside is still unreadable (codoc
+      needs the space's public read).
+- [x] ONE FEED items.feed(source); where's pages Yours/Following/Friends/Saved/Shared/Home read through it; Board,
+      Blog, Video, Bundle lost their own Following. SIDE PANEL Home · Discover (public spaces with the app:
+      where.spacesPage) · You · Spaces, in every app.
+- [x] Apps fill like Chat (no padding, no overscroll containment); apps grouped by category (Home, App Store, ▦
+      browser: app-icons.byCategory); dock Home | pins | last 4 opened | browser.
+- Next: release (owner's say), then Blog stepped up (plan above).

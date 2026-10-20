@@ -140,8 +140,9 @@ export async function start() {
     #app > .slot-body { flex: 1 1 auto; min-height: 0; overflow: hidden; overflow: clip; display: flex; flex-direction: column; }
     /* (The scrollbar's room kept whether it shows or not: a page whose content arrives never shifts sideways — 10-15,
        "why some pages are wobbly? all supposed to be fixed like chat/board".) */
-    #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
-      padding: var(--cw-space-3) var(--cw-gutter); box-sizing: border-box; }
+    /* (No padding and no overscroll containment around an app: each fills its area edge to edge, as Chat — owner 10-21.) */
+    #app > .slot-body > section { flex: 1 1 auto; min-height: 0; margin: 0; overflow-y: auto; scrollbar-gutter: stable;
+      padding: 0; box-sizing: border-box; }
     #app > .slot-body > section { position: relative; }
     /* A count of what is new (unread): the one badge. */
     .cw-badge { display: inline-block; min-width: 1.4em; padding: 0 .4em; margin-left: .4em; border-radius: 999px; background: var(--cw-accent);

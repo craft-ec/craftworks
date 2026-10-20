@@ -60,7 +60,8 @@ export async function mount(ctx, el) {
     if (at.who === "person") return { by: at.person };
     if (at.who === "discover") return { discover: true };
     if (at.who === "space") return { board: at.space.id };
-    return s === "mine" ? { by: me } : s === "saved" ? { saved: true } : { feed: true };
+    // Yours, Following, Friends, Saved, Shared: `where`'s pages, each read by the one feed.
+    return { via: true, saved: at.saved };
   };
   // A public space's video seen from OUTSIDE (Discover, a followed space): `items.outsideOf`.
   const outsideOf = items.outsideOf;
@@ -71,12 +72,9 @@ export async function mount(ctx, el) {
   };
 
   function top(w) {
-    // THE TABS (`where`'s, in every app's order): Following · yours · Saved · Discover; Upload where you may.
+    // THE TABS (`where`'s, the same in every app): Home · Discover · You (yours, following, friends, saved, shared); Upload.
     at.tabs([], {
-      yoursOn: !!w.feed && !w.saved,
-      feed: true, // (its own page is what you follow: the side panel's Following)
-      // Yours first, as every app's: your channel, then the feed of those you follow.
-      before: [{ label: C.mine, href: `#/${C.app}/mine`, on: w.by === me }],
+      yoursOn: !!w.via && !at.saved && !at.shared && !at.following && !at.friends,
       create: { label: "Upload", href: at.space ? `${base()}/up` : `#/${C.app}/up`, on: !!w.up },
     });
     // In a space, it is a CHANNEL (the space named in this app's own words).
@@ -104,7 +102,7 @@ export async function mount(ctx, el) {
     listView = ctx.view(host, {
       // SAVED: `where`'s (what you saved, of this app's kinds).
       read: async () => {
-        const vs = w.saved ? await at.read() : bar.reorder(await items.list(w, bar.sort(), VIDEO, bar.options()));
+        const vs = w.via ? bar.reorder(await at.read({ sort: bar.sort(), ...bar.options() })) : bar.reorder(await items.list(w, bar.sort(), VIDEO, bar.options()));
         return bar.kind() ? vs.filter(v => v.kind === bar.kind()) : vs;
       },
       draw: shown => h("div", {}, h("div", { className: C.picture ? "wall" : `grid${C.audio ? " sq" : C.shelf ? " shelf" : ""}` }, ...shown.map(card)), w.saved ? null : bar.older("Older", shown.length)),

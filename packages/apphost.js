@@ -359,7 +359,7 @@ export async function start(ctx) {
     // A READ (by its exact name) needs no gesture; EVERY OTHER call — a capability's or a handle's (a step a call gave
     // back, named by its key) — only on the person's gesture. Fails closed: a read not named here is refused until named
     // (a visible refusal), never a write let through because its name was not on a list (fx 10-15: \`delegate\` was not).
-    const READS = new Set(["bagOf", "get", "list", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level", "settled", "ready",
+    const READS = new Set(["bagOf", "get", "list", "feed", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level", "settled", "ready",
       // (10-16, from what the framed apps' code calls — and the methods of what those calls return.)
       "allows", "asked", "askedCodes", "boardOf", "boards", "following", "history", "keepers", "mayOpen", "nsfwShown", "outsideOf", "personalPolicy",
       "pins", "labels", "people", "prefs", "progress", "publicIn", "publicSpace", "publicSpaces", "range", "reaches", "visible", "waiting", "page", "pages",
@@ -380,8 +380,13 @@ export async function start(ctx) {
     frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
     const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";
     frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
-      <style>html,body{height:auto!important;min-height:0!important;margin:0;background:transparent}#cw-app{display:flow-root}</style></head>
+      <style>html,body{height:100%;margin:0;background:transparent}body{overflow-y:auto}#cw-app{display:flow-root}</style></head>
       <body><div id="cw-app"></div><script>${RUNTIME_CTX}</script></body></html>`;
+    // EVERY APP FILLS ITS AREA, as Chat (owner 10-21: "every app should be like chat"): the frame the whole area, its
+    // own page scrolling inside it — never a frame as tall as its content in a scrolling host.
+    el.classList.add("cw-fill");
+    frame.style.height = "100%";
+    frame.style.minHeight = "0";
     el.replaceChildren(frame);
     const whereNow = () => ({ route: ctx.route, sub: ctx.sub ?? "", space: ctx.space ?? null });
     const ops = {
@@ -480,7 +485,7 @@ export async function start(ctx) {
           href: /^#\//.test(e?.href) ? e.href : undefined,
           on: !!e?.on,
           end: !!e?.end,
-          role: ["discover", "feed", "you", "create"].includes(e?.role) ? e.role : undefined,
+          role: ["home", "discover", "you", "create"].includes(e?.role) ? e.role : undefined,
           ...(Number.isInteger(e?.run) ? { run: () => frame.contentWindow?.postMessage({ event: "run", i: e.run }, "*") } : {}),
         }));
         (await ctx.require("where")).menu(list);

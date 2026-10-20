@@ -110,7 +110,8 @@ export async function mount(ctx, el) {
     const list = h("div", { className: "list" }, theme.loading("Reading the articles…"));
     const sp = at.space;
     const r = sp ? await (await ctx.require("roles")).of(sp) : null;
-    const feed = at.sub === "feed";
+    // (Yours, Following, Friends, Saved, Shared: `where`'s, each read by the one feed.)
+    const feed = at.who === "mine" && !at.person;
     const title = feed ? "Following" : at.who === "discover" ? "🧭 Public articles" : sp ? `📰 ${space.shown(sp)}` : at.who === "person" ? null : "✍️ Your blog";
     const head = h("div", { className: "head" }, title ? h("h2", { textContent: title }) : h("h2", {}, directory.nameEl(at.person, "span")));
     // FOLLOW: the one follow — a person's menu (Follow, message …), as Board's; a space's is the side panel's (Join, Follow).
@@ -126,7 +127,7 @@ export async function mount(ctx, el) {
     const chips = h("div", { className: "chips" });
     root.replaceChildren(head, h("div", { className: "sorts" }, bar.el()), chips, list);
     const where = feed ? { feed: true } : at.who === "discover" ? { discover: true } : sp ? { board: sp.id } : { by: at.person ?? me };
-    const all = bar.reorder((await items.list(where, bar.sort(), "post", bar.options())).filter(it => press.isArticle(it) && !it.private));
+    const all = bar.reorder((await (feed ? at.read({ kinds: ["post"], sort: bar.sort(), ...bar.options() }) : items.list(where, bar.sort(), "post", bar.options()))).filter(it => press.isArticle(it) && !it.private));
     // Its TAGS (what the read articles carry): a filter, newest first within it.
     const counts = new Map();
     for (const it of all) for (const t of items.tagsOf(it)) if (t !== "nsfw") counts.set(t, (counts.get(t) ?? 0) + 1);
@@ -397,11 +398,10 @@ export async function mount(ctx, el) {
     at.tabs(
       [
         ...(at.who === "space" ? [{ label: "Articles", href: base(), on: !s }] : []),
-        ...(mine || at.who === "discover" ? [{ label: "Following", href: "#/blog/feed", on: mine && s === "feed", role: "feed" }] : []),
         ...(at.who === "space" && editor ? [{ label: "Review", href: at.href("review"), on: s === "review" }] : []),
         ...(mine || at.who === "discover" || at.who === "space" ? [{ label: "Drafts", href: "#/blog/drafts", on: mine && s === "drafts" }] : []),
       ],
-      { yoursOn: mine && (!s || s.startsWith("t/")) && s !== "feed", create: { label: "Write", href: at.space ? at.href("write") : "#/blog/write", on: s === "write" || s.startsWith("write/") } },
+      { yoursOn: mine && (!s || s.startsWith("t/")), create: { label: "Write", href: at.space ? at.href("write") : "#/blog/write", on: s === "write" || s.startsWith("write/") } },
     );
     view?.stop();
     view = null;

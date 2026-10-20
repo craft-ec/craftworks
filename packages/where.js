@@ -20,6 +20,7 @@
 //   at.tabs(extra, { yoursOn, before, create })   // the header's tabs, in every app's ONE order: `before` (views
 //                                 // ahead of yours), Yours, the extras, Saved, Discover — then `create` ("＋ …"),
 //                                 // always last and shown wherever the tabs are (Saved, Discover too): it makes yours
+//   where.spacesPage(host, app)   // DISCOVER: the public spaces that have the app (the loader draws it)
 //   where.personOf()  // the person whose space is open, else null
 //   where.key()       // the address as a key (an app redraws when it changes)
 //   where.onMove(el, draw)   // the app drawn again for each new address of its own, while `el` is on the page
@@ -28,13 +29,6 @@ export async function start(ctx) {
   const { Fault } = await ctx.require("fault");
   const [space, items, roles] = await Promise.all(["space", "items", "roles"].map(n => ctx.require(n)));
   const personOf = () => (ctx.space ? null : (/^u\/(did:[^/]+)/.exec(ctx.sub ?? "")?.[1] ?? null));
-
-  // A SAVED item, read where it is (a space's this person is not in: from outside, by its public description).
-  async function getSaved(ref) {
-    const outside = await items.outsideOf(ref);
-    if (String(ref).startsWith("space:") && !outside && !(await items.boardOf.strict(ref.slice(6, ref.indexOf("/"))))) return null;
-    return items.get(ref, { outside });
-  }
 
   async function of({ kind, kinds = [kind], app = ctx.route.replace(/^\//, ""), yours = "Yours", saves = true } = {}) {
     const me = await space.me.strict();
@@ -81,18 +75,17 @@ export async function start(ctx) {
     const saved = saves && who === "mine" && /^saved(\/|$)/.test(sub);
     // SHARED: items shared with chosen people (`share`: each in its own group) — by this person or with them.
     const shared = saves && who === "mine" && /^shared(\/|$)/.test(sub);
+    // WHO YOU FOLLOW, YOUR FRIENDS: their items of this app (the one feed's sources).
+    const following = !!me && who === "mine" && /^following(\/|$)/.test(sub);
+    const friends = !!me && who === "mine" && /^friends(\/|$)/.test(sub);
     // THE READ: the place's items — a list's window, or (whole) every one; your Saved: what you saved of its kinds.
     const read = ctx.total("where.read", () => [], ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
-      if (saved)
-        return ctx
-          .require("actions")
-          .then(async a => Promise.all((await a.saved()).map(getSaved)))
-          // NSFW as every list (`items.visible`).
-          .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
-      if (shared) return ctx.require("share").then(async sh => items.visible(await items.inPlaces.strict({ spaces: await sh.groups() }, ks, { withVotes: false })));
-      if (who === "discover") return items.list.strict({ discover: true }, sort, ks, { window, ...options });
+      // THE ONE FEED (`items.feed`): each page its source — Saved, Shared, Following, Friends, Home (the public).
+      const src = saved ? { saved: true } : shared ? { shared: true } : following ? { following: true } : friends ? { friends: true } : who === "discover" ? { home: true } : null;
+      if (src) return items.feed.strict(src, { kinds: ks, sort, window, ...options });
       if (whole) return items.inPlaces.strict(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
-      return items.list.strict(sp?.outside ? { outside: sp } : sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
+      // YOURS (owner 10-20): your items — your personal space's and what you wrote in the spaces you are in.
+      return items.feed.strict(sp?.outside ? { space: sp, outside: true } : sp ? { space: sp.id } : person ? { person } : { yours: true }, { kinds: ks, sort, window, ...options });
     });
     // THE TABS, in the same order in every app: in your space, the app's own page ("Your …"), then the app's extras,
     // then Discover (an app with a public side); elsewhere the extras alone.
@@ -114,22 +107,30 @@ export async function start(ctx) {
       settingsRead.then(ok => ok && ((mayConfigure = true), draw()));
       const draw = () => {
       const home = who === "mine" || who === "discover";
+      // THE SIDE PANEL, the same in every app (owner 10-21): HOME (the public items), DISCOVER (the public spaces with
+      // this app), YOU (yours, following, friends, saved, shared, the app's own), then the spaces (`places.side`).
+      const top = [
+        { label: "Home", href: `#/discover/${app}`, on: who === "discover" && !/^spaces(\/|$)/.test(sub), role: "home" },
+        { label: "Discover", href: `#/discover/${app}/spaces`, on: who === "discover" && /^spaces(\/|$)/.test(sub), role: "discover" },
+      ];
       // A GUEST: nothing of theirs (Yours, Saved) and nothing to make — Log in instead; once in, the page starts again
       // (as at Log out: nothing made for the guest reaches the session).
       ctx.actions[ctx.route] = !me
         ? [
-            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover", role: "discover" }] : []),
+            ...top,
             ...extra.filter(e => e.public).map(e => ({ role: "you", ...e })),
             { label: "Log in", run: async () => (await (await ctx.require("login")).session()) && location.reload(), end: true, role: "create" },
           ]
         : [
-            ...(home ? before.map(e => ({ role: "you", ...e })) : []),
-            ...(home || sp ? [{ label: yours, href: `#/${app}`, on: who === "mine" && !saved && yoursOn, role: feed && !sp ? "feed" : "you" }] : []),
+            ...top,
+            ...before.map(e => ({ role: "you", ...e })),
+            { label: yours, href: `#/${app}`, on: who === "mine" && !saved && !shared && !following && !friends && yoursOn, role: "you" },
+            { label: "Following", href: `#/${app}/following`, on: following, role: "you" },
+            { label: "Friends", href: `#/${app}/friends`, on: friends, role: "you" },
+            ...(saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved, role: "you" }] : []),
+            ...(saves ? [{ label: "Shared", href: `#/${app}/shared`, on: shared, role: "you" }] : []),
             ...extra.map(e => ({ role: "you", ...e })),
             ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings", role: "you" }] : []),
-            ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved, role: "you" }] : []),
-            ...(home && saves ? [{ label: "Shared", href: `#/${app}/shared`, on: shared, role: "you" }] : []),
-            ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover", role: "discover" }] : []),
             ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true, role: "create" }] : []),
           ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
@@ -149,7 +150,47 @@ export async function start(ctx) {
       host.replaceChildren(page ?? Object.assign(document.createElement("p"), { textContent: "This app has no settings of its own." }));
       return true;
     };
-    return { settings, who, saved, shared, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+    return { settings, who, saved, shared, following, friends, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || following || friends || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+  }
+  // AN APP's DISCOVER PAGE (`#/discover/<app>/spaces`): the public spaces that have this app on — each opened, joined
+  // or followed there (`join-button`). The same page for every app (the loader draws it in the app's place).
+  async function spacesPage(host, app) {
+    const h = (await ctx.require("theme")).h;
+    const shown = ctx.apps.find(a => a.route === `/${app}`);
+    // ITS SIDE PANEL, as on every page of the app (`tabs`: Home · Discover · You · Spaces).
+    (await of({ kind: (await ctx.require("kinds")).inDomain?.(shown?.needs?.[0] ?? "")?.[0] ?? "post", app })).tabs([]);
+    host.classList.add("cw-discover-spaces");
+    const css = h("style", { textContent: `@layer components {
+      .cw-discover-spaces .ds { display: grid; gap: var(--cw-space-3); padding: var(--cw-space-3) var(--cw-gutter); }
+      .cw-discover-spaces .ds h2 { margin: 0; }
+      .cw-discover-spaces .ds .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--cw-space-3); }
+      .cw-discover-spaces .ds .card { display: grid; gap: 8px; padding: var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); background: var(--cw-surface); }
+      .cw-discover-spaces .ds .card a.name { font-weight: 600; color: var(--cw-fg); text-decoration: none; }
+      .cw-discover-spaces .ds .about { color: var(--cw-muted); font-size: var(--cw-text-sm); margin: 0; }
+    }` });
+    const box = h("div", { className: "ds" });
+    host.replaceChildren(css, box);
+    ctx.view(box, {
+      read: async () => {
+        const all = await items.publicSpaces();
+        const on = await Promise.all(all.map(d => ctx.optional("where: a space's apps", (async () => {
+          const pr = await roles.ofPublic.strict(d);
+          await pr.settled;
+          return (await pr.apps()).includes(app) ? pr : null;
+        })(), () => null)));
+        return all.map((d, i) => on[i] && { d, pr: on[i] }).filter(Boolean);
+      },
+      empty: list => !list.length,
+      draw: async list => {
+        const join = await ctx.require("join-button");
+        const cards = await Promise.all(list.map(async ({ d, pr }) => h("div", { className: "card" },
+          h("a", { className: "name", href: `#/s/${d.id}/${app}`, textContent: d.name || `A space #${d.id.slice(0, 6)}` }),
+          d.about ? h("p", { className: "about", textContent: String(d.about).slice(0, 200) }) : null,
+          await ctx.optional("where: join", join.control(d, { open: `#/s/${d.id}/${app}`, policy: pr.policy("", "join") }), () => null))));
+        return h("div", { style: "display:contents" }, h("h2", { textContent: `Spaces with ${shown?.name ?? app}` }), h("div", { className: "grid" }, ...cards));
+      },
+      looks: { empty: () => h("p", { textContent: `No public space has ${shown?.name ?? app} yet.` }) },
+    });
   }
   // A MENU of an OS page's own (Settings' sections, Mail's folders, the token pages): the ONE door for an app's entries
   // besides `tabs` — each its ROLE (`you`, or `create` for an ending action), told to the header and the side panel.
@@ -173,5 +214,5 @@ export async function start(ctx) {
     addEventListener("craftworks:route", moved);
     return () => removeEventListener("craftworks:route", moved); // (stop: an app mounted again in the same element)
   }
-  return { of, menu, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
+  return { of, menu, spacesPage, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

@@ -449,6 +449,11 @@ export async function run(boot) {
       // permission the manifest shows: Drive every kind's files, Captions the videos it captions).
       const domainsOf = mod => [...new Set((manifest.apps ?? []).filter(a => { const p = manifest.pages?.[a.route]; return (Array.isArray(p) ? p : p?.body ?? []).includes(mod); }).flatMap(a => [...(a.needs ?? []), ...(a.reads ?? [])]))];
       let mod = grants ? { mount: async (c, host) => (await require("apphost")).mountCtx(host, { app: name, module: name, uses: grants, domains: domainsOf(name) }) } : await require(name);
+      // AN APP's DISCOVER (`#/discover/<app>/spaces`, owner 10-21): the public spaces that have the app — a system page,
+      // the same for every app, drawn in the app's place (`where.spacesPage`).
+      const appEntry = (manifest.apps ?? []).find(a => a.route === ctx.route);
+      if (appEntry && ctx.space === "discover" && /^spaces(\/|$)/.test(ctx.sub ?? "") && domainsOf(name).length)
+        mod = { mount: async (c, host) => (await require("where")).spacesPage(host, appEntry.route.slice(1)) };
       // AN APP NOT RUN HERE (a page published as BYTES, not a module): run in its OWN FRAME by the app host, with the
       // system API only (FOUNDATION.md §3, "Apps are installed").
       if (mod instanceof Uint8Array) {

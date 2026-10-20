@@ -11,6 +11,7 @@
 //   await codoc.state(ref)                     // { text, marks, mayEdit, v, title } — `v` grows with every change seen
 //   await codoc.splice(ref, pos, del, insert)  // an edit (positions: UTF-16 units, a text field's) → { text, v }
 //   await codoc.mark(ref, start, end, name, value, on)
+//   await codoc.set(ref, key, value)   // a cell (a sheet's `c:A1`, a slide's `s:<id>:title`; null: cleared); state's `cells`
 //   await codoc.snapshot(ref)   await codoc.seed(ref, snapshot)   // the document moved with its item (`share.moveTo`)
 // Every call takes and gives plain values: an app in its own frame reaches it through the host.
 export async function start(ctx) {
@@ -19,6 +20,10 @@ export async function start(ctx) {
   await glue.default({ module_or_path: await ctx.require("doc-wasm") });
   // THIS PAGE's ACTOR: its own (every concurrent writer one of its own — two devices of one account too).
   const actor = crypto.getRandomValues(new Uint8Array(16));
+  // ITS KINDS: the catalog's co-edited ones (`kinds.coedited`: a document — its text and marks —, a spreadsheet and a
+  // presentation — their CELLS).
+  const K = await ctx.require("kinds");
+  const KINDS = { has: kind => K.coedited(kind) };
   const spaceOf = ref => (String(ref).startsWith("space:") ? String(ref).slice(6, String(ref).indexOf("/")) : null);
   const b64 = bytes => btoa(Array.from(bytes, c => String.fromCharCode(c)).join(""));
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -38,12 +43,17 @@ export async function start(ctx) {
         ref,
         (async () => {
           const it = await items.get(ref);
-          if (!it || it.kind !== "doc") throw new Error("not a document");
+          if (!it || !KINDS.has(it.kind)) throw new Error("not a document, a spreadsheet or a presentation");
           const sid = spaceOf(ref);
           const sp = sid ? ((await space.mine.strict()).find(s => s.id === sid) ?? null) : null;
           if (sid && !sp) throw new Error("not in that space");
-          const t = await storage.table(`doc-${it.id}`, sp);
-          await t.settled;
+          // WHERE ITS CHANGES ARE: a space's table (its members'); a PUBLIC one of a person's own space, their public
+          // tail (`directory.publicOf`: anyone reads it, only their account writes it — 10-21, a doc made public read
+          // empty by everyone else: each reader opened a table of their OWN); a private one, its maker's own table.
+          const pub = !sid && !it.private;
+          const t = pub ? await (await ctx.require("directory")).publicOf(it.by, `doc-${it.id}`) : await storage.table(`doc-${it.id}`, sp);
+          if (!t) throw new Error("its maker's public tables are not known here yet");
+          await (pub ? t.answer() : t.settled);
           const r = sp ? await roles.of.strict(sp) : null;
           if (r) await r.settled;
           const R = await ctx.require("roles");
@@ -52,7 +62,7 @@ export async function start(ctx) {
             const w = r.author(row);
             if (!w) return false;
             if (w === it.by) return true;
-            return R.mayWrite({ action: "edit", item: { kind: "doc", by: it.by, meta: it.meta }, writer: w, r, at: Number(parse(row.value)?.at) || Infinity }) === true;
+            return R.mayWrite({ action: "edit", item: { kind: it.kind, by: it.by, meta: it.meta }, writer: w, r, at: Number(parse(row.value)?.at) || Infinity }) === true;
           };
           if (r && t.admit) {
             t.admit(admitted);
@@ -100,11 +110,13 @@ export async function start(ctx) {
     const me = await space.me.strict();
     if (o.it.by === me) return true;
     if (!o.r) return false;
-    return (await ctx.require("roles")).mayWrite({ action: "edit", item: { kind: "doc", by: o.it.by, meta: o.it.meta }, writer: me, r: o.r }) === true;
+    return (await ctx.require("roles")).mayWrite({ action: "edit", item: { kind: o.it.kind, by: o.it.by, meta: o.it.meta }, writer: me, r: o.r }) === true;
   }
 
-  async function create({ board = null, title = "", audience = null } = {}) {
-    const ref = await items.submit({ board, title: String(title).trim() || "Untitled document", body: "", kind: "doc", audience: audience ?? (board ? "members" : "private") });
+  async function create({ board = null, title = "", audience = null, kind = "doc" } = {}) {
+    if (!KINDS.has(kind)) throw new Error(`not a kind written together: ${kind}`);
+    const untitled = { doc: "Untitled document", sheet: "Untitled spreadsheet", deck: "Untitled presentation" }[kind];
+    const ref = await items.submit({ board, title: String(title).trim() || untitled, body: "", kind, audience: audience ?? (board ? "members" : "private") });
     const o = await open(ref);
     // ITS MAKER's FIRST CHANGE: the text object everyone else starts from (the only one: a second would be a second text).
     if (!o.seen.size) {
@@ -120,13 +132,15 @@ export async function start(ctx) {
     const o = await open(ref);
     let text = "";
     let marks = [];
+    let cells = {};
     try {
       text = o.doc.text();
       marks = JSON.parse(o.doc.marks());
+      cells = JSON.parse(o.doc.cells());
     } catch {
       // (Its maker's first change not read yet: empty, said by `ready`.)
     }
-    return { text, marks, v: o.v, ready: o.seen.size > 0, mayEdit: await mayEdit(o), title: o.it.title };
+    return { text, marks, cells, v: o.v, ready: o.seen.size > 0, mayEdit: await mayEdit(o), title: o.it.title, kind: o.it.kind };
   }
 
   async function splice(ref, pos, del, insert = "") {
@@ -141,6 +155,14 @@ export async function start(ctx) {
     if (!(await mayEdit(o))) throw new Error("you may read this document, not edit it");
     write(o, o.doc.mark(start, end, name, value ?? undefined, on));
     return { marks: JSON.parse(o.doc.marks()), v: o.v };
+  }
+
+  // A CELL set (a sheet's cell, a slide's field; `value` null: cleared) → its cells now.
+  async function set(ref, key, value = null) {
+    const o = await open(ref);
+    if (!(await mayEdit(o))) throw new Error("you may read this, not edit it");
+    write(o, o.doc.set(String(key), value == null ? undefined : String(value)));
+    return { v: o.v };
   }
 
   // ITS WHOLE DOCUMENT, to move with it (`share.moveTo`): a snapshot (every change, compacted) — and, in its new place,
@@ -161,5 +183,5 @@ export async function start(ctx) {
     await o.t.put(key, JSON.stringify({ at: Date.now(), c: snap }));
   }
 
-  return { create, state, splice, mark, snapshot, seed };
+  return { create, state, splice, mark, set, snapshot, seed };
 }

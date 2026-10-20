@@ -10,8 +10,9 @@ import { join } from "node:path";
 
 const root = process.argv[2] ?? new URL("..", import.meta.url).pathname;
 const pkgs = join(root, "packages");
-// Screens that hand their element to a view elsewhere (`places.side`, the Settings page, a space's home).
-const DELEGATES = new Set(["places-side", "settings", "space-home"]);
+// Screens that hand their element to a view elsewhere (`places.side`, the Settings page, a space's home; the office apps
+// to `office-app`, whose one view draws Docs, Sheets and Slides).
+const DELEGATES = new Set(["places-side", "settings", "space-home", "docs", "sheets", "slides"]);
 // SCREENS NOT YET ON A VIEW (10-15): only ever shorter.
 const NOT_YET = new Set([]);
 const bad = [];

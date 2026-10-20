@@ -12,7 +12,9 @@ export function mount(ctx, el) {
       .bar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--cw-line); height: var(--cw-bar); box-sizing: border-box;
         font-size: var(--cw-text-sm); }
         border-radius: var(--cw-radius-sm); max-width: 16em; min-width: 6em; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .bar .name { font-weight: 600; }
+      .bar .name { font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+      .bar .name .close { border: 0; background: none; color: var(--cw-muted); font: inherit; font-size: 1.1em; line-height: 1; padding: 2px 6px; border-radius: var(--cw-radius-sm); cursor: pointer; }
+      .bar .name .close:hover, .bar .name .close:focus-visible { background: var(--cw-hover); color: var(--cw-fg); }
       .bar .end { margin-left: auto; }
       .bar .find { position: relative; }
       .bar .find > input { font: inherit; padding: 2px 10px; border-radius: var(--cw-radius-pill); border: 1px solid var(--cw-line); width: 14em; background: var(--cw-surface); color: inherit; }
@@ -221,7 +223,11 @@ export function mount(ctx, el) {
     const box = el.querySelector(".name");
     const app = ctx.apps.find(a => a.route === ctx.route);
     const here = ctx.route === "/" || ctx.route === "/space" ? "Home" : ctx.route === "/settings" ? "Settings" : (app?.name ?? "");
-    box.replaceChildren(app ? `${app.icon ?? ""} ${here}` : here);
+    // CLOSE THE APP (×, beside its name): back where it was opened from — a space's home in a space, yours otherwise.
+    const close = app && ctx.route !== "/" && ctx.route !== "/space"
+      ? Object.assign(document.createElement("button"), { type: "button", className: "close", textContent: "×", title: `Close ${app.name}`, ariaLabel: `Close ${app.name}`, onclick: () => (location.hash = ctx.space && ctx.space !== "discover" ? `#/s/${ctx.space}` : "#/") })
+      : null;
+    box.replaceChildren(app ? `${app.icon ?? ""} ${here}` : here, ...(close ? [close] : []));
   }
 
   // THE SPACE you are in: its name (logged in); a click opens the spaces panel. What is unread in your other spaces on it.

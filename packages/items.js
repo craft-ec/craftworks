@@ -17,6 +17,8 @@
 //   const items = await ctx.require("items");   (Board names it `posts`: its lens)
 //   await posts.submit({ board, title, body, kind })  // `board`: a space's id, or none (this person's profile): its ref
 //                                                     // (`kind`: "post", or "video")
+//   await items.feed(source, { kinds, sort, window, tag })   // THE ONE FEED: { home } { space } { person } { yours }
+//                                                     // { following } { friends } { saved } { shared } { feed }
 //   await items.list({ board } | { by } | { feed }, sort, kind, { window })   // (`kind`: a kind, or kinds — a domain's;
 //                                                     // `window`: "day" | "week" | "month" | days | "all" — what is read)
 //                                                     // a space's board, a profile, or the FEED (the PERSONAL
@@ -40,7 +42,7 @@ const normalTags = text =>
 const isNsfw = it => tagsOf(it).includes(NSFW);
 // (`site()`: this site's address, before its `#`.)
 function pure(kinds, site) {
-  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki", vote: "vote", doc: "docs", bundle: "bundle" };
+  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki", vote: "vote", doc: "docs", sheet: "sheets", slides: "slides", bundle: "bundle" };
   // A kind with an app of its own (a paste: Paste, though of the note family) first; else its domain's.
   const APP_OF_KIND = { paste: "paste" };
   const appOf = kind => APP_OF_KIND[kind] ?? APP_OF[kinds.domain(kind)] ?? "board";
@@ -153,7 +155,7 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, captions — so any app on it opens
   // the place (a space with Video and no Board still takes videos).
-  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog", "wiki", "vote", "docs"];
+  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog", "wiki", "vote", "docs", "sheets", "slides"];
   const boards = async () => {
     const all = await space.mine.strict();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
@@ -662,46 +664,73 @@ export async function start(ctx) {
     // A tag its author put, or others did (the tag signal).
     return out.filter(p => (!where.tag || tagsOf(p).includes(where.tag) || !!p.counts?.tag?.[where.tag]) && (nsfw || p.by === self || !isNsfw(p)));
   }
-  async function list(where = {}, sort = "hot", kind = "post", { window = sort === "new" ? 30 : "week", by = "votes" } = {}) {
-    const kinds = kindsFor(kind);
-    const inWindow = (at, w = window) => sinceOf(w) == null || at >= sinceOf(w);
-    let out;
-    // A space's PUBLIC board, seen from outside (`where.outside`: its description); DISCOVER: every public space's.
-    if (where.outside) out = await pointedPosts(kinds, sinceOf(window) ?? 0, { space: where.outside });
-    // DISCOVER: what its bags list (ARCHITECTURE §1) — public spaces' items and people's public profile items, each
-    // read from exactly where its pointer names; nobody who did not post is asked for anything.
-    else if (where.discover) out = await pointedPosts(kinds, sinceOf(window) ?? 0);
-    // DISCOVER is filtered by the moderation lists this person applies (theirs, and whom they chose).
-    if (where.outside || where.discover) {
-      const lists = await (await ctx.require("moderation")).lists();
-      out = out.filter(p => !lists.flagged({ by: p.by, id: p.id, ref: p.ref, space: p.board?.id }));
+  // THE ONE FEED (owner 10-20: "all app and capability need to use the single feed for all"): a feed is a history of
+  // items composed from its SOURCE — what it covers, nothing else; reading, what is shown (the moderation lists this
+  // person applies, NSFW, a tag), the window and the order are this one pipeline for every feed of every app.
+  //   { home }              the global public items (what public spaces and people list)
+  //   { space: id | desc }  a space's: its tables where this person is a member (its audiences' too), else its public
+  //   { person: did }       a person's personal space (yours: your private items too)
+  //   { yours }             your items: your personal space's, and what you wrote in the spaces you are in
+  //   { following }         who and what you follow (people's personal spaces, spaces' public)
+  //   { friends }           your friends' personal spaces
+  //   { saved }             what you saved     { shared }   what is shared with you (`share`'s groups)
+  //   { feed }              your spaces, whom you follow, your friends, yourself (a person's home stream)
+  // (Before: each place its own path, and the moderation lists applied to Discover alone — a post hidden still showed
+  // in a space; a space's public post on its board and not in the public feed, 10-20.)
+  async function fromSource(src, kinds, since, window) {
+    // (A board read within the feed's window: what a list shows is that span of the place, never all of it.)
+    const boardsOf = sps => Promise.all(sps.map(sp => ctx.optional("items: boardPosts", boardPosts(sp, { kinds, window }), () => []))).then(x => x.flat());
+    if (src.home) return pointedPosts(kinds, since);
+    if (src.space) {
+      const id = typeof src.space === "string" ? src.space : src.space.id;
+      const sp = (await space.mine.strict()).find(x => x.id === id);
+      if (sp && !src.outside) return boardsOf([sp, ...(await audienceGroups(sp))]);
+      const desc = typeof src.space === "object" ? src.space : await publicSpace(id);
+      if (!desc) throw new Error("you are not in that space, and it lists nothing in public");
+      return pointedPosts(kinds, since, { space: desc });
     }
-    else if (where.board) {
-      const sp = await boardOf(where.board);
-      if (!sp) throw new Error("you are not in that board's space: join it with an invite");
-      // Its AUDIENCES' groups this person is in (what only a role reads): read with it.
-      out = (await Promise.all([sp, ...(await audienceGroups(sp))].map(g => ctx.optional("items: boardPosts", boardPosts(g, { kinds, window }), () => [])))).flat();
-    } else if (where.feed) {
-      // The FEED: every space followed or joined — the spaces this person is in, the people they follow (their
-      // personal spaces) and the shared spaces they follow (read from outside).
-      // All at once — never one part after another (each read bounded where it is read: `storage`).
-      const t0 = performance.now();
-      const took = (what, p) => p.then(x => (performance.now() - t0 > WAIT.hint && ctx.log("posts", { what: `the feed: ${what} (slow)`, ms: Math.round(performance.now() - t0) }), x));
-      const [bs, people, fs] = await Promise.all([took("its spaces known", boards()), took("whom it follows known", following()), took("the spaces it follows known", followedSpaces())]);
-      out = (
+    if (src.person) return profilePosts([src.person], [], kinds, since);
+    const self = await me();
+    const people = await edge.people();
+    if (src.yours) return [...(await profilePosts([self], [], kinds, since)), ...(await boardsOf(await boards())).filter(p => p.by === self)];
+    if (src.following) {
+      const dids = people.list("follow").filter(d => d.startsWith("did:"));
+      return [...(await profilePosts(dids, [], kinds, since)), ...(await Promise.all((await followedSpaces()).map(d => ctx.optional("items: pointedPosts", pointedPosts(kinds, since, { space: d }), () => [])))).flat()];
+    }
+    if (src.friends) return profilePosts(people.list("friend").filter(d => d.startsWith("did:")), [], kinds, since);
+    if (src.saved) {
+      const refs = await (await ctx.require("actions")).saved();
+      return (await Promise.all(refs.map(async ref => ctx.optional("items: saved", get(ref, { outside: await outsideOf(ref) }), () => null)))).filter(Boolean);
+    }
+    if (src.shared) return boardsOf(await (await ctx.require("share")).groups());
+    if (src.feed) {
+      const [bs, ps, fs] = await Promise.all([boards(), following(), followedSpaces()]);
+      return (
         await Promise.all([
-          took("its spaces' boards read", Promise.all(bs.map(sp => ctx.optional("items: boardPosts", boardPosts(sp, { kinds, window }), () => [])))).then(x => x.flat()),
-          took("followed spaces read", Promise.all(fs.map(d => ctx.optional("items: pointedPosts", pointedPosts(kinds, sinceOf(window) ?? 0, { space: d }), () => [])))).then(x => x.flat()),
-          took("profiles read", profilePosts([await me(), ...people], [], kinds, sinceOf(window) ?? 0)),
+          boardsOf(bs),
+          Promise.all(fs.map(d => ctx.optional("items: pointedPosts", pointedPosts(kinds, since, { space: d }), () => []))).then(x => x.flat()),
+          profilePosts([self, ...ps], [], kinds, since),
         ])
       ).flat();
-    } else {
-      // A PERSON's SPACE: what is in their personal space (their profile, and — yours — your private items). What they
-      // posted in a shared space is that space's, read there: never every board on the network searched for them.
-      const by = where.by ?? (await me());
-      out = await profilePosts([by], [], kinds, sinceOf(window) ?? 0);
     }
-    return (await shownOf(out.filter(p => inWindow(p.at)), where)).sort(sorter(sort, by));
+    throw new Error(`not a feed's source: ${JSON.stringify(src).slice(0, 80)}`);
+  }
+  async function feed(src = { home: true }, { kinds: kind = "post", sort = "hot", window = sort === "new" ? 30 : "week", by = "votes", tag = null } = {}) {
+    const kinds = kindsFor(kind);
+    const since = sinceOf(window) ?? 0;
+    const t0 = performance.now();
+    const read = await fromSource(src, kinds, since, window);
+    if (performance.now() - t0 > WAIT.hint) ctx.log("posts", { what: `the feed ${Object.keys(src).join("+")}: read slowly`, ms: Math.round(performance.now() - t0) });
+    // ONE PIPELINE: each item once, in its window, as the moderation lists this person applies leave it, NSFW and a tag.
+    const lists = await (await ctx.require("moderation")).lists();
+    const once = new Set();
+    const kept = read.filter(p => p && !once.has(p.ref) && once.add(p.ref) && (since === 0 || p.at >= since) && !lists.flagged({ by: p.by, id: p.id, ref: p.ref, space: p.board?.id }));
+    return (await shownOf(kept, { tag })).sort(sorter(sort, by));
+  }
+  // A LIST, as it was asked before the one feed (`where`, every app): the same feed, its source named the old way.
+  function list(where = {}, sort = "hot", kind = "post", opts = {}) {
+    const src = where.outside ? { space: where.outside, outside: true } : where.discover ? { home: true } : where.board ? { space: where.board } : where.feed ? { feed: true } : { person: where.by ?? null };
+    return (src.person === null ? me().then(by => feed({ person: by }, { kinds: kind, sort, tag: where.tag, ...opts })) : feed(src, { kinds: kind, sort, tag: where.tag, ...opts }));
   }
 
   async function get(ref, { outside = null } = {}) {
@@ -738,6 +767,31 @@ export async function start(ctx) {
     return (await profilePosts([whereOf(ref)], await pointersTo(ref), [...TOP])).find(p => p.ref === ref) ?? null;
   }
 
+  // WHERE AN ITEM GOES for who is to see it (the one routing: `submit`, and an item moved — `share.relocate`): the
+  // place (a space, a group sealed to its audience, a circle, or yours: null) and its audience there ("public",
+  // "members", "private"). `place`: that place's description, where it is a space.
+  async function route({ board = null, audience = "public", kind = "post", title = "", meta = {} }) {
+    // ONLY YOU, IN A SPACE: a group of its own (`share.privateIn`: its maker alone, kept to the space) — shared later.
+    if (board && audience === "private") {
+      board = (await (await ctx.require("share")).privateIn(board, kind, title)).id;
+      audience = "members";
+    }
+    // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
+    if (!board && (audience === "friends" || audience === "followers")) {
+      board = (await (await ctx.require("circles")).of(audience)).id;
+      audience = "members";
+    }
+    // A SPACE's AUDIENCE narrower than its members (a role's holders, the admins, the owner): an item of that
+    // audience's GROUP (`conversation.audience`: sealed to them alone), whatever its kind.
+    if (board && (String(audience).startsWith("role:") || String(audience).startsWith("list:") || audience === "admins" || audience === "owner")) {
+      const parent = await boardOf(board);
+      if (!parent) throw await notInBoard(board);
+      board = (await (await ctx.require("conversation")).audience(parent, audience)).id;
+      meta = { ...meta, space: parent.id, aud: audience };
+      audience = "members";
+    }
+    return { board, audience, meta, place: board ? await boardOf(board) : null };
+  }
   // `audience` (the `audience` picker's value): yours — "public" or "private"; a space's — "public" or "members".
   // `at`: when it was made (an item brought over from before keeps its own time).
   // `write`: who may comment and vote on it ({ comment, vote }: anyone · followers · friends · members · author) — its
@@ -764,25 +818,7 @@ export async function start(ctx) {
       // The gate names the group (its owner and nonce prove its id): one at the level enters it by itself.
       return submit({ title, body: "", kind, meta: { level: meta.level, gate: { space: g.id, ref: sealed, name: g.name, kind: g.kind, owner: g.governance.owner, nonce: g.governance.nonce, ...(g.group ? { group: g.group } : {}) } }, at });
     }
-    // ONLY YOU, IN A SPACE: a group of its own (`share.privateIn`: its maker alone, kept to the space) — shared later.
-    if (board && audience === "private") {
-      board = (await (await ctx.require("share")).privateIn(board, kind, title)).id;
-      audience = "members";
-    }
-    // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
-    if (!board && (audience === "friends" || audience === "followers")) {
-      board = (await (await ctx.require("circles")).of(audience)).id;
-      audience = "members";
-    }
-    // A SPACE's AUDIENCE narrower than its members (a role's holders, the admins, the owner): an item of that
-    // audience's GROUP (`conversation.audience`: sealed to them alone), whatever its kind.
-    if (board && (String(audience).startsWith("role:") || String(audience).startsWith("list:") || audience === "admins" || audience === "owner")) {
-      const parent = await boardOf(board);
-      if (!parent) throw await notInBoard(board);
-      board = (await (await ctx.require("conversation")).audience(parent, audience)).id;
-      meta = { ...meta, space: parent.id, aud: audience };
-      audience = "members";
-    }
+    ({ board, audience, meta } = await route({ board, audience, kind, title, meta }));
     if (board) {
       const sp = await boardOf(board);
       // NOT IN IT, where its policy lets anyone post: kept in this person's profile, for that space (`meta.space`),
@@ -1163,5 +1199,5 @@ export async function start(ctx) {
     },
     // THE RANKING (a feed's sort), the one: what `list` orders by — for a list made of several (`tag`'s).
     rank: (list, sort = "new", by = null) => [...list].sort(sorter(sort, by)),
-    mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    route, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

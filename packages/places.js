@@ -28,7 +28,7 @@ export async function start(ctx) {
         out.push({ id: sp.id, label: space.shown(sp), short: space.shown(sp), href: `#/s/${sp.id}${app.route}`, on: ctx.space === sp.id, count: activity && ["chat", "board"].includes(key) ? activity.of(sp.id, key) : 0 });
       }
     }
-    if (views.includes("public")) out.push({ id: "discover", label: "Discover", short: "🌐", href: `#/discover${app.route}`, on: ctx.space === "discover" });
+    if (views.includes("public")) out.push({ id: "discover", label: "Home", short: "🌐", href: `#/discover${app.route}`, on: ctx.space === "discover" });
     return out;
   }
 
@@ -129,7 +129,6 @@ export async function start(ctx) {
   function side(host) {
     host.classList.add("cw-side");
     const entry = a => ({ label: a.label, href: a.href ?? null, on: !!a.on, end: !!a.end, role: a.role ?? (a.end ? "create" : "you"), menu: a.menu ? a.menu.map(m => ({ label: m.label, href: m.href ?? null, on: !!m.on })) : null, run: !!a.run && !a.href });
-    let more = false; // Following's list shown whole ("Show more")
     let runs = new Map(); // label → the entry's own run (a button that is not a link)
     const v = ctx.view(host, {
       read: async () => {
@@ -137,30 +136,18 @@ export async function start(ctx) {
         const acts = ctx.actions?.[ctx.route] ?? [];
         runs = new Map(acts.filter(a => a.run && !a.href).map(a => [a.label, a.run]));
         const own = acts.map(entry);
-        const app = own.length ? own : ps.filter(p => p.id === "" || p.id === "discover").map(p => ({ label: p.label, href: p.href, on: p.on, role: p.id === "discover" ? "discover" : "you" }));
-        // MAIN (YouTube's Home · Subscriptions): Discover, then the feed — and under it WHO you follow (people and spaces).
-        const main = [...app.filter(a => a.role === "discover"), ...app.filter(a => a.role === "feed")];
-        const feed = app.find(a => a.role === "feed");
-        let follows = [];
-        if (feed) {
-          const people = await ctx.optional("places: follows", (await ctx.require("edge")).people(), () => null);
-          const directory = await ctx.require("directory");
-          const route = appOf(ctx.route)?.route ?? ctx.route;
-          follows = await Promise.all((people?.list("follow") ?? []).map(async id => {
-            const did = String(id).startsWith("did:");
-            const name = did ? directory.shown(id, await ctx.optional("places: handle", directory.handle(id), () => null)) : people.about?.("follow", id)?.name ?? `a space #${String(id).slice(0, 6)}`;
-            return { label: name, href: did ? `#${route}/u/${id}` : `#/s/${id}${route}`, on: false };
-          }));
-        }
+        const app = own.length ? own : ps.filter(p => p.id === "" || p.id === "discover").map(p => ({ label: p.id === "discover" ? "Home" : p.label, href: p.href, on: p.on, role: p.id === "discover" ? "home" : "you" }));
+        // THE SAME ORDER IN EVERY APP (owner 10-21): Home · Discover · You · Spaces.
+        const main = [...app.filter(a => a.role === "home"), ...app.filter(a => a.role === "discover")];
         // YOU: yours, saved, the app's own; its create last.
         const you = [...app.filter(a => a.role === "you"), ...app.filter(a => a.role === "create")];
         const spaces = ps.filter(p => p.id && p.id !== "discover").map(p => ({ label: p.label, href: p.href, on: p.on, count: p.count ?? 0 }));
         // A SPACE SEEN FROM OUTSIDE (in it nowhere: Discover's, a link): Join / Follow there.
         const here = ctx.space && ctx.space !== "discover" && !spaces.some(p => p.on) ? ctx.space : null;
-        return app.length + spaces.length + (here ? 1 : 0) < 2 && !here ? [] : { main, follows, more, you, spaces, here };
+        return app.length + spaces.length + (here ? 1 : 0) < 2 && !here ? [] : { main, you, spaces, here };
       },
       empty: d => Array.isArray(d) && !d.length,
-      draw: async ({ main, follows, more: whole, you, spaces, here }) => {
+      draw: async ({ main, you, spaces, here }) => {
         const link = (x, cls = "") => {
           const a = x.href ? h("a", { href: x.href, className: `${cls}${x.on ? " on" : ""}`.trim(), textContent: x.label }) : h("button", { type: "button", className: `cw-flat ${cls}`.trim(), textContent: x.label, onclick: () => runs.get(x.label)?.() });
           if (x.on) a.setAttribute("aria-current", "page");
@@ -168,15 +155,8 @@ export async function start(ctx) {
           return a;
         };
         const items = xs => h("ul", {}, ...xs.flatMap(x => (x.menu ? [h("li", { className: "group" }, x.label), ...x.menu.map(m => h("li", {}, link(m, "sub")))] : [h("li", {}, link(x, x.end ? "make" : ""))])));
-        const FEW = 7;
-        const followed = follows.length
-          ? [
-              h("ul", { className: "follows" }, ...(whole ? follows : follows.slice(0, FEW)).map(f => h("li", {}, link(f, "sub")))),
-              follows.length > FEW ? h("button", { type: "button", className: "cw-flat more", textContent: whole ? "Show less" : `Show more (${follows.length - FEW})`, onclick: () => ((more = !more), v.refresh()) }) : null,
-            ]
-          : [];
         const sections = [];
-        if (main.length) sections.push(h("section", { ariaLabel: "Main" }, items(main), ...followed));
+        if (main.length) sections.push(h("section", { ariaLabel: "Main" }, items(main)));
         if (you.length) sections.push(h("section", { ariaLabel: "You" }, h("h4", { textContent: "You" }), items(you)));
         if (here) {
           const join = await ctx.optional("places: join", (async () => {

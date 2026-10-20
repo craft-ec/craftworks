@@ -5,11 +5,17 @@
 //   const icons = await ctx.require("app-icons");
 //   icons.grid(host, [{ app, href, count, pin, add, note }])   // pin: beside the link; add: fn (dimmed, "+ Add");
 //                                                              // no href: dimmed, `note` saying why
-//   icons.drawer(host, items, { empty })   // ALL APPS as a phone shows them: by name, or — this person's choice, kept
-//                                          // with their account — grouped by CATEGORY (the manifest's), a switch on top
+//   icons.drawer(host, items, { empty })   // ALL APPS, grouped by category (`byCategory`)
 //   const desk = icons.desk(host, { items, pinKey, empty })   // THE HOME LAYOUT, the same for every Home (yours and a
 //                                          // space's): PINNED, then ALL APPS (the drawer). `items()`: the tiles now;
 //                                          // `pinKey(app)`: its pin's key (a space's own pins are its own). desk.redraw()
+// APPS BY CATEGORY (pure): [[category, items]], categories by name and "Other" last, each by name within.
+export function byCategory(items, appOf = x => x) {
+  const cat = x => appOf(x).category || "Other";
+  const cats = [...new Set(items.map(cat))].sort((a, b) => (a === "Other") - (b === "Other") || a.localeCompare(b));
+  return cats.map(c => [c, items.filter(x => cat(x) === c).sort((a, b) => String(appOf(a).name).localeCompare(String(appOf(b).name)))]);
+}
+
 export async function start(ctx) {
   const style = document.createElement("style");
   style.textContent = `@layer components {
@@ -54,33 +60,15 @@ export async function start(ctx) {
     host.classList.add("cw-icons");
     host.replaceChildren(...(items.length ? items.map(tile) : empty ? [el("p", { className: "empty", textContent: empty })] : []));
   }
-  // THE DRAWER: by name (the loader's order), or grouped by category — categories by name, "Other" last.
-  const GROUPED = "apps-grouped";
-  async function drawer(host, items, { empty = null } = {}) {
-    const prefs = await ctx.optional("app-icons: prefs", (await ctx.require("edge")).prefs(), () => null);
-    const grouped = () => !!prefs?.get(GROUPED);
-    const toggle = el("input", { type: "checkbox", checked: grouped() });
-    const draw = () => {
-      const body = [];
-      if (!grouped()) {
-        const g = el("div", {});
-        grid(g, items, empty);
-        body.push(g);
-      } else {
-        const cats = [...new Set(items.map(i => i.app.category ?? "Other"))].sort((a, b) => (a === "Other") - (b === "Other") || a.localeCompare(b));
-        for (const c of cats) {
-          const g = el("div", {});
-          grid(g, items.filter(i => (i.app.category ?? "Other") === c));
-          body.push(el("h4", { textContent: c }), g);
-        }
-      }
-      host.replaceChildren(el("div", { className: "cw-drawer" }, el("label", { className: "how" }, toggle, " Group by category"), ...body));
-    };
-    toggle.onchange = async () => {
-      await prefs?.set(GROUPED, toggle.checked);
-      draw();
-    };
-    draw();
+  // THE DRAWER: the apps GROUPED BY CATEGORY, always (owner 10-21: "group app in home and app browser by default.
+  // remove the option") — `byCategory`, the one grouping (the App Store's too).
+  function drawer(host, items, { empty = null } = {}) {
+    if (!items.length) return grid(host, [], empty);
+    host.replaceChildren(el("div", { className: "cw-drawer" }, ...byCategory(items, i => i.app).flatMap(([c, xs]) => {
+      const g = el("div", {});
+      grid(g, xs);
+      return [el("h4", { textContent: c }), g];
+    })));
   }
   // THE DESK: Pinned (this person's pins of these apps) and All apps — pins and their buttons once they are read.
   function desk(host, { items, pinKey, empty = null }) {
@@ -108,5 +96,5 @@ export async function start(ctx) {
     );
     return { redraw };
   }
-  return { grid, tile, drawer, desk };
+  return { grid, tile, drawer, desk, byCategory };
 }
