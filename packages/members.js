@@ -170,7 +170,15 @@ export async function start(ctx) {
       const t = await feed();
       await t.settled;
       const c = await check();
-      const read = await Promise.all(t.rows().filter(x => x.value).map(x => ctx.optional("members: an operation", opOf(x), () => null)));
+      // NOTHING FROM A SHORT READ (R4; `guards::list_whole`, the node's too): judged against a list read short, every add
+      // of an account it missed is refused, and the tree shows them out of it (10-20, the owner's page: "an add of an
+      // account not listed"); merged without an operation it could not read, everyone that one adds is missing. The tree
+      // stays as last merged from a whole read.
+      const short = why => (life().then(l => l.transition("group", sp.id, "keys-short", { why: `${why}: the keys not changed (R4)` })), { short: why, refused: [], waiting: 0, misses: [] });
+      if (!c.whole()) return short("the list not read whole");
+      const UNREAD = {};
+      const read = await Promise.all(t.rows().filter(x => x.value).map(x => ctx.optional("members: an operation", opOf(x), () => UNREAD)));
+      if (read.includes(UNREAD)) return short(`${read.filter(x => x === UNREAD).length} operation(s) not read`);
       // (`Group::merge_all`: the one loop, the node's too.)
       const said = g.merge_all(read.filter(Boolean), c.list);
       said.refused = said.refused.map(w => w.slice(0, 71));
@@ -253,8 +261,11 @@ export async function start(ctx) {
     // list, its operations sent; the bridge written when this device holds MLS epochs, and crossed.
     async function reconcileNow() {
       const said = await syncNow();
+      // (A SHORT read changes nothing — above all it never makes a tree: an operation not merged is not proof there is none.)
+      if (said.short) return said;
       const m = await me();
       const c = await check();
+      if (!c.whole()) return { ...said, short: "the list not read whole" };
       const myDid = (await space.account())?.id;
       const listed = c.listedNow.includes(myDid);
       // ONLY THE CREATOR makes the tree (one root: 10-19, a member's page made a second one). Everyone else waits for it.
@@ -266,10 +277,6 @@ export async function start(ctx) {
         await save();
         said.made = true;
         life().then(l => l.transition("group", sp.id, "keys-tree-made", { why: myDid === c.owner ? "the owner placed itself" : "a listed member placed itself (naming its act)" }));
-      }
-      if (!c.whole()) {
-        life().then(l => l.transition("group", sp.id, "keys-short", { why: "the list not read whole: the keys not changed (I6)" }));
-        return { ...said, short: "the list not read whole: nothing changed" };
       }
       // NOT PLACED in a tree that exists: nothing this page can add — said once per change, with the tree's members.
       if (!g.placed() && (await feed()).rows().some(x => x.value)) {

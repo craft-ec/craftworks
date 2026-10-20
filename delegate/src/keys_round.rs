@@ -117,6 +117,12 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     if !to_read.is_empty() {
         return read_file(h, c, r, m, to_read);
     }
+    // NOTHING FROM A SHORT READ (R4, the page's too): judged against a list read short, the adds of every account it
+    // missed are refused (10-20, the owner's page). The tree stays as last merged from a whole read.
+    if let Err(why) = whole(&r, &gov) {
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — the keys are not changed this round", m.name));
+        return next_space(h, c, r);
+    }
     // (`Group::merge_all`: the one loop, the page's too.)
     let merged = g.merge_all(&ops, &list);
     let (refused, waiting) = (merged.refused.len(), merged.waiting);
@@ -126,11 +132,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
     }
     let placed = g.members();
-    // 4. RECONCILE — from a whole read only.
-    if let Err(why) = whole(&r, &gov) {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — the keys are not changed this round", m.name));
-        return next_space(h, c, r);
-    }
+    // 4. RECONCILE (the list read whole: checked before the merge).
     if !g.placed() {
         followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NOT_PLACED, &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, waiting, why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
         return next_space(h, c, r);
