@@ -99,8 +99,9 @@ export async function start(ctx) {
     // out), no modal loops freezing the page. (Navigating itself away: refused by the page's own frame policy, and the
     // frame removed.)
     frame.sandbox = "allow-scripts allow-forms";
-    // (What the browser refuses unless the frame allows it: a player going FULLSCREEN, a link COPIED — the bar's Share.)
-    frame.allow = "fullscreen; clipboard-write";
+    // (A player in it goes FULLSCREEN — refused by the browser unless the frame allows it. Never the clipboard: a copy
+    // is the host's `copy`, on a gesture, capped.)
+    frame.allow = "fullscreen";
     frame.title = app;
     frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
     const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";
@@ -372,8 +373,9 @@ export async function start(ctx) {
     const READ_FILE = new Set(["get", "range", "chunk", "stream"]);
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";
-    // (What the browser refuses unless the frame allows it: a player going FULLSCREEN, a link COPIED — the bar's Share.)
-    frame.allow = "fullscreen; clipboard-write";
+    // (A player in it goes FULLSCREEN — refused by the browser unless the frame allows it. Never the clipboard: a copy
+    // is the host's `copy`, on a gesture, capped.)
+    frame.allow = "fullscreen";
     frame.title = app;
     frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
     const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";
@@ -422,6 +424,8 @@ export async function start(ctx) {
         return marshal(await syncSaid(h.name, h.f(...unmarshal(Array.isArray(args) ? args : []))), h.name);
       },
       log: async (step, detail) => (ctx.log(`${app}: ${String(step).slice(0, 40)}`, detail), true),
+      // A COPY (the bar's Share): the host writes the clipboard, on the person's gesture, capped — never the frame.
+      copy: async text => (gesture("copying"), await navigator.clipboard.writeText(String(text).slice(0, 100000)), true),
       say: async (message, kind) => ctx.say(Object.assign(new Error(message), { kind })),
       // A SYSTEM PAGE the host draws in the app's place: its SETTINGS in a space (`where.settings`, the same page an
       // app in the page shows) — the frame hidden while the address stays there.

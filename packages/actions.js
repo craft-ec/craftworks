@@ -234,7 +234,7 @@ export async function start(ctx) {
           // embeds it through Insert) — and the share signal, counted where it is.
           btn(`↗ Share${n("share")}`, e =>
             // (`link`: the lens it is read in shares ITS page — Blog an article, not the post's Board page; owner 10-11.)
-            navigator.clipboard.writeText(link?.() ?? items.linkOf(it.ref, it.kind)).then(() => {
+            Promise.resolve(ctx.copy(link?.() ?? items.linkOf(it.ref, it.kind))).then(() => {
               if (!it.signaled?.share) bump(it, "share", true), ctx.background("actions: items.signal", items.signal(it.ref, "share", true));
               e.target.textContent = `Link copied${n("share")}`;
             }, fail),

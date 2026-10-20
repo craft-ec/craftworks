@@ -70,6 +70,8 @@ export const SOURCE = `
       log: (step, detail = {}) => call("log", step, JSON.parse(JSON.stringify(detail ?? {}))).catch(() => {}),
       failed: (step, e, what = "") => call("failed", step, String(e && e.message ? e.message : e), e && e.kind, what).catch(() => {}),
       say: e => String(e && e.message ? e.message : e),
+      // A COPY to the clipboard: the host's (its gesture check and cap) — a frame is never given the clipboard itself.
+      copy: text => call("copy", String(text)),
       // A SYSTEM PAGE (an app's settings in a space): drawn by the host in the app's place.
       system: (page, opts) => call("system", page, opts) };
     globalThis.app = ctx;

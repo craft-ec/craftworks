@@ -9,6 +9,9 @@ export function install(ctx, { handled, stateOf, theme }) {
   //   read, throwing its fault — the step stops rather than treat a failed read as an empty one (review 10-13: a failed
   //   `space.mine()` read as "no spaces" re-keyed every Drive file; a failed `directory.devices` wrote a ban with no
   //   nodes). Services read strict; views read total.
+  // A COPY to the clipboard (the bar's Share): in the page, the clipboard itself; an app's frame has its own (`copy`:
+  // through the host, on a gesture) and keeps it.
+  ctx.copy ??= text => navigator.clipboard.writeText(String(text));
   ctx.total = (what, empty, read) =>
     Object.assign(
       (...args) =>
