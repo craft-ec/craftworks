@@ -2040,3 +2040,57 @@ mod history_tests {
         assert!(!current.contains(&r1), "control: the current tree does not reach the old root");
     }
 }
+
+/// THE JOURNAL's WRITE COST (10-20, live: "putting journal's tree" ×2607, 4 h of waits): a 500-row rolling window
+/// (each move a row put and the oldest removed) against appends alone — flushes, blocks and bytes for 400 moves, each
+/// flushed at `FLUSH_AT` waiting rows as `storage` does. A measurement, printed: `cargo test -p craftworks-data
+/// journal_cost -- --ignored --nocapture`.
+#[cfg(test)]
+mod journal_cost {
+    use super::*;
+    use craftec_register_contract::wire::Params;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn sign(key: &SigningKey, o: &Open, seq: u64, hash: [u8; 32]) -> [u8; 64] {
+        let p = Params::parse(&o.params).unwrap();
+        key.sign(&p.signed_message(false, seq, &hash)).to_bytes()
+    }
+    fn put(key: &SigningKey, o: &mut Open, k: &str, v: &str, cost: &mut (usize, usize, usize)) {
+        let (seq, h) = o.prepare_row(k.as_bytes(), v.as_bytes()).unwrap();
+        o.commit(sign(key, o, seq, h)).unwrap();
+        if flush_due(o.pending_rows(), 0) {
+            let Ok(Step::Ready(f)) = o.flush() else { panic!("flush") };
+            *cost = (cost.0 + 1, cost.1 + f.blocks.len(), cost.2 + f.blocks.iter().map(|(_, b)| b.len()).sum::<usize>());
+            o.commit(sign(key, o, f.seq, f.hash)).unwrap();
+        }
+    }
+    fn row(i: usize) -> (String, String) {
+        (format!("{:010x}-{:06}", 1_790_000_000_000u64 + i as u64 * 1000, i), format!(r#"{{"m":"group","key":"x{i:08}","event":"keys-in-step","why":"the tree places the list (5) {}","at":{},"device":"dd089b3562909c2c"}}"#, "x".repeat(260), i))
+    }
+
+    #[test]
+    #[ignore]
+    fn journal_cost() {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let member = key.verifying_key().to_bytes();
+        for rolling in [true, false] {
+            let mut o = Open::new(b"\0asm\x01\0\0\0", &member, "journal");
+            o.set_table_key([7; 32]);
+            let mut fill = (0, 0, 0);
+            for i in 0..500 {
+                let (k, v) = row(i);
+                put(&key, &mut o, &k, &v, &mut fill);
+            }
+            let mut cost = (0, 0, 0);
+            for i in 500..900 {
+                let (k, v) = row(i);
+                put(&key, &mut o, &k, &v, &mut cost);
+                if rolling {
+                    let (old, _) = row(i - 500);
+                    put(&key, &mut o, &old, "", &mut cost);
+                }
+            }
+            println!("{}: 400 moves → {} flushes, {} blocks, {} KB", if rolling { "A rolling 500 (today)" } else { "B appends only" }, cost.0, cost.1, cost.2 / 1024);
+        }
+    }
+}

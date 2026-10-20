@@ -204,7 +204,16 @@ export async function start(ctx) {
     if (quiet) MACHINES.group.quiet.push(name);
   }
 
-  // THE JOURNAL: moves of `journal` machines, batched into the account's table (newest 500 kept).
+  // THE JOURNAL: moves of `journal` machines, batched — APPENDED to the account's table of their DAY (`moves-<yyyymmdd>`),
+  // never removed: a rolling window (each move a row put and the oldest removed) cost 2.4× the tree blocks and 2.85× the
+  // bytes of appending alone (`data`'s journal_cost, 10-20: "putting journal's tree" was 4 h of waits in a day's
+  // reports). Read: today's and yesterday's. At most DAY_CAP a day (past it, said once and not kept).
+  // ITS OWN TABLES: until 10-20 it wrote into `journal` — the PRIVATE ITEMS' table (`items`): its pruning to the newest
+  // 500 rows would have removed a person's oldest private items past 500, and its rows grew their every flush.
+  const DAY_CAP = 3000;
+  const dayOf = ms => new Date(ms).toISOString().slice(0, 10).replace(/-/g, "");
+  const movesOf = async day => (await ctx.require("storage")).table(`moves-${day}`);
+  let capSaid = null;
   const pending = [];
   let flushing = null;
   async function flush() {
@@ -214,13 +223,33 @@ export async function start(ctx) {
     try {
       // (`device`: which of the account's devices made the move — never a move's own fields, e.g. a decider's `by`.)
       const device = await thisDevice();
-      const t = await (await ctx.require("storage")).table("journal");
-      for (const e of batch) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }));
-      const rows = t.rows().filter(r => r.value).map(r => r.key).sort();
-      for (const k of rows.slice(0, Math.max(0, rows.length - 500))) await t.remove(k);
+      for (const day of new Set(batch.map(e => dayOf(e.at)))) {
+        const t = await movesOf(day);
+        const room = DAY_CAP - t.rows().length;
+        const these = batch.filter(e => dayOf(e.at) === day);
+        if (room < these.length && capSaid !== day) (capSaid = day), ctx.log("lifecycle", { what: `the journal of ${day} is full (${DAY_CAP} moves): later moves not kept` });
+        for (const e of these.slice(0, Math.max(0, room))) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }));
+      }
     } catch (e) {
       ctx.log("lifecycle", { what: `${batch.length} move(s) not kept in the journal: ${e?.message ?? e}` });
     }
+  }
+  // THE OLD MOVES out of the private items' table (`journal`, before 10-20): only rows shaped as a move (its machine,
+  // event and time — never an item's), 64 a visit, so the private table holds private items alone again.
+  async function clearOldMoves() {
+    const t = await (await ctx.require("storage")).table("journal");
+    await t.settled;
+    const isMove = r => {
+      try {
+        const v = JSON.parse(r.value);
+        return typeof v?.m === "string" && typeof v?.event === "string" && typeof v?.at === "number" && v.kind === undefined;
+      } catch {
+        return false;
+      }
+    };
+    const old = t.rows().filter(r => r.value && isMove(r)).slice(0, 64);
+    for (const r of old) await t.remove(r.key);
+    return old.length;
   }
   // THE JOURNAL WRITTEN NOW (not 3 s later): before what reloads the page — a login loads it again as soon as the
   // unlock returns, and the moves of its last 3 s were lost (10-18, fx: a login's `build` moves never in the journal).
@@ -231,11 +260,12 @@ export async function start(ctx) {
   // The journal's moves (`machine`; `key`: one process's), oldest first.
   // `fresh`: the table read again from the network first (a guard deciding by it — never a short read).
   async function journal(machine = null, key = null, { fresh = false } = {}) {
-    const t = await (await ctx.require("storage")).table("journal");
-    await t.settled;
-    if (fresh) await t.reread?.();
-    return t
-      .rows()
+    const now = Date.now();
+    const ts = await Promise.all([dayOf(now - 86400e3), dayOf(now)].map(movesOf));
+    await Promise.all(ts.map(t => t.settled));
+    if (fresh) await Promise.all(ts.map(t => t.reread?.()));
+    return ts
+      .flatMap(t => t.rows())
       .filter(r => r.value)
       .map(r => {
         try {
@@ -442,5 +472,8 @@ export async function start(ctx) {
 
   // How many of a machine's processes stand in `s` now (a save OWED: what an update waits for).
   const count = (machine, s) => [...states].filter(([k, v]) => k.startsWith(`${machine}|`) && v.s === s).length;
+  // (The old moves cleared out of the private items' table: a batch every 10 minutes until there are none.)
+  job("journal: old moves cleared", { every: 600e3, delay: 90e3, needs: async () => !!(await (await ctx.require("space")).account()) || "nobody is logged in", run: () => clearOldMoves() });
+
   return { MACHINES, state, count, transition, become, on, logOnce, snapshot, job, jobs, deleting, journal, keepNow };
 }
