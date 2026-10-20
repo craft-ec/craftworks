@@ -254,7 +254,7 @@ export async function start(ctx) {
   // THE TRUST CORE stays here (the node, the keys, the tables, the identity, the spaces and their items): a frame gets
   // it only as proxies, each call checked. EVERYTHING ELSE — UI, pure libraries, an app's own logic — is loaded into the
   // frame by its hash (as a phone's frameworks into an app's process), its own requires resolved the same way there.
-  const HOST = new Set(["node", "storage", "identity", "auth", "keys", "access", "index", "files", "membership", "conversation", "space", "items", "roles", "directory", "lifecycle", "activity", "usage", "upkeep", "edge", "drafts", "installed", "apphost", "places", "login", "blocks", "account", "ordering", "statement", "tokens", "beacon", "keeper", "witness", "vote-tally", "person", "keep", "video-studio", "moderation", "wiki-pages", "blog-press", "editions", "app-settings", "share"]);
+  const HOST = new Set(["node", "storage", "identity", "auth", "keys", "access", "index", "files", "membership", "conversation", "space", "items", "roles", "directory", "lifecycle", "activity", "usage", "upkeep", "edge", "drafts", "installed", "apphost", "places", "login", "blocks", "account", "ordering", "statement", "tokens", "beacon", "keeper", "witness", "vote-tally", "person", "keep", "video-studio", "moderation", "wiki-pages", "blog-press", "editions", "app-settings", "share", "codoc"]);
   const FRAME_LOCAL = { has: name => !HOST.has(name) };
   const { SOURCE: RUNTIME_CTX } = await ctx.require("frame-runtime");
   // (`bytes`: a module given as it is — a probe's — in place of a package by name.)
@@ -361,7 +361,9 @@ export async function start(ctx) {
       "allows", "asked", "askedCodes", "boardOf", "boards", "following", "history", "keepers", "mayOpen", "nsfwShown", "outsideOf", "personalPolicy",
       "pins", "labels", "people", "prefs", "progress", "publicIn", "publicSpace", "publicSpaces", "range", "reaches", "visible", "waiting", "page", "pages",
       "has", "is", "at", "about", "refs", "lists", "roles", "domains", "acts", "mayEdit", "needsReview", "drafts", "thread", "probe", "editorAt",
-      "opened", "reading", "played", "showing", "settings", "policyIn", "config"]);
+      "opened", "reading", "played", "showing", "settings", "policyIn", "config",
+      // (10-20: Docs — a document's text and marks as they are now, `codoc.state`.)
+      "state"]);
     const WRITES = { test: name => !READS.has(name) };
     // The files this frame READ through its door (by their root), and the calls that read one.
     const readHere = new Set();

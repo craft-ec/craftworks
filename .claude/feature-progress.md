@@ -2841,15 +2841,21 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
       (`files.adopt`; before, a shared item's files stayed keyed to the old place, unreadable to who it was shared
       with — notes passed only for having none). fx/fy pw/share3.mjs 8/8 (100 KB files: keyed, not inline); control
       (folderGroup/folderInto off): fails at 3 and 4 only; share.mjs and share2.mjs regressions PASS.
-- [~] S2 the CRDT — LIBRARY CHOSEN: Automerge 0.12.0 (scout 10-20: the only one that builds as a plain Rust dependency on
+- [x] S2 the CRDT — LIBRARY CHOSEN: Automerge 0.12.0 (scout 10-20: the only one that builds as a plain Rust dependency on
       wasm32 with no JS — Loro hard-codes wasm-bindgen getrandom + Date.now; +962 KB; no move op: a slide's position a
       field). Vendored vendor/automerge-0.12.0 (crates.io sha256 2fb84913…); crate `doc` (craftworks-doc): create (the
       maker's first change: the text object) / load(rows, any order) / apply / splice / mark / marks / save / heads,
       UTF-16 positions; 4 native tests (every order and duplicates → one text and marks; a row ahead of its base waits;
       snapshot + later rows; emoji = 2 units). Its OWN package (`doc-glue` + `doc-wasm`, 1,306,806 B after -Os) — NEVER
       in the core (2,655,440 B unchanged): only what co-edits loads it.
-      NEXT: the service (rows in each editor's feed of the item's table, admitted by `edit` at their time; snapshot
-      file), then the browser check through Docs.
-- [ ] S2 (was) the CRDT in core (Automerge or Loro: wasm size, rich text, lists), changes as rows in each editor's feed,
-      snapshots as files.
-- [ ] S3 Docs; S4 Sheets; S5 Slides — each on S1+S2.
+- [x] S3 DOCS (`codoc` host capability + `docs` framed app, kind `doc`, domain `doc`, collaborative): each editor's
+      changes rows of its OWN feed in the item's table `doc-<id>` (keyed by their hash; a burst batched into one row —
+      concatenated changes load as one: tested), admitted by `edit` at the row's time; the document MOVES with its item
+      (`share.moveTo`: a snapshot seeded as the new table's first row). fx/fy pw/share4.mjs 8/8: create, share, B reads,
+      A and B type AT ONCE → both "Hello, dear world!", viewer refused, the Docs page shows it to B read-only.
+      FOUND ON THE WAY (shared layers): `items.get` answered "not there" for a shared item whose maker's feed was not
+      found yet (R4) — now its place settled, then looked for until it shows or 15 s; the side panel listed GROUPS (a
+      shared item's, audiences') as spaces — `space.isGroup` filtered; the app door's READS list lacked `state` (a framed
+      read refused without a gesture, and Docs' `fail` showed nothing: `ctx.say` awaited in a frame); `ctx.view` `hold`
+      held the editor's FIRST drawing (held only while on screen). Regressions share/share2/share3 PASS.
+- [ ] S4 Sheets; S5 Slides — each on S1+S2 (Slides: a slide's position a field — Automerge has no move).

@@ -56,6 +56,8 @@ export async function start() {
     ["bundle", "bundle", "Bundle", []],
     // Note (Notes: a card of text, its own domain — its own policy)
     ["note", "note", "Note", []],
+    // Doc (Docs: a document written together, live — its text the merge of its editors' changes, `codoc`)
+    ["doc", "doc", "Document", []],
     // Paste (Paste: code or text kept as it is — the note family's, with its language and an expiry)
     ["paste", "note", "Paste", ["language", "expires"]],
     // Channel (Chat: a place for messages — its title its name; `meta.cid` names its messages' table)
@@ -74,7 +76,7 @@ export async function start() {
   // COLLABORATIVE kinds: in a space, whoever its `edit` policy allows edits one (a shared note, a shared file's
   // entry), the creator kept; every other kind its author's alone (an app's own enforcement over the policy).
   // UNTITLED kinds: a title is optional.
-  const COLLABORATIVE = new Set(["note", "file", "folder"]);
+  const COLLABORATIVE = new Set(["note", "file", "folder", "doc"]);
   // THE MEDIA DOMAINS — each declared ONCE: which files are it (`is`: by type; a streaming manifest by its own flag),
   // its name and icon, the capability that MAKES an upload of it (`maker`), the component that SHOWS it inline
   // (`view`: "image" drawn as an <img>; otherwise a component with `create({ file, item, cover }).el`), its general
@@ -128,6 +130,7 @@ export async function start() {
     file: { look: "card", votes: true, comments: true, about: true },
     document: { look: "card", votes: true, comments: true, about: true },
     wiki: { look: "card", votes: true, comments: true, about: false },
+    doc: { look: "card", votes: true, comments: true, about: false },
     vote: { look: "card", votes: false, comments: true, about: false },
   };
   return {

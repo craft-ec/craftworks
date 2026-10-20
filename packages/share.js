@@ -120,7 +120,11 @@ export async function start(ctx) {
   async function moveTo(it, to, meta = it.meta) {
     const files = await ctx.require("files");
     const fs = await Promise.all((it.files ?? []).map(f => files.adopt(f, to, { app: it.meta?.from?.app ?? null })));
+    // A DOCUMENT's text is its own table's (`codoc`): taken whole before it moves, its new table's first row after.
+    const codoc = it.kind === "doc" ? await ctx.require("codoc") : null;
+    const snap = codoc ? await codoc.snapshot(it.ref) : null;
     const moved = await items.submit({ board: to?.id ?? null, title: it.title, body: it.body, kind: it.kind, files: fs, meta, at: it.at, audience: to ? "members" : "private" });
+    if (codoc) await codoc.seed(moved, snap);
     await items.remove(it.ref);
     return moved;
   }

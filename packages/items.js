@@ -40,7 +40,7 @@ const normalTags = text =>
 const isNsfw = it => tagsOf(it).includes(NSFW);
 // (`site()`: this site's address, before its `#`.)
 function pure(kinds, site) {
-  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki", vote: "vote", bundle: "bundle" };
+  const APP_OF = { video: "video", audio: "audio", image: "image", book: "book", note: "note", file: "drive", document: "drive", form: "form", wiki: "wiki", vote: "vote", doc: "docs", bundle: "bundle" };
   // A kind with an app of its own (a paste: Paste, though of the note family) first; else its domain's.
   const APP_OF_KIND = { paste: "paste" };
   const appOf = kind => APP_OF_KIND[kind] ?? APP_OF[kinds.domain(kind)] ?? "board";
@@ -153,7 +153,7 @@ export async function start(ctx) {
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, captions — so any app on it opens
   // the place (a space with Video and no Board still takes videos).
-  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog", "wiki", "vote"];
+  const PLACE_APPS = ["board", "video", "audio", "caption", "note", "drive", "image", "book", "chat", "form", "blog", "wiki", "vote", "docs"];
   const boards = async () => {
     const all = await space.mine.strict();
     // Its apps once its acts are read (before, a space shows the default apps: a Chat-only space would open a board).
@@ -716,7 +716,22 @@ export async function start(ctx) {
       // From outside: read where its pointer names (its writer and who answered it), never every member.
       const p = outside ? await pointerOf(ref) : null;
       const room = p ? await pointedRoom(outside, [p]) : null;
-      return (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held", room })).find(x => x.ref === ref) ?? null;
+      const find = async () => (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held", room })).find(x => x.ref === ref) ?? null;
+      const it = await find();
+      if (it || outside) return it;
+      // NOT FOUND YET is not "not there" (R4: nothing from a short read): its place's writers each tried once
+      // (`settled` — a writer's feed is found as its space is read: 10-20, a shared document opened at once read as
+      // gone), then looked for again.
+      const r = await boardRoom(sp);
+      await r.settled;
+      // …and its writers are found as the place is read (a shared item's maker's feed: seconds), so it is looked for
+      // until it shows or 15 s have passed — then "not there".
+      for (const end = Date.now() + 15000; Date.now() < end; await new Promise(x => setTimeout(x, 1000))) {
+        await sinceItem(r, idOf(ref));
+        const got = await find();
+        if (got) return got;
+      }
+      return null;
     }
     // One of THIS person's own: their private items read first (a private note, a post "only you" is among them).
     if (whereOf(ref) === (await me())) await (await profileRoom(whereOf(ref))).whenPrivate?.();

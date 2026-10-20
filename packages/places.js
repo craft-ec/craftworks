@@ -21,7 +21,8 @@ export async function start(ctx) {
     const out = [];
     if (views.includes("personal")) out.push({ id: "", label: "You", short: "Me", href: `#${app.route}`, on: !ctx.space });
     if (views.includes("shared") && (await space.account())) {
-      for (const sp of (await space.mine()).filter(s => s.kind === "server")) {
+      // (A GROUP — a circle, an audience, a shared item's: `space.isGroup` — is never a space of the panel.)
+      for (const sp of (await space.mine()).filter(s => s.kind === "server" && !space.isGroup(s))) {
         const r = await roles.of(sp);
         if (!r || !r.apps().includes(key)) continue;
         out.push({ id: sp.id, label: space.shown(sp), short: space.shown(sp), href: `#/s/${sp.id}${app.route}`, on: ctx.space === sp.id, count: activity && ["chat", "board"].includes(key) ? activity.of(sp.id, key) : 0 });

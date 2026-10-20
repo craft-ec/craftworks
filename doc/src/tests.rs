@@ -59,3 +59,16 @@ fn positions_count_utf16_units() {
     a.splice(2, 0, "-").unwrap();
     assert_eq!(a.text().unwrap(), "😀-x");
 }
+
+/// Changes written together (a page batches a burst of keystrokes into ONE row): their bytes concatenated load as each
+/// one alone would.
+#[test]
+fn concatenated_changes_load_as_one_row() {
+    let (mut a, first) = Doc::create(A).unwrap();
+    let mut row = Vec::new();
+    for (i, c) in "typed".chars().enumerate() {
+        row.extend(a.splice(i, 0, &c.to_string()).unwrap());
+    }
+    let d = Doc::load(B, &[&first, &row]).unwrap();
+    assert_eq!(d.text().unwrap(), "typed");
+}
