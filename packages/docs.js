@@ -93,8 +93,11 @@ export async function mount(ctx, el) {
 
   async function home(box) {
     const list = (await at.read({ whole: true }).catch(e => (fail(e), []))).filter(x => x.kind === "doc").sort((a, b) => (b.edited || b.at) - (a.edited || a.at));
+    // ＋ NEW in the page itself (the menu's own "＋ New document" is the side panel's — not shown on a narrow screen).
+    const mayMake = !at.guest && !at.discover && !at.saved && !at.shared && !at.others;
     box.replaceChildren(
       h("h2", { textContent: at.shared ? "Shared documents" : at.saved ? "Saved documents" : "Documents" }),
+      mayMake ? h("a", { className: "cw-btn primary", href: at.href("new"), textContent: "＋ New document", style: "justify-self:start" }) : null,
       list.length
         ? h("div", { className: "list" }, ...list.map(d => h("a", { href: at.href(`p/${encodeURIComponent(d.ref)}`), textContent: d.title || "Untitled document" })))
         : h("p", { className: "none", textContent: "No documents here yet." }),

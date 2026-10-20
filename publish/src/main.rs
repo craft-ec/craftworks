@@ -798,7 +798,8 @@ async fn main() -> Result<()> {
     // ACCESS, as any website's routes: every page is PUBLIC (opened by anyone; what each shows is the access rules' —
     // `roles`/`audience` — and a guest is "anyone"), except these, which open only for someone logged in (the loader
     // asks `login` once, before the page).
-    const LOGIN_ONLY: [&str; 12] = ["/spaces", "/store", "/settings", "/note", "/chat", "/mail", "/contact", "/drive", "/nodes", "/usage", "/wallet", "/caption"];
+    // (DOCS too: a document's text is its owner's or its group's sealed table — nothing of it reads for a guest.)
+    const LOGIN_ONLY: [&str; 13] = ["/spaces", "/store", "/settings", "/note", "/docs", "/chat", "/mail", "/contact", "/drive", "/nodes", "/usage", "/wallet", "/caption"];
     let pages: [(&str, &str); 29] = [("/docs", "docs"), ("/bundle", "bundle-app"), ("/spaces", "spaces-app"), ("/store", "store"), ("/form", "form"), ("/blog", "blog"), ("/wiki", "wiki"), ("/vote", "vote"), ("/tag", "tag"), ("/nodes", "nodes-app"), ("/usage", "nodes-app"), ("/wallet", "wallet-app"), ("/network", "explorer-app"), ("/explorer", "explorer-app"), ("/paste", "paste"), ("/caption", "caption"), ("/video", "media"), ("/audio", "media"), ("/image", "media"), ("/book", "media"), ("/space", "space-home"), ("/", "home"), ("/settings", "settings"), ("/note", "note"), ("/chat", "chat"), ("/mail", "mail"), ("/contact", "contact"), ("/board", "board"), ("/drive", "drive")];
     let mut needs = Vec::new();
     for (route, page) in pages {
