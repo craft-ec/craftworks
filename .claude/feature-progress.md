@@ -2798,3 +2798,13 @@ Each phase: built, tested with controls, proven on fx, committed. Not decided: t
   `tables` unreadable (no key) — known before this release (health reports, 3 accounts); its repair is D6.
 - What moved: the duplicates inventory (.claude/duplicates-inventory-2026-10-19.md) worked through. Open: the node's
   rounds as transition tables (a redesign, not a copy).
+
+## Release v410 (2026-10-20) — 4db84571a61f
+- Contents: v409 health fixes (e67b927), Ivvor diagnosis + reporter keeps epochs (43a941f), node rounds as tables (18a910b),
+  publish takes every identity build from the live manifest + gate passes PREVIOUS_SITE (53357fd).
+- Gate on 0.2.146: release43 at 18a910b FAILED 3/3 ("A's unlock did not open A's account": main's identity-history lacked
+  v409's build EkuMwc6X, appended only in release41's worktree). After 53357fd, with that faulty history kept: PASS 3/3
+  (run 1 took 1 build from the site before).
+- Live: 1383/1383 pieces findable from the owner node at publish; find-check 1386/1386, UNREBUILDABLE 0; Wren logged in
+  on the new identity build (3d2f3b76), wrote and read back.
+- Nodes: B, owner node, fx/fy on freenet 0.2.146 (0.2.147 rejected: 451/3,091 streamed PUTs lost on fx/fy).
