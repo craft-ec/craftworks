@@ -6,7 +6,9 @@
 // reads its files — and nobody else.
 //
 //   const att = await ctx.require("attachments");
-//   const pick = att.picker({ space, public })   // { el, files(): [ref], busy(): bool, clear(), onChange(fn),
+//   const pick = att.picker({ space, public, audience })   // audience: () => the item's (`items.uploadPlace` decides
+//                                                // where its uploads go); else space + public as given
+//                                                // { el, files(): [ref], busy(): bool, clear(), onChange(fn),
 //                                                //   addFiles([File]), preset([ref]), onReady(fn(ref, File|null)) }
 //                                                // public: a boolean, or a function asked when each file is picked
 //   host.append(att.show(item.files))            // nothing for none
@@ -94,7 +96,10 @@ export async function start(ctx) {
   }
   // A placed menu follows nothing: closed when the page scrolls under it.
   addEventListener("scroll", e => document.querySelectorAll(".cw-att-menu, .cw-reacts .pick").forEach(m => m.style.position === "fixed" && !m.hidden && !m.contains(e.target) && (m.hidden = true)), true);
-  function picker({ space = null, public: pub = false, from = null, media = false, publish = false } = {}) {
+  function picker({ space = null, public: pub = false, audience = null, from = null, media = false, publish = false } = {}) {
+    // WHERE AN UPLOAD GOES: the item's audience given (`audience()`, the picker's value) — where the item will live, the
+    // one rule (`items.uploadPlace`: a whole space's item in it, a narrower one your own first); else as named.
+    const uploadAt = async () => (audience ? (await ctx.require("items")).uploadPlace({ board: space && space.kind !== "account" ? space.id : null, audience: audience() }) : { space, public: typeof pub === "function" ? !!pub() : pub });
     const chips = h("span", { className: "cw-att-pick" });
     // 📎: this device, or Drive.
     const menu = h("span", { className: "cw-att-menu", hidden: true },
@@ -144,11 +149,12 @@ export async function start(ctx) {
       document.body.append(d);
       d.showModal();
     }
-    // A file from ANOTHER space's Drive is adopted into this item's space (listed there, then copied under its key):
-    // who reads it is who reads this space.
+    // A file from ANOTHER space's Drive is adopted where an upload would go (`uploadAt`: the item's place, or yours for
+    // a narrower audience — `submit` puts it where the item goes): who reads it is who reads the item.
     function take(ref) {
-      const pubNow = typeof pub === "function" ? !!pub() : pub;
-      files.adopt(ref, space, { app: from?.app ?? null, pub: pubNow }).then(ready, e => ctx.failed("attachments", e, `${ref.name}: ${e.message ?? e}`));
+      uploadAt()
+        .then(at => files.adopt(ref, at.space, { app: from?.app ?? null, pub: at.public }))
+        .then(ready, e => ctx.failed("attachments", e, `${ref.name}: ${e.message ?? e}`));
     }
     function ready(ref, { quiet = false } = {}) {
       if (items.some(i => i.ref && (i.ref.root ?? i.ref.inline) === (ref.root ?? ref.inline))) return;
@@ -170,7 +176,8 @@ export async function start(ctx) {
         // A MEDIA file goes to its domain's MAKER (`kinds`: an image's thumbnail, a video's or an audio's renditions —
         // the same as its app's); anything else as it is.
         const m = kinds.mediaOf(file.type);
-        const opts = { space, app: from?.app, public: typeof pub === "function" ? !!pub() : pub, onProgress: e => (pct.textContent = e.stage === "uploading" ? `${Math.round((e.p || 0) * 100)}%` : `${e.stage} ${Math.round((e.p || 0) * 100)}%`) };
+        const at = await uploadAt();
+        const opts = { space: at.space, app: from?.app, public: at.public, onProgress: e => (pct.textContent = e.stage === "uploading" ? `${Math.round((e.p || 0) * 100)}%` : `${e.stage} ${Math.round((e.p || 0) * 100)}%`) };
         // PUBLISHED: the one upload form over the editor (`publisher.dialog`: kind, title, fields, who sees it — for whom
         // the item being written is, to start) — cancelled, nothing is sent and the file leaves the editor.
         if (m?.maker && publish) {
@@ -188,7 +195,7 @@ export async function start(ctx) {
         }
         const ref = m?.maker
           ? await (await ctx.require(m.maker)).make(file, opts)
-          : await drive.upload(file, { space, from, public: opts.public, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
+          : await drive.upload(file, { space: at.space, from, public: opts.public, onProgress: e => (pct.textContent = e.phase === "reading" ? "reading…" : `${Math.round((100 * e.done) / e.size)}%`) });
         it.ref = { ...ref, name: file.name };
         pct.textContent = sizeOf(file.size);
         told(it.ref, file);

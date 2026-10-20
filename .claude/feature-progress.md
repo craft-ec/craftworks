@@ -2900,7 +2900,9 @@ Drive, publisher, per-app audience defaults) — policy engine one, its SUBJECT 
       the policy act: app-settings.madePublic + conversation; a raw act leaves it unlisted — note for P5/cleanup).
       Space docs made public BEFORE this read empty now (their rows are in the members table) — dev mode, not migrated.
       fx: placement.mjs 7/7, share5 PASS.
-- [ ] P3 files follow their item — design first: an upload into space S then adopted into a narrower group leaves
-      its key row in S (members of S read it); upload where the item will live (files+items rule, not per app).
+- [x] P3 files follow their item: items.uploadPlace (before making: a whole space's item in it; narrower audiences
+      your own account first) and items.placeFiles (after every make/edit/move/comment/attach: adopted where the item
+      is, public exactly when it is). Picker, publisher, Drive, comments, item page, Blog, captions ask; relocate's and
+      Drive folders' own adopts deleted. Captions never more public than their video. fx files-place 6/6 + regressions.
 - [ ] P4 file re-key by the item's domain, not the row's app name.
 - [ ] P5 one audience default (audience capability), apps only compose.

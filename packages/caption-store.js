@@ -53,18 +53,14 @@ export async function start(ctx) {
     if (!m) return null;
     return JSON.parse(await (await files.get(m)).text()).vid ?? null;
   }
-  // WHERE a track is kept, and whether it is public there: with the video — as the video is; in a space — as that
-  // space's subtitles are; this person's own — public, unless it is about a private item of theirs.
+  // WHERE a track is kept, and whether it is public there (`items.placeOf`, the one answer): with the video — where it
+  // is, as it is; kept in a space or as yours — there, but never more public than the video it is about (10-21: a
+  // caption kept as yours on a members-only video was public).
   async function keep(mediaRef, place) {
-    if (place === undefined) {
-      const item = await items.get(mediaRef);
-      const sid = items.spaceIdOf(mediaRef);
-      const sp = sid ? ((await space.mine.strict()).find(s => s.id === sid) ?? null) : null;
-      return { sp, pub: sp ? !!item?.pub : !item?.private };
-    }
-    if (place) return { sp: place, pub: await items.publicIn.strict(place, KIND) };
-    const item = await items.get(mediaRef);
-    return { sp: null, pub: !(item?.private && item.by === (await space.me.strict())) };
+    const video = await ctx.optional("captions: placeOf", items.placeOf(mediaRef), () => null);
+    if (place === undefined) return { sp: video && !video.outside ? video.place : null, pub: !!video?.public };
+    const ownPub = place ? await items.publicIn.strict(place, KIND) : true;
+    return { sp: place ?? null, pub: ownPub && !!video?.public };
   }
   // `in` as a full reference (on a board an item names what it is about by id alone).
   const shape = x => ({ ref: x.ref, in: x.board && x.in && !x.in.startsWith("space:") ? `space:${x.board.id}/${x.in}` : x.in, for: x.meta?.for ?? null, lang: x.meta?.lang ?? "", label: x.meta?.label ?? x.body ?? "", by: x.by, at: x.at, edited: x.edited, file: x.files?.[0] ?? null, mayRemove: !!x.mayRemove, board: x.board, place: x.board ?? null });

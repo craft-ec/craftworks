@@ -295,7 +295,14 @@ export async function mount(ctx, el) {
     if (placeId && !sp) return root.replaceChildren(h("p", { className: "none", textContent: "You are not in the space this is for." }));
     const [mdEditor, publisher, audience] = await Promise.all(["md-editor", "publisher", "audience"].map(n => ctx.require(n)));
     // Its FILES: kept as private as a draft is (its space's, or yours); made public with what is published public.
-    const pick = attachments.picker({ space: sp, from: { app: "blog" }, media: true, publish: true, public: () => (editRef ? !!it.pub || (!it.board && !it.private) : false) });
+    // (A published article's: where it is, `items.placeOf`; a draft's: where it will be, never public before it is —
+    // `items.uploadPlace` by its audience, "Anyone" read as its members' or yours until published.)
+    const placed = editRef && it ? await ctx.optional("blog: placeOf", items.placeOf(it), () => null) : null;
+    let who = null;
+    const draftAudience = () => { const a = who?.value?.() ?? (sp ? "members" : "private"); return a === "public" ? (sp ? "members" : "private") : a; };
+    const pick = placed
+      ? attachments.picker({ space: placed.place, from: { app: "blog" }, media: true, publish: true, public: () => placed.public })
+      : attachments.picker({ space: sp, from: { app: "blog" }, media: true, publish: true, audience: draftAudience });
     if (it) pick.preset(it.files ?? []);
     const ed = mdEditor.create({ value: it?.body ?? "", pick, label: "Article" });
     const title = h("input", { name: "title", placeholder: "Title", maxLength: 300, value: it && it.title !== "Untitled draft" ? (it.title ?? "") : "", autocomplete: "off" });
@@ -311,7 +318,7 @@ export async function mount(ctx, el) {
     coverSel.onfocus = covers;
     pick.onChange?.(covers);
     // WHOM IT IS FOR (`audience`, the one choice), once published — a published article keeps its own.
-    const who = editRef ? null : await audience.picker({ space: sp, kind: "post", initial: b.audience ?? (sp ? null : "public") });
+    who = editRef ? null : await audience.picker({ space: sp, kind: "post", initial: b.audience ?? (sp ? null : "public") });
     const when = h("input", { type: "datetime-local", name: "due" });
     if (Number.isFinite(b.due)) when.value = new Date(b.due - new Date(b.due).getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
     const review = sp && !editRef ? await press.needsReview(sp) : false;

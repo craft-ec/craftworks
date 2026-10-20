@@ -108,8 +108,8 @@ export async function start(ctx) {
     if (fg) {
       const had = (await items.inPlaces.strict({ spaces: [fg] }, "file", { withVotes: false })).find(it => it.meta?.fid === fid);
       if (had) return had.ref;
-      const ref2 = await files.adopt(ref, fg, { app: from?.app ?? "drive" });
-      return items.submit({ board: fg.id, title: ref.name ?? "", body: "", kind: "file", files: [ref2], meta, audience: "members", at, write });
+      // (Its file put in the group by `submit`.)
+      return items.submit({ board: fg.id, title: ref.name ?? "", body: "", kind: "file", files: [ref], meta, audience: "members", at, write });
     }
     // Yours always; the space's too when it is one that uses Drive. Listed once (the same file: one entry).
     const where = [null, ...(shared(sp) && (await usesDrive(sp)) ? [sp] : [])];
@@ -132,7 +132,9 @@ export async function start(ctx) {
   // `audience`: who sees it (`audience`'s choice: public, a space's members or fewer — a role, the admins, chosen
   // people —, your followers or friends, only you); none given: public or not, by `public`.
   async function upload(file, { space: sp = null, public: pub = false, audience = null, from = null, folder = null, write = null, onProgress = () => {} } = {}) {
-    const ref = await files.put(file, { space: sp, public: pub, app: from?.app ?? "drive", onProgress });
+    // Uploaded where its entry will live (`items.uploadPlace`: a narrower audience your own first, adopted where it goes).
+    const up = audience ? await items.uploadPlace({ board: shared(sp) ? sp.id : null, audience }) : { space: sp, public: pub };
+    const ref = await files.put(file, { space: up.space, public: up.public, app: from?.app ?? "drive", onProgress });
     await add(ref, { space: sp, from, folder, public: pub, audience, write }).catch(e => ctx.failed("drive", e, `listing ${file.name}: ${e.message}`));
     return ref;
   }

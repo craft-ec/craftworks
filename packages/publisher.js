@@ -24,7 +24,9 @@ export async function start(ctx) {
     const maker = await ctx.require(spec.maker);
     // A space this person is not in (its policy lets anyone post): published public, kept in their profile (`items.submit`).
     const outside = space && !(await items.boardOf.strict(space.id)) ? space : null;
-    const ref = await maker.make(file, { space: outside ? null : space, public: outside ? true : audience === "public", app: app ?? spec.domain, keepOriginal, onProgress });
+    // Its file uploaded where the item will live (`items.uploadPlace`, the one rule); `submit` puts it there after.
+    const up = outside ? { space: null, public: true } : await items.uploadPlace({ board: space?.id ?? null, audience });
+    const ref = await maker.make(file, { space: up.space, public: up.public, app: app ?? spec.domain, keepOriginal, onProgress });
     // A COVER chosen: over the file's own.
     if (cover) ref.preview = (await (await ctx.require("image-studio")).thumbnail(cover)) ?? ref.preview;
     // Its own TAGS: the fields its kind has, unless given.
@@ -84,7 +86,7 @@ export async function start(ctx) {
     const ks = kinds.inDomain(domain);
     const kindSel = h("select", { name: "kind" }, ...ks.map(k => h("option", { value: k, textContent: kinds.of(k).label })));
     const who = await audience.picker({ space: outside ? null : space, kind: ks[0], initial });
-    const pick = attachments.picker({ space: outside ? null : space, from: { app }, media: true, publish: true, public: () => !!outside || who.isPublic() });
+    const pick = attachments.picker({ space: outside ? null : space, from: { app }, media: true, publish: true, ...(outside ? { public: true } : { audience: () => who.value() }) });
     const ed = mdEditor.create({ pick, label: "Text" });
     const said = h("p", { className: "said", hidden: true });
     const title = h("input", { name: "title", placeholder: kinds.titled(ks[0]) ? "Title" : "Title (optional)", required: kinds.titled(ks[0]), maxLength: 300, autocomplete: "off" });

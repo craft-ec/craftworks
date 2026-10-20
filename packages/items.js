@@ -837,6 +837,30 @@ export async function start(ctx) {
     return { place: null, outside: false, public: pub, did, table: n => (pub ? { kind: "public", did, name: fitName("", n, 32) } : { messages: fitName("", n, 32), scope: acc }) };
   }
 
+  // WHERE AN ITEM's FILES ARE UPLOADED, before it is made (the one rule — every picker, the publisher, Drive ask it,
+  // never choose): a space's members or public item, that space (no copy); yours, your account (public or not); an
+  // audience NARROWER than a whole space (only you in a space, a role, the admins, chosen people, your friends or
+  // followers) your own ACCOUNT — nobody else reads its rows — and `submit` adopts it where the item goes (10-21: put
+  // in the space, its key row stayed readable by all its members).
+  async function uploadPlace({ board = null, audience = "public" } = {}) {
+    const a = String(audience ?? "");
+    const whole = a === "public" || a === "members";
+    if (board && whole) {
+      const sp = await boardOf(board);
+      if (sp) return { space: sp, public: a === "public" };
+    }
+    return { space: null, public: !board && a === "public" };
+  }
+  // AN ITEM's FILES PUT WHERE IT IS: adopted into its place (a copy under that place's key, where they were elsewhere),
+  // public exactly when it is — after every make, edit and move (`submit`, `editItem`), never by a caller.
+  async function placeFiles(refs, place, pub) {
+    if (!refs?.length) return refs ?? [];
+    const F = await ctx.require("files");
+    const out = await Promise.all(refs.map(f => (f && !f.inline ? F.adopt(f, place, { pub }) : f)));
+    await F.publicity(out, place, pub);
+    return out;
+  }
+
   // `audience` (the `audience` picker's value): yours — "public" or "private"; a space's — "public" or "members".
   // `at`: when it was made (an item brought over from before keeps its own time).
   // `write`: who may comment and vote on it ({ comment, vote }: anyone · followers · friends · members · author) — its
@@ -866,6 +890,8 @@ export async function start(ctx) {
     ({ board, audience, meta } = await route({ board, audience, kind, title, meta }));
     if (board) {
       const sp = await boardOf(board);
+      // Its files where it is (a space's: public exactly when it is).
+      if (sp) files = await placeFiles(files, sp, audience === "public" && (await publicIn(sp, kind)));
       // NOT IN IT, where its policy lets anyone post: kept in this person's profile, for that space (`meta.space`),
       // pointed in its bag — one more item of its room (`outsideSource`), the room's one filter deciding.
       if (!sp && outside?.id === board) {
@@ -882,8 +908,8 @@ export async function start(ctx) {
       return `space:${sp.id}/${await (await boardRoom(sp)).post(kind, body, { title, files, meta, at, aud: audience === "members" ? "members" : null })}`;
     }
     const self = await me();
-    // Its files: public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
-    await (await ctx.require("files")).publicity(files, null, !only).catch(e => ctx.failed("posts", e, `its files: ${e.message}`));
+    // Its files: yours, public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
+    files = await placeFiles(files, null, !only);
     const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta, at })}`;
     // Listed in Discover (its own bag made with it: nobody reading it waits on one that does not exist).
     // UNLISTED (`meta.unlisted`): public — anyone with its link reads it — but never listed in Discover.
@@ -972,6 +998,11 @@ export async function start(ctx) {
   }
 
   async function comment(post, re, body, { files = [], outside = null } = {}) {
+    // Its files where the item it is about is, public exactly when that item is (what attaches follows its item).
+    if (files?.length && !outside) {
+      const at = await placeOf(post);
+      if (!at.outside) files = await placeFiles(files, at.place, at.public);
+    }
     body = String(body ?? "").trim();
     if (!body && !files.length) throw new Error("a comment needs something in it");
     if (post.startsWith("space:")) {
@@ -1107,6 +1138,11 @@ export async function start(ctx) {
   // profile in the contributor's own tail with a pointer on the item (a private item: private too) — and listed with it.
   async function attach(post, kind, body, { meta = {}, files = [], place = undefined } = {}) {
     if (!kinds.attaching().includes(kind)) throw new Error(`${kind} does not attach to an item`);
+    // Its files: where it is kept — beside its item (that item's place and publicity), or the place named.
+    if (files?.length && place === undefined) {
+      const at = await ctx.optional("items: placeOf", placeOf(post), () => null);
+      if (at && !at.outside) files = await placeFiles(files, at.place, at.public);
+    }
     // KEPT ELSEWHERE (`place`: a space, or null — this person's own): about `post` by its full reference.
     if (place !== undefined && !(place && post.startsWith(`space:${place.id}/`))) {
       if (place) return `space:${place.id}/${await (await boardRoom(place)).post(kind, body, { in: post, meta, files })}`;
@@ -1150,6 +1186,11 @@ export async function start(ctx) {
   }
   // An item of this person's EDITED (a subtitle's text or label): its body, files and meta.
   async function editItem(ref, body, { files = null, meta = null, title = undefined } = {}) {
+    // Its files where it is, public exactly when it is (`placeOf`).
+    if (files?.length) {
+      const at = await placeOf(ref);
+      if (!at.outside) files = await placeFiles(files, at.place, at.public);
+    }
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
       if (sp) return (await boardRoom(sp)).editFull(idOf(ref), body, { files, meta, title });
@@ -1244,5 +1285,5 @@ export async function start(ctx) {
     },
     // THE RANKING (a feed's sort), the one: what `list` orders by — for a list made of several (`tag`'s).
     rank: (list, sort = "new", by = null) => [...list].sort(sorter(sort, by)),
-    route, placeOf, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    route, placeOf, uploadPlace, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

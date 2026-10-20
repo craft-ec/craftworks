@@ -34,8 +34,10 @@ export async function start(ctx) {
   // EDIT one's own in place: its text and its files (kept where it is — its space's, public as it is; or the profile's),
   // saved as a new version (shown "(edited)").
   async function editIn(host, it, done) {
-    const sp = it.board ? await items.boardOf.strict(it.board.id) : null;
-    const pub = it.board ? !!it.pub : !it.private;
+    // (Where it is and whether it is public: `items.placeOf`, the one answer.)
+    const at = await items.placeOf(it);
+    const sp = at.place;
+    const pub = at.public;
     const pick = attachments.picker({ space: sp, from: { app: items.appOf(it.kind) }, public: () => pub, media: true, publish: true });
     pick.preset(it.files ?? []);
     const ed = mdEditor.create({ value: it.body ?? "", pick, label: "Edit" });

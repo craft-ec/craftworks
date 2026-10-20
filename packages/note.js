@@ -211,7 +211,7 @@ export async function mount(ctx, el) {
   // files attached (kept where the note is: its space's, or yours; public when the note is).
   const [mdEditor, attachments] = await Promise.all(["md-editor", "attachments"].map(n => ctx.require(n)));
   const editorOf = (placeholder, files = []) => {
-    const pick = attachments.picker({ space: sp, from: { app: "note" }, public: () => who.value() === "public", media: true });
+    const pick = attachments.picker({ space: sp, from: { app: "note" }, audience: () => who.value(), media: true });
     pick.preset?.(files);
     return mdEditor.create({ pick, placeholder, label: "Note" });
   };

@@ -116,15 +116,13 @@ export async function start(ctx) {
   }
 
   // AN ITEM MOVED — to a place (a group: shared; into a shared folder; back to a space or yours, `to` null) or to
-  // another AUDIENCE where it is (`setAudience`): where it goes decided by the one routing (`items.route`), its FILES
-  // adopted there first (`files.adopt`: listed with their key, copied under that place's salt — its people read them;
-  // public exactly when it is), then the same kind, body, meta and time written there and the original removed. The
-  // one way an item changes place. (Its comments and votes stay with the old ref.)
+  // another AUDIENCE where it is (`setAudience`): where it goes decided by the one routing (`items.route`), the same
+  // kind, body, files, meta and time written there (`submit` puts its files where it went) and the original removed.
+  // The one way an item changes place. (Its comments and votes stay with the old ref.)
   async function relocate(it, { board = null, audience, meta = it.meta }) {
-    const files = await ctx.require("files");
+    // (Its files: put where it goes by `submit` — `items.placeFiles`, the one rule.)
     const at = await items.route({ board, audience, kind: it.kind, title: it.title, meta });
-    const pub = at.audience === "public";
-    const fs = await Promise.all((it.files ?? []).map(f => files.adopt(f, at.place, { app: it.meta?.from?.app ?? null, pub })));
+    const fs = it.files ?? [];
     // A DOCUMENT's text is its own table's (`codoc`): taken whole before it moves, its new table's first row after.
     const codoc = (await ctx.require("kinds")).coedited(it.kind) ? await ctx.require("codoc") : null;
     const snap = codoc ? await codoc.snapshot(it.ref) : null;
