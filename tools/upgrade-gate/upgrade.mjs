@@ -22,12 +22,26 @@ async function open(port, hash = "#/settings") {
   await p.goto(site(port) + hash);
   await p.waitForTimeout(25000);
   const fr = () => p.frames().find(x => x !== p.mainFrame() && x.url() !== "about:srcdoc");
+  // THE VERSION JUST PUBLISHED, running (WANT_V: its manifest's siteV): a page runs the version before until the new
+  // one's pieces arrive — the "old" accounts were registered on whatever fx ran before (10-20: a build published there
+  // earlier that day, the candidate's own: nothing to hand over, nothing retired). Reloaded until it runs it, 5 min.
+  const want = process.env.WANT_V;
+  for (let end = Date.now() + 300000; want; ) {
+    const v = await fr()?.evaluate(() => app.siteV).catch(() => null);
+    if (v === want) break;
+    if (Date.now() > end) throw new Error(`fx runs ${v ?? "nothing"}, not the version just published (${want})`);
+    say(`  page on ${port} runs ${v ?? "nothing yet"}, waiting for ${want}`);
+    await p.goto("about:blank");
+    await p.goto(site(port) + hash);
+    await p.waitForTimeout(20000);
+  }
   return { ctx, p, port, f: p.frameLocator("#app"), ev: (fn, arg) => fr().evaluate(fn, arg) };
 }
 async function register(u, pin, handle) {
   // LOGIN IS THE NODE'S: whoever is logged in there from before logs out first.
-  if (await u.f.getByRole("button", { name: "Log out" }).count()) {
-    await u.f.getByRole("button", { name: "Log out" }).first().click({ force: true });
+  // (Its menu's Log out moved: the one logout, `auth.logout` — the page reloads, the call loses its page.)
+  if (await u.ev(async () => !!(await (await app.require("space")).account())).catch(() => false)) {
+    await u.ev(async () => (await app.require("auth")).logout()).catch(() => null);
     await u.p.waitForTimeout(10000);
     await u.p.goto("about:blank");
     await u.p.goto(site(u.port) + "#/chat");

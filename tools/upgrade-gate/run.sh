@@ -15,13 +15,17 @@ pub() { (cd "$1" && CRAFTWORKS_TOKEN=off lockf -t 600 /tmp/craftworks-realnet.lo
 fails() { for d in "$FX_LOG" "$FY_LOG"; do f=$(ls -t "$d"/freenet.*.log | grep -v error | head -1); echo "$(basename "$(dirname "$d")") failed=$(grep -c 'Delegate operation failed' "$f") park=$(grep -c PARK_WORK_BUDGET "$f") cap=$(grep -c MAX_NETWORK_CONTRACT_OPS_PER_PARK "$f")"; done; }
 F=u$(date +%H%M)
 pub "$OLD" "$OUT/pub-old.log"
+# THE VERSION JUST PUBLISHED (its manifest's siteV): what the phase's pages must run before anything is made there.
+site=$(grep -oE "OPEN: /v1/contract/web/[^/]+" "$OUT/pub-old.log" | head -1 | sed 's|.*/||')
+vOf() { curl -sf -m 120 "http://127.0.0.1:17691/v1/contract/web/$site/manifest.json" | shasum -a 256 | cut -c1-12; }
+export WANT_V=$(vOf); echo "old version: $WANT_V"
 UP_PHASE=old perl -e 'alarm 2400; exec @ARGV' node "$here/upgrade.mjs" "${F}a" > "$OUT/old.log" 2>&1
 grep -E "^[0-9:]+ ([1-3] |   dm|FAILED)" "$OUT/old.log" | cut -c1-300
 # The candidate takes every identity build the site before it knows, as a release does (PREVIOUS_SITE; 10-20: v409's
 # build missing from a copied history, and every v409 member's PIN read as wrong).
-site=$(grep -oE "OPEN: /v1/contract/web/[^/]+" "$OUT/pub-old.log" | head -1 | sed 's|.*/||')
 bash "$here/../previous-site.sh" "http://127.0.0.1:17691/v1/contract/web/$site" "$OUT/previous" > /dev/null || { echo "GATE: the site before could not be read"; exit 1; }
 PREVIOUS_SITE="$OUT/previous" pub "$NEW" "$OUT/pub-new.log"
+export WANT_V=$(vOf); echo "new version: $WANT_V"
 grep -E "^identity: every build" "$OUT/pub-new.log"
 echo "before the new phase: $(fails | tr '\n' ' ')"
 UP_PHASE=new perl -e 'alarm 2400; exec @ARGV' node "$here/upgrade.mjs" "${F}b" > "$OUT/new.log" 2>&1

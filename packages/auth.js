@@ -119,8 +119,12 @@ export async function start(ctx) {
     // Newest first, up to the first that does not hold this PIN. A SILENT one (an overloaded or still loading build —
     // exactly the one whose rounds must stop) is asked again by the fault policy, never passed over for good (10-18:
     // v401's build, overloaded, answered nothing, and kept running its rounds on the owner's node after the login).
+    // FROM THE BUILD IT CAME FROM (`movedFrom`, the handover's): the builds newer than it never held this member — the
+    // handover asked them first — and one of them saying "not here" ended the walk before the member's own build was
+    // retired (10-20: a build published only to a test node, newer than the release before, stopped every retirement).
     let silent = [];
-    for (const prior of ctx.identityPrior) {
+    const from = movedFrom ? ctx.identityPrior.indexOf(movedFrom) : -1;
+    for (const prior of from > 0 ? ctx.identityPrior.slice(from) : ctx.identityPrior) {
       const r = await one(prior);
       if (r.silent) silent.push(prior);
       else if (!r.retired && !r.missing) break;
