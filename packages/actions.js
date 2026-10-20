@@ -209,7 +209,9 @@ export async function start(ctx) {
     const btn = (textContent, run, extra = {}) => h("button", { type: "button", textContent, ...extra, onclick: e => (e.stopPropagation(), e.preventDefault(), run(e)) });
     const el = h("div", { className: "cw-acts" });
 
-    Promise.all([me(), isSaved(it.ref)]).then(([self, wasSaved]) => {
+    // SHARING (`share`: the one sharing piece): one's own personal item, or an item shared with chosen people.
+    const shareOf = ctx.optional("actions: share", ctx.require("share").then(async s => ((it.by === (await me()) && !String(it.ref).startsWith("space:")) || (await s.isShared(it.ref)) ? s : null)), () => null);
+    Promise.all([me(), isSaved(it.ref), shareOf]).then(([self, wasSaved, share]) => {
       const mine = it.by === self;
       const n = id => (countOf(it, id) ? ` ${short(countOf(it, id))}` : "");
       let isOn = wasSaved;
@@ -236,6 +238,8 @@ export async function start(ctx) {
               e.target.textContent = `Link copied${n("share")}`;
             }, fail),
           ),
+          // SHARE WITH PEOPLE: who has it, as owner, editor or viewer (`share`).
+          share ? share.button(it) : null,
           // VIEWS: how many people opened it (counted, never pressed).
           countOf(it, "view") ? h("span", { className: "n", title: "People who opened it", textContent: `👁 ${short(countOf(it, "view"))}` }) : null,
           save,

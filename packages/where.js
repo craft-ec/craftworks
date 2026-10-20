@@ -11,6 +11,7 @@
 //   const at = await where.of({ kind: "note", app: "note", yours: "Your notes" })
 //   at.who            // "mine" | "space" | "person" | "discover"
 //   at.saved          // your SAVED of this app (`#/<app>/saved`: what you saved, any place) — every app has it
+//   at.shared         // SHARED with chosen people (`#/<app>/shared`: `share`'s item groups) — every app has it
 //   at.others         // someone else's (a person's, Discover's): read only
 //   at.space  at.person  at.me
 //   at.sub            // the rest of the address, after the place (`f/Photos`, `p/<ref>`)
@@ -77,6 +78,8 @@ export async function start(ctx) {
     const sub = (p ? (ctx.sub ?? "").replace(/^u\/did:[^/]+\/?/, "") : (ctx.sub ?? "")).replace(/^\/+/, "");
     if (guestDiscover) history.replaceState(history.state, "", `#/discover/${app}${sub ? `/${sub}` : ""}`), dispatchEvent(new CustomEvent("craftworks:address"));
     const saved = saves && who === "mine" && /^saved(\/|$)/.test(sub);
+    // SHARED: items shared with chosen people (`share`: each in its own group) — by this person or with them.
+    const shared = saves && who === "mine" && /^shared(\/|$)/.test(sub);
     // THE READ: the place's items — a list's window, or (whole) every one; your Saved: what you saved of its kinds.
     const read = ctx.total("where.read", () => [], ({ kinds: ks = kinds, sort = "new", window = "all", whole = false, ...options } = {}) => {
       if (saved)
@@ -85,6 +88,7 @@ export async function start(ctx) {
           .then(async a => Promise.all((await a.saved()).map(getSaved)))
           // NSFW as every list (`items.visible`).
           .then(list => items.visible(list.filter(it => it && ks.includes(it.kind))));
+      if (shared) return ctx.require("share").then(async sh => items.visible(await items.inPlaces.strict({ spaces: await sh.groups() }, ks, { withVotes: false })));
       if (who === "discover") return items.list.strict({ discover: true }, sort, ks, { window, ...options });
       if (whole) return items.inPlaces.strict(sp ? { spaces: [sp] } : { people: [person ?? me] }, ks, { withVotes: false });
       return items.list.strict(sp?.outside ? { outside: sp } : sp ? { board: sp.id } : { by: person ?? me }, sort, ks, { window, ...options });
@@ -123,6 +127,7 @@ export async function start(ctx) {
             ...extra.map(e => ({ role: "you", ...e })),
             ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings", role: "you" }] : []),
             ...(home && saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved, role: "you" }] : []),
+            ...(home && saves ? [{ label: "Shared", href: `#/${app}/shared`, on: shared, role: "you" }] : []),
             ...(home && pub ? [{ label: "Discover", href: `#/discover/${app}`, on: who === "discover", role: "discover" }] : []),
             ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true, role: "create" }] : []),
           ];
@@ -143,7 +148,7 @@ export async function start(ctx) {
       host.replaceChildren(page ?? Object.assign(document.createElement("p"), { textContent: "This app has no settings of its own." }));
       return true;
     };
-    return { settings, who, saved, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+    return { settings, who, saved, shared, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
   }
   // A MENU of an OS page's own (Settings' sections, Mail's folders, the token pages): the ONE door for an app's entries
   // besides `tabs` — each its ROLE (`you`, or `create` for an ending action), told to the header and the side panel.

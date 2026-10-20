@@ -2808,3 +2808,24 @@ Each phase: built, tested with controls, proven on fx, committed. Not decided: t
 - Live: 1383/1383 pieces findable from the owner node at publish; find-check 1386/1386, UNREBUILDABLE 0; Wren logged in
   on the new identity build (3d2f3b76), wrote and read back.
 - Nodes: B, owner node, fx/fy on freenet 0.2.146 (0.2.147 rejected: 451/3,091 streamed PUTs lost on fx/fy).
+
+## Shared items → Docs, Sheets, Slides (owner 10-20: "build the shared items … no duplicate implementation")
+Structure (ARCHITECTURE §7 "Shared items" + "Live co-editing", reordered 10-20): a shared item is a GROUP (`groups`,
+key `item:<id>`); owner = the group's owner (`transfer`), editors = a composed role holding the `edit` policy (readers
+check it: content.js `R.mayWrite` at the edit's time), viewers = members; sealed by the key tree. Edits are rows in each
+editor's own feed (storage); the document type is ONE CRDT library in Rust in core (page and node alike); snapshots
+are files (erasure). Freenet merges each contract's state commutatively — the transport — not a text/list/cell type.
+- [x] S1 `share` capability (packages/share.js, a HOST capability with a frame helper button): with / people / setRole /
+      revoke / handOn / groups / open; the item moved into its group (`item:<id>`, role `editor` holding `edit` and
+      `post`); "👥 Share with…" in the one actions bar; "Shared" tab in `where` (every app). fx/fy probe (pw/share.mjs)
+      11/11: share, B edits, A reads, B made viewer refused, B's earlier edit stands, B's FORGED versions (an edit, a
+      version claiming the note) pass over on A, revoke. Control with content's admission off: fails at 4b only.
+  FOUND ON THE WAY (pre-existing, every space): a member who may not edit a note/file/folder overwrote it (a refused
+  edit re-attributed to its writer won the merge, judged by the note's own old `at`). Fixed at the shared layer:
+  `feed::ranked` (every version best first; first = merge's) → `storage` `t.admit(rule)` (first admitted version is
+  the row; a refused delete leaves it) → content's rule (owner = the key's oldest version; an edit only by a role held
+  AT ITS TIME — gov `held_history`/`passes_did_at`; unknown oldest writer: only it stands; re-judged on acts and on
+  writers learned, roles `onWriters`). Known limit kept: a writer's own claimed time (`at`) can be backdated.
+- [ ] S2 the CRDT in core (Automerge or Loro: wasm size, rich text, lists), changes as rows in each editor's feed,
+      snapshots as files.
+- [ ] S3 Docs; S4 Sheets; S5 Slides — each on S1+S2.

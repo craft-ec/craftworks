@@ -430,10 +430,11 @@ snapshot), and the wiki commons' disputes (an edit war, a ban, a rule change go 
    finalization names is the finalizer's view of the members then; a poll's "results after close" is a display rule
    (records are readable by its readers); a ballot's time is its writer's claim (a closed poll's cut-off is honour; a
    proposal's is the finalization's snapshot); at most 3000 inputs per finalization.
-5. SLIDES — decks written as Markdown first (one slide per section; presenter view, themes, PDF export); co-edited
-   with the others in 6.
-6. SHARED ITEMS (owner, editors, viewers per item), then DOCS, SHEETS and SLIDES with live co-editing (CRDT, above);
-   Sheets with a formula engine and CSV/XLSX import and export. First: measure Chat's delivery delay; choose the library.
+5. SHARED ITEMS (owner, editors, viewers per item: a group per item, `groups`), then the document CRDT in core (one
+   Rust library, page and node alike), then DOCS, SHEETS and SLIDES on it with live co-editing (above) — each app built
+   once, on the shared pieces (owner 10-20: no single-author Slides first, built again co-edited). Sheets with a formula
+   engine and CSV/XLSX import and export; Slides written as Markdown (one slide per section; presenter view, themes,
+   PDF export).
    The GLOBAL WIKI commons comes after VOTE (its governance).
 
 **Commerce — RESALE of editions (after the token is released and stable):** selling a copy you own, ON THE ITEM'S PAGE
