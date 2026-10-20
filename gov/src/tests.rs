@@ -536,3 +536,23 @@ fn check_dids_is_the_listed_the_owner_and_everyone_an_act_moved() {
     let got = crate::check_dids(&["did:a".into()], "did:o", &acts);
     assert_eq!(got, vec!["did:a", "did:gone", "did:j", "did:o", "did:x"], "a role act moves nobody");
 }
+
+/// A COMPOSED ROLE AS IT WAS (`passes_did_at`, 10-20): an editor's edit made while they held the role stands after it is
+/// taken back — judged by the role then, not now; and a role deleted is held by nobody from then.
+#[test]
+fn a_role_held_then_passes_then_and_not_after_it_is_taken_back() {
+    let g = gov(&[
+        admin_a(),
+        act("am", "na", 2, json!({"act":"added","did":M})),
+        act("ax", "na", 3, json!({"act":"added","did":X})),
+        mods(json!(["post"])),
+        act("as", "na", 11, json!({"act":"assign","did":M,"role":"mods"})),
+        act("un", "na", 20, json!({"act":"assign","did":M,"role":"mods","on":false})),
+        act("as2", "na", 21, json!({"act":"assign","did":X,"role":"mods"})),
+        act("del", "na", 30, json!({"act":"role","role":"mods","on":false})),
+    ]);
+    let ts = |did: &str| [10.0, 11.0, 15.0, 20.0, 25.0, 30.0, 35.0].map(|t| g.passes_did_at("role:mods", did, t));
+    assert_eq!(ts(M), [false, true, true, false, false, false, false], "M: from its assign to its taking back");
+    assert_eq!(ts(X), [false, false, false, false, true, false, false], "X: from its assign to the role's deletion");
+    assert!(!g.passes_did("role:mods", M, Some("member")), "now: M no longer");
+}

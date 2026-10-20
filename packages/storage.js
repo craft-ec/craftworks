@@ -929,6 +929,30 @@ export async function start(ctx) {
   // A feed's own current rows, merged alone: `[{ key, value, id }]` (text; its deletes left out).
   const decoded = rows => rows.map(r => ({ key: dec.decode(r.key), value: dec.decode(r.value), id: r.id }));
   const own = t => decoded(Array.from(feed.merge_feeds([[bytes(t.owner), t.raw()]])));
+  // MERGED ROWS (`feed`): each key's current version — or, where the table's READER ADMITS versions (`t.admit(rule)`),
+  // the first version it admits, best first (`feed::ranked`: the same order), so a version it refuses never displaces
+  // the one it names (10-20: a viewer's edit replaced a shared note). A DELETE is judged against the version it removes
+  // (`removes`: the next one this reader admits) — refused, the row stands.
+  const mergedRows = (feeds, admit = null) => {
+    if (!admit) return decoded(Array.from(feed.merge_feeds(feeds)));
+    const out = [];
+    for (const k of Array.from(feed.ranked_feeds(feeds))) {
+      const key = dec.decode(k.key);
+      const vs = Array.from(k.versions).map(x => ({ key, value: x.value == null ? null : dec.decode(x.value), id: x.id }));
+      // (Each judged with the key's versions beside it — `all`, best first: whose the row is is its OLDEST version's.)
+      for (let i = 0; i < vs.length; i++) {
+        const v = vs[i];
+        if (v.value != null) {
+          if (admit(v, vs)) out.push(v);
+          else continue;
+          break;
+        }
+        const removes = vs.slice(i + 1).find(x => x.value != null && admit(x, vs));
+        if (!removes || admit({ ...v, removes }, vs)) break;
+      }
+    }
+    return out;
+  };
   // A CATALOG's tables: its rows but `HERE` — the row a member's catalog of a space is made with, the first time it
   // opens the space, so a catalog that is not there means a member never there (never asked for it in vain).
   const HERE = "~here";
@@ -1228,9 +1252,11 @@ export async function start(ctx) {
           return null;
         });
       let rows = [];
+      // (Its reader's ADMISSION, once given: `t.admit` — `mergedRows`.)
+      let admitRule = null;
       const changed = [];
       const remerge = () => {
-        rows = decoded(Array.from(feed.merge_feeds(all.map(f => [bytes(f.owner), f.raw()]))));
+        rows = mergedRows(all.map(f => [bytes(f.owner), f.raw()]), admitRule);
         for (const f of changed) f();
       dataChanged(); // (a view reads it again only once it is here)
       };
@@ -1359,7 +1385,7 @@ export async function start(ctx) {
         });
         const got = await Promise.all(pages);
         const ok = got.filter(Boolean);
-        const merged_ = decoded(Array.from(feed.merge_feeds(ok.map(({ f, p }) => [bytes(f.owner), p.rows])))).sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
+        const merged_ = mergedRows(ok.map(({ f, p }) => [bytes(f.owner), p.rows]), admitRule).sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0));
         const out = merged_.slice(0, limit);
         const more = merged_.length > limit || ok.some(({ p }) => p.next);
         return { rows: out, next: more && out.length ? out.at(-1).key : null };
@@ -1380,6 +1406,11 @@ export async function start(ctx) {
         app: name,
         lazy,
         page,
+        // ITS READER's ADMISSION (`mergedRows`): `rule({ key, value, id, removes? }, all)` — true where that version may
+        // be the row (`all`: the key's versions, best first); merged again now.
+        admit: rule => ((admitRule = rule), remerge()),
+        // A KEY's VERSIONS here, best first (`feed::ranked`) — what its admission judged (to see why a row reads as it does).
+        versions: key => (Array.from(feed.ranked_feeds(all.map(f => [bytes(f.owner), f.raw()]))).find(k => dec.decode(k.key) === key)?.versions ?? []).map(x => ({ value: x.value == null ? null : dec.decode(x.value), id: x.id })),
         // What each writer's feed is here (to see why a table reads as it does).
         feedsNow: () => all.map(f => ({ owner: f.owner.slice(0, 12), absent: !!f.absent, lazy: !!f.lazy, state: f.state?.s ?? null, info: f.info ?? null })),
         // THIS WRITER's own feed read whole (a lazy table: what it copies or checks of its own), the others as paged.

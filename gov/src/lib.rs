@@ -245,6 +245,9 @@ pub struct Gov {
     /// Each counted change of a BASE ROLE, in order: `(at, did, role)` (None: out) — the owner's first (its time 0), each
     /// grant, transfer, removal: WHO HELD WHAT WHEN (`role_at`: a vote finalized then judged by the roles then).
     pub role_history: Vec<(f64, String, Option<String>)>,
+    /// WHO HELD WHICH COMPOSED ROLE WHEN: each `assign` (`(at, did, role, on)`), and a role deleted (`did` "*": held by
+    /// nobody from then) — what `held_at` replays, as `role_history` the base roles.
+    pub held_history: Vec<(f64, String, String, bool)>,
 }
 
 /// JavaScript's `Number(v) || 0` for what acts carry.
@@ -324,6 +327,32 @@ impl Gov {
     }
     /// Does a person pass a policy's `who`: a built-in one by their base role; a composed role by holding it (the owner
     /// and admins always).
+    /// The composed roles `did` held at `at` (`held_history` replayed).
+    pub fn held_at(&self, did: &str, at: f64) -> BTreeSet<String> {
+        let mut hs = BTreeSet::new();
+        for (_, d, r, on) in self.held_history.iter().filter(|(t, ..)| *t <= at) {
+            if d == "*" {
+                hs.remove(r);
+            } else if d == did && *on {
+                hs.insert(r.clone());
+            } else if d == did {
+                hs.remove(r);
+            }
+        }
+        hs
+    }
+    /// `passes_did` AS IT WAS at `at`: by the base role and the composed roles held then (10-20: an editor's edit made
+    /// while they held the role stands after it is taken back).
+    pub fn passes_did_at(&self, who: &str, did: &str, at: f64) -> bool {
+        let role = self.role_at(did, at);
+        if let Some(id) = list_of(who) {
+            return role.is_some() && self.lists.get(id).is_some_and(|(by, people)| by == did || people.contains(did));
+        }
+        match role_of(who) {
+            Some(id) => rank(role) >= 2 || (role.is_some() && self.held_at(did, at).contains(id)),
+            None => passes(who, role),
+        }
+    }
     pub fn passes_did(&self, who: &str, did: &str, role: Option<&str>) -> bool {
         if let Some(id) = list_of(who) {
             return role.is_some() && self.lists.get(id).is_some_and(|(by, people)| by == did || people.contains(did));
@@ -667,6 +696,7 @@ impl Gov {
                         for hs in g.held.values_mut() {
                             hs.remove(&id);
                         }
+                        g.held_history.push((at0, "*".into(), id.clone(), false));
                     } else {
                         let perms = a["perms"].as_array().unwrap().iter().filter_map(Value::as_str).map(str::to_string).collect();
                         g.defined.insert(id, Role { name: s(&a, "name").unwrap().to_string(), perms });
@@ -678,11 +708,13 @@ impl Gov {
                 }
                 "assign" => {
                     let (d, rid) = (did.unwrap().to_string(), s(&a, "role").unwrap().to_string());
+                    let on = !(a.get("on").is_some() && !truthy(a.get("on")));
+                    g.held_history.push((at0, d.clone(), rid.clone(), on));
                     let hs = g.held.entry(d).or_default();
-                    if a.get("on").is_some() && !truthy(a.get("on")) {
-                        hs.remove(&rid);
-                    } else {
+                    if on {
                         hs.insert(rid);
+                    } else {
+                        hs.remove(&rid);
                     }
                 }
                 _ => {}

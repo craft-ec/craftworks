@@ -213,6 +213,54 @@ export async function start(ctx) {
       return null;
     };
     const R = await ctx.require("roles");
+    // THE ADMISSION (`storage`'s `t.admit`, one rule for every governed space): which VERSION of a row may be the item
+    // — never one its writer had no right to (10-20: a viewer's edit of a shared note replaced it for everyone, shown
+    // as theirs). A version naming another's item (`by`) stands only as an EDIT that person's role allowed at its time
+    // (`byOf`); a DELETE only by the item's maker or one who may edit it. A refused version is passed over: the one it
+    // named stays the item.
+    const parse = x => {
+      try {
+        return JSON.parse(x);
+      } catch {
+        return null;
+      }
+    };
+    // WHOSE IT IS: its OLDEST version's — the first, from the bottom of the chain, that claims its own writer. A version
+    // written later claiming the item as its writer's own does not make it theirs (10-20, a viewer's forged version).
+    // (Its oldest version's writer NOT KNOWN here yet — writers are learned as their feeds come: `UNKNOWN`, and only that
+    // oldest version stands until it is; never a later version claiming the item meanwhile.)
+    const UNKNOWN = {};
+    const ownerOf = all => {
+      for (let i = all.length - 1; i >= 0; i--) {
+        const x = all[i];
+        const v = x.value == null ? null : parse(x.value);
+        if (!v || v.editor) continue;
+        const w = r.author(x);
+        if (!w) return UNKNOWN;
+        if (typeof v.by !== "string" || v.by === w) return w;
+      }
+      return null;
+    };
+    const admitted = (row, all = [row]) => {
+      const writer = r.author(row);
+      const owner = ownerOf(all);
+      if (owner === UNKNOWN) return row.value != null && row === all.at(-1);
+      if (row.value == null) {
+        const was = parse(row.removes.value);
+        if (!was || !writer) return true;
+        return writer === owner || (K.collaborative(was.kind) && R.mayWrite({ action: "edit", item: { kind: was.kind, by: owner, meta: was.meta }, writer, r }) === true);
+      }
+      const v = parse(row.value);
+      if (!v || !writer) return true;
+      if (!v.editor) return (typeof v.by !== "string" || v.by === writer) && (!owner || writer === owner);
+      return v.editor === writer && v.by === owner && byOf(row, v) === v.by;
+    };
+    if (governed && !outside && r && t.admit) {
+      t.admit(admitted);
+      // (Judged again when the space's acts change: a role given or taken back moves what stands.)
+      r.onChange?.(() => t.admit(admitted));
+      r.onWriters?.(() => t.admit(admitted));
+    }
     const allowed = (action, did, it, all, at) => {
       // A CHANNEL with its item: by that item's rule (its own, else the space's Chat policy — `roles.mayWrite`).
       if (container.kind === "channel" && container.item) return R.mayWrite({ action, item: container.item, writer: did, r, at }) === true;

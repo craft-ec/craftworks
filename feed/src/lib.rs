@@ -100,6 +100,42 @@ pub fn merge(feeds: &[([u8; 32], &BTreeMap<Vec<u8>, Vec<u8>>)]) -> BTreeMap<Vec<
     out
 }
 
+/// EVERY VERSION of each row, best first — the order `merge` picks by (the longest chain, then the highest id), so the
+/// first is its current version. For a READER that refuses some (content's: an edit by one who may not edit, a version
+/// claiming another's item): the first version it admits is the row — a refused version never displaces the one it
+/// names (10-20: a viewer's edit replaced a shared note, and an edit outside the rules re-attributed to its writer won
+/// the merge). A delete is a version with no value. The same rule as `merge`, for page and node.
+pub fn ranked(feeds: &[([u8; 32], &BTreeMap<Vec<u8>, Vec<u8>>)]) -> BTreeMap<Vec<u8>, Vec<Version>> {
+    let mut versions: BTreeMap<&[u8], Vec<Version>> = BTreeMap::new();
+    for (writer, rows) in feeds {
+        for (k, v) in rows.iter() {
+            if let Some(ver) = open(v).filter(|ver| ver.id.0 == *writer) {
+                versions.entry(k).or_default().push(ver);
+            }
+        }
+    }
+    versions.into_iter().map(|(k, vs)| (k.to_vec(), best_first(vs))).collect()
+}
+
+/// A row's versions, best first: by the length of the chain each ends (`after` walked back through what is known),
+/// then by id.
+fn best_first(vs: Vec<Version>) -> Vec<Version> {
+    let by_id: HashMap<Id, Option<Id>> = vs.iter().map(|v| (v.id, v.after)).collect();
+    let depth = |id: Id| -> u64 {
+        let mut n = 0;
+        let mut seen = std::collections::HashSet::new();
+        let mut at = Some(id);
+        while let Some(i) = at.filter(|i| by_id.contains_key(i) && seen.insert(*i)) {
+            n += 1;
+            at = by_id[&i];
+        }
+        n
+    };
+    let mut ranked: Vec<(u64, Version)> = vs.into_iter().map(|v| (depth(v.id), v)).collect();
+    ranked.sort_by(|(da, a), (db, b)| db.cmp(da).then(b.id.cmp(&a.id)));
+    ranked.into_iter().map(|(_, v)| v).collect()
+}
+
 /// The current version of one row: of the heads (versions nothing replaces), the longest chain, then the highest id.
 fn current(vs: &[Version]) -> Option<&Version> {
     let by_id: HashMap<Id, &Version> = vs.iter().map(|v| (v.id, v)).collect();
@@ -160,6 +196,27 @@ mod tests {
 
     fn values(m: &BTreeMap<Vec<u8>, Row>) -> Vec<String> {
         m.iter().map(|(k, r)| format!("{}={}", String::from_utf8_lossy(k), String::from_utf8_lossy(&r.value))).collect()
+    }
+
+    #[test]
+    fn ranked_starts_with_the_merged_version_and_a_refused_head_falls_back_to_what_it_names() {
+        // a writes n; b replaces it; a replaces b's; b, concurrently, a second head on a's first.
+        let fa = feed(&[("n", envelope((A, 1), None, Some(b"a1"))), ("m", envelope((A, 2), None, Some(b"m")))]);
+        let fb = feed(&[("n", envelope((B, 1), Some((A, 1)), Some(b"b1")))]);
+        let fa2 = feed(&[("n", envelope((A, 3), Some((B, 1)), Some(b"a2"))), ("m", envelope((A, 2), None, Some(b"m")))]);
+        for (x, y) in [(&fa, &fb), (&fa2, &fb)] {
+            let feeds = [(A, x), (B, y)];
+            let merged = merge(&feeds);
+            let r = ranked(&feeds);
+            for (k, row) in &merged {
+                assert_eq!(r[k][0].id, row.id, "ranked's first is merge's current");
+            }
+        }
+        // b's edit refused by the reader: the row is a's version b's named.
+        let r = ranked(&[(A, &fa), (B, &fb)]);
+        let first_admitted = r[&b"n".to_vec()].iter().find(|v| v.id.0 != B).unwrap();
+        assert_eq!(first_admitted.value.as_deref(), Some(&b"a1"[..]));
+        assert_eq!(r[&b"n".to_vec()][0].value.as_deref(), Some(&b"b1"[..]), "unrefused, b's edit is current");
     }
 
     #[test]
@@ -265,10 +322,8 @@ mod js {
         super::seq_of(b).map(|s| s as f64).unwrap_or(f64::NAN)
     }
 
-    /// MERGE: `feeds` = `[[writer, [[key, value], …]], …]` (bytes, as each feed stores them). Returns the table's rows
-    /// `[{ key, value, id }]` (bytes).
-    #[wasm_bindgen]
-    pub fn merge_feeds(feeds: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+    /// `feeds` as JS gives them: `[[writer, [[key, value], …]], …]` (bytes, as each feed stores them).
+    fn feeds_of(feeds: &js_sys::Array) -> Result<Vec<([u8; 32], BTreeMap<Vec<u8>, Vec<u8>>)>, JsValue> {
         let mut owned = Vec::new();
         for f in feeds.iter() {
             let f = js_sys::Array::from(&f);
@@ -282,6 +337,13 @@ mod js {
                 .collect();
             owned.push((writer, rows));
         }
+        Ok(owned)
+    }
+
+    /// MERGE: `feeds` (`feeds_of`). Returns the table's rows `[{ key, value, id }]` (bytes).
+    #[wasm_bindgen]
+    pub fn merge_feeds(feeds: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+        let owned = feeds_of(&feeds)?;
         let refs: Vec<_> = owned.iter().map(|(w, r)| (*w, r)).collect();
         let out = js_sys::Array::new();
         for (k, row) in merge(&refs) {
@@ -289,6 +351,30 @@ mod js {
             js_sys::Reflect::set(&o, &"key".into(), &js_sys::Uint8Array::from(&k[..]).into())?;
             js_sys::Reflect::set(&o, &"value".into(), &js_sys::Uint8Array::from(&row.value[..]).into())?;
             js_sys::Reflect::set(&o, &"id".into(), &JsValue::from(id_hex(row.id)))?;
+            out.push(&o);
+        }
+        Ok(out)
+    }
+
+    /// EVERY VERSION, best first (`ranked`): `[{ key, versions: [{ value (bytes, or null: a delete), id }] }]` — for a
+    /// reader that admits versions (`storage`'s `admit`).
+    #[wasm_bindgen]
+    pub fn ranked_feeds(feeds: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+        let owned = feeds_of(&feeds)?;
+        let refs: Vec<_> = owned.iter().map(|(w, r)| (*w, r)).collect();
+        let out = js_sys::Array::new();
+        for (k, vs) in ranked(&refs) {
+            let o = js_sys::Object::new();
+            js_sys::Reflect::set(&o, &"key".into(), &js_sys::Uint8Array::from(&k[..]).into())?;
+            let list = js_sys::Array::new();
+            for v in vs {
+                let x = js_sys::Object::new();
+                let value = v.value.as_ref().map(|b| JsValue::from(js_sys::Uint8Array::from(&b[..]))).unwrap_or(JsValue::NULL);
+                js_sys::Reflect::set(&x, &"value".into(), &value)?;
+                js_sys::Reflect::set(&x, &"id".into(), &JsValue::from(id_hex(v.id)))?;
+                list.push(&x);
+            }
+            js_sys::Reflect::set(&o, &"versions".into(), &list)?;
             out.push(&o);
         }
         Ok(out)

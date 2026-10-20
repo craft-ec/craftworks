@@ -128,6 +128,10 @@ export async function start(ctx) {
     // devices → the DID. Members who left stay known (what they wrote is still theirs): learned from the group as it
     // was when seen, and from the removals that name them.
     const writers = new Map();
+    // (Told when the map GROWS — a writer learned: what judged their rows before judges again, `onWriters`.)
+    const onWriters = [];
+    const learnWriter = (n, did) => !writers.has(n) && (writers.set(n, did), true);
+    const told = grew => grew && onWriters.forEach(f => f());
     let devicesUnread = [];
     let group = [];
     let left = false;
@@ -141,7 +145,7 @@ export async function start(ctx) {
       const w = await storage.writersOf(sp);
       const all = (st?.members ?? []).filter(m => m.cred);
       group = w.members;
-      for (const [n, x] of w.byNode) writers.set(n, x.did);
+      told([...w.byNode].map(([n, x]) => learnWriter(n, x.did)).some(Boolean));
       // Members whose DEVICES did not read (`account::devices_step`'s why): their acts not looked for — the list short.
       devicesUnread = [...new Set(group.map(m => m.did))].map(d => [d, directory.devicesWhy(d)]).filter(([, why]) => why).map(([d, why]) => `${d}: ${why}`);
       // SAID when it changes (owner 10-07: a member's space showed 0 members): what the group gave, and what was kept.
@@ -164,7 +168,7 @@ export async function start(ctx) {
       const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
       const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
       // A removed member's nodes, named by the removal: their rows stay theirs.
-      for (const [n, d] of JSON.parse(next.learned())) if (!writers.has(n)) writers.set(n, d);
+      told(JSON.parse(next.learned()).map(([n, d]) => learnWriter(n, d)).some(Boolean));
       gv?.free();
       gv = next;
       counted = JSON.parse(gv.counted());
@@ -228,7 +232,7 @@ export async function start(ctx) {
     // the departed record changes (it may arrive after the acts).
     async function authors() {
       const w = await storage.writersOf(sp, { roster: [...known], departedRows: pubDeparted.rows() });
-      for (const [n, x] of w.byNode) writers.set(n, x.did);
+      told([...w.byNode].map(([n, x]) => learnWriter(n, x.did)).some(Boolean));
       const caps = new Map([...w.byNode].filter(([, x]) => x.caps).map(([n, x]) => [n, x.caps[pubName]]).filter(([, c]) => typeof c === "number"));
       await pubActs.add([...w.byNode.keys()], caps);
       replay();
@@ -283,7 +287,9 @@ export async function start(ctx) {
     // What a person may: inviting is the space's policy (`invite`); everything else their roles' — their base role
     // and every role composed in the space they hold (`gov`).
     const inGroup = did => group.some(m => m.did === did) && !(left && did === me?.id);
-    const passes = (who, did) => who === "anyone" || (!!role(did) && gv.passes_did(who, did, inGroup(did)));
+    // (`at`: as it was then — the roles held then, `Gov::passes_did_at`: an edit made while its writer held the role
+    // stands after it is taken back.)
+    const passes = (who, did, at = Infinity) => who === "anyone" || (at === Infinity ? !!role(did) && gv.passes_did(who, did, inGroup(did)) : gv.passes_did_at(who, did, at));
     // WHO MAY LET IN: the replay's own invite rule (`Gov::may_invite` — what its `admitted` acts are judged by, and the
     // node's follower ranks admitters by).
     const can = (did, what) => (!role(did) ? false : what === "invite" ? gv.may_invite(role(did), Infinity) : gv.may(did, inGroup(did), what));
@@ -367,6 +373,8 @@ export async function start(ctx) {
       allows: (action, did, path = "", at = Infinity) => passes(policyOf(path, action, at), did),
       // Does a person pass a rule's `who` (a composed role: by holding it).
       passes,
+      // A WRITER LEARNED here (a node now known as a member's): `fn` — what judged rows by their writer judges again.
+      onWriters: fn => onWriters.push(fn),
       // THE ROLES composed in this space ([{ id, name, perms }]) and whose they are.
       roles: () => JSON.parse(gv.roles_defined()),
       held: did => JSON.parse(gv.roles_held())[did] ?? [],
@@ -578,7 +586,9 @@ export async function start(ctx) {
         const v = credFor(item.by, cred);
         return v === undefined ? null : !!v && v.did === writer && CIRCLES_OF[rule].includes(v.circle);
       }
-      return r ? r.passes ? r.passes(rule, writer) : G.passes(rule, r.role(writer)) : false;
+      // (An EDIT by the roles held when it was made — taking a role back never undoes the edits it allowed; every other
+      // action by the roles held now, as before.)
+      return r ? r.passes ? r.passes(rule, writer, action === "edit" ? at : Infinity) : G.passes(rule, r.role(writer)) : false;
     };
     const v = judge(ruleOf(item, action, r, at));
     // A SPACE item's own rule is WITHIN its space's (the ceiling): its writer passes both — an item narrows who may,

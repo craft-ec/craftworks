@@ -4359,6 +4359,10 @@ mod js {
             let r = self.0.role(did, in_group);
             self.0.passes_did(who, did, r.as_deref())
         }
+        /// …AS IT WAS at `at` (`Gov::passes_did_at`: the base and composed roles held then).
+        pub fn passes_did_at(&self, who: &str, did: &str, at: f64) -> bool {
+            self.0.passes_did_at(who, did, at)
+        }
         /// The composed roles (JSON `[{ id, name, perms }]`), and who holds which (JSON `{ did: [id] }`).
         pub fn roles_defined(&self) -> String {
             serde_json::Value::Array(
