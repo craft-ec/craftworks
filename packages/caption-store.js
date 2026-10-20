@@ -89,7 +89,7 @@ export async function start(ctx) {
     if (!outside && vid) {
       const roles = await ctx.require("roles");
       const teams = [];
-      for (const s of (await space.mine.strict()).filter(x => x.kind === "server")) if ((await roles.of(s))?.apps().includes("caption")) teams.push(s);
+      for (const s of (await space.mine.strict()).filter(x => x.kind === "server")) if ((await (await roles.of(s))?.apps())?.includes("caption")) teams.push(s);
       const me = await space.me.strict();
       const own = itemRef.slice(itemRef.lastIndexOf("/") + 1);
       const itemAt = /^t([0-9a-z]{9})/.test(own) ? parseInt(own.slice(1, 10), 36) : null;

@@ -101,7 +101,7 @@ export async function start(ctx) {
     else if (sp.kind === "server") {
       // Its BOARD (both tables), when it uses Board.
       const r = await roles.of(sp);
-      if (r?.apps().includes("board")) {
+      if ((await r?.apps())?.includes("board")) {
         const extra = { serverId: sp.id, serverName: space.shown(sp), route: `#/s/${sp.id}/board` };
         ctx.background("activity: watch", watch(space.board(sp), "board", extra));
         ctx.background("activity: watch", watch(space.board(sp, { pub: true }), "board", extra));

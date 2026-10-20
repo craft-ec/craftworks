@@ -20,7 +20,7 @@ export async function start(ctx) {
   const [space, files, roles, kinds, items, sh] = await Promise.all(["space", "files", "roles", "kinds", "items", "share"].map(n => ctx.require(n)));
   const shared = space.shared;
   // A space HAS a Drive only when it uses the Drive app (an `app` act); yours always.
-  const usesDrive = async sp => !shared(sp) || (await ctx.optional("drive-store: roles.of", roles.of(sp).then(r => r.apps().includes("drive")), () => false));
+  const usesDrive = async sp => !shared(sp) || (await ctx.optional("drive-store: roles.of", roles.of(sp).then(async r => (await r.apps()).includes("drive")), () => false));
   // THE DRIVES this person can pick from: theirs, and every space they are in that uses Drive.
   async function drives() {
     const all = (await space.mine()).filter(s => s.kind === "server" && !space.isGroup(s));

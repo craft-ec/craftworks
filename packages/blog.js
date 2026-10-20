@@ -116,8 +116,12 @@ export async function mount(ctx, el) {
     // FOLLOW: the one follow — a person's menu (Follow, message …), as Board's; a space's is the side panel's (Join, Follow).
     if (at.who === "person") head.append(h("button", { type: "button", className: "cw-btn primary", textContent: "Follow, message…", onclick: e => person.open(e.currentTarget, at.person) }));
     if (sp) {
-      const editors = r.members().filter(m => r.can(m.did, "moderate"));
-      head.append(h("span", { className: "s", textContent: `${editors.length} editor${editors.length === 1 ? "" : "s"} · ${r.config("blog", "approval", "") === "editors" ? "editors approve members' articles" : "members publish directly"}` }));
+      // (Each awaited: in its frame a space's roles answer through the host — `can` unawaited reads as true for all.)
+      const ms = await r.members();
+      const may = await Promise.all(ms.map(m => r.can(m.did, "moderate")));
+      const editors = ms.filter((_, i) => may[i] === true);
+      const approval = await r.config("blog", "approval", "");
+      head.append(h("span", { className: "s", textContent: `${editors.length} editor${editors.length === 1 ? "" : "s"} · ${approval === "editors" ? "editors approve members' articles" : "members publish directly"}` }));
     }
     const chips = h("div", { className: "chips" });
     root.replaceChildren(head, h("div", { className: "sorts" }, bar.el()), chips, list);

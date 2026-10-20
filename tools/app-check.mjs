@@ -100,6 +100,11 @@ const grantsOf = app => {
     if (seen.has(n)) continue;
     seen.add(n);
     const src = srcOf(n);
+    // IN THE FRAME, A HOST'S ANSWER IS A PROMISE (FOUNDATION §3): a space's roles read as a value there — `r.apps().
+    // includes(…)` — throws (10-19 `where`; 10-20 the video page: "(intermediate value)?.apps(...).includes is not a
+    // function", from captions). Awaited (`(await r.apps()).includes`) it is the same in the page and in a frame.
+    for (const m of src.matchAll(/\b(apps|roster|members|acts|roles|held|lists|invites)\(\)\.(includes|some|filter|map|find|length|every|forEach)\b/g))
+      syncReads.add(`packages/${n}.js:${src.slice(0, m.index).split("\n").length}: ${m[1]}() read as a value in an app's frame (${app}) — await it: (await r.${m[1]}()).${m[2]}`);
     const b = bindingsOf(src);
     for (const m of src.matchAll(/(?:ctx|app)\.require\(\s*(?!")([^)]*)\)/g)) {
       const arg = m[1].trim();
@@ -144,8 +149,10 @@ const grantsOf = app => {
   }
   return [...grants].sort();
 };
+const syncReads = new Set();
 const framedMap = Object.fromEntries([...framedSrc.matchAll(/\\"([a-z0-9-]+)\\": \[([^\]]*)\]/g)].map(m => [m[1], [...m[2].matchAll(/\\"([a-z0-9.A-Z_-]+)\\"/g)].map(x => x[1]).sort()]));
 const want = Object.fromEntries(Object.keys(framedMap).map(a => [a, grantsOf(a)]));
+for (const x of syncReads) bad.push(x);
 if (process.argv.includes("--fix")) {
   const inner = Object.entries(want).map(([a, g]) => `\\"${a}\\": [${g.map(x => `\\"${x}\\"`).join(", ")}]`).join(", ");
   writeFileSync(join(root, "publish/src/main.rs"), pub.replace(/\\"framed\\": \{\{.*?\}\}/, `\\"framed\\": {{ ${inner} }}`));

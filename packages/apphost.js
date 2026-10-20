@@ -99,6 +99,8 @@ export async function start(ctx) {
     // out), no modal loops freezing the page. (Navigating itself away: refused by the page's own frame policy, and the
     // frame removed.)
     frame.sandbox = "allow-scripts allow-forms";
+    // (A player in it goes FULLSCREEN — refused by the browser unless the frame allows it.)
+    frame.allow = "fullscreen";
     frame.title = app;
     frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
     const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";
@@ -370,6 +372,8 @@ export async function start(ctx) {
     const READ_FILE = new Set(["get", "range", "chunk", "stream"]);
     const frame = document.createElement("iframe");
     frame.sandbox = "allow-scripts allow-forms";
+    // (A player in it goes FULLSCREEN — refused by the browser unless the frame allows it.)
+    frame.allow = "fullscreen";
     frame.title = app;
     frame.style.cssText = "border:0;width:100%;min-height:120px;display:block;background:transparent";
     const csp = "default-src 'none'; script-src 'unsafe-inline' data:; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'";

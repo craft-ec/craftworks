@@ -128,7 +128,7 @@ export async function mount(ctx, el) {
     const roles = await ctx.require("roles");
     const mine = await space.mine();
     const teams = [];
-    for (const s of mine.filter(x => x.kind === "server")) if ((await roles.of(s))?.apps().includes("caption")) teams.push(s);
+    for (const s of mine.filter(x => x.kind === "server")) if ((await (await roles.of(s))?.apps())?.includes("caption")) teams.push(s);
     const withVideo = ref.startsWith("space:") ? mine.some(s => ref.startsWith(`space:${s.id}/`)) : true;
     const placeSel = h(
       "select",
