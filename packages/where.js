@@ -22,6 +22,7 @@
 //                                 // always last and shown wherever the tabs are (Saved, Discover too): it makes yours
 //   where.personOf()  // the person whose space is open, else null
 //   where.key()       // the address as a key (an app redraws when it changes)
+//   where.onMove(el, draw)   // the app drawn again for each new address of its own, while `el` is on the page
 //   where.placeKey()  // the PLACE as a key (yours, a space, a person, Discover): another place, the app opened afresh
 export async function start(ctx) {
   const { Fault } = await ctx.require("fault");
@@ -157,5 +158,20 @@ export async function start(ctx) {
     ctx.actions[route] = (entries ?? []).map(e => ({ role: e.end ? "create" : "you", ...e }));
     dispatchEvent(new CustomEvent("craftworks:actions"));
   }
-  return { of, menu, personOf, key: () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
+  const key = () => `${ctx.space ?? ""}|${ctx.sub ?? ""}`;
+  // AN APP DRAWN AGAIN for another address of its own (a link inside it: an item opened, one just made, another tab of
+  // it): `onMove(el, draw)` — while `el` is on the page and the route is still the app's, once per new address. THE one
+  // rule (every app had its own copy, some redrawing on any route event; Docs had none: 10-20, Create did nothing).
+  function onMove(el, draw, route = ctx.route) {
+    let drawn = key();
+    const moved = () => {
+      if (!el.isConnected) return removeEventListener("craftworks:route", moved);
+      if (ctx.route !== route || key() === drawn) return;
+      drawn = key();
+      draw();
+    };
+    addEventListener("craftworks:route", moved);
+    return () => removeEventListener("craftworks:route", moved); // (stop: an app mounted again in the same element)
+  }
+  return { of, menu, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

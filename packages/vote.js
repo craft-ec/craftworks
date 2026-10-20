@@ -404,5 +404,5 @@ export async function mount(ctx, el) {
   }
   let view = null;
   await draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/vote" && draw());
+  (await ctx.require("where")).onMove(el, () => draw());
 }

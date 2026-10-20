@@ -113,6 +113,6 @@ export async function mount(ctx, el) {
     }
     return (s.startsWith("b/") ? one(decodeURIComponent(s.slice(2))) : list()).catch(fail);
   };
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/bundle" && draw(), { signal: ctx.signal });
+  where.onMove(el, () => draw());
   await draw();
 }

@@ -72,3 +72,17 @@ fn concatenated_changes_load_as_one_row() {
     let d = Doc::load(B, &[&first, &row]).unwrap();
     assert_eq!(d.text().unwrap(), "typed");
 }
+
+/// A mark EXPANDS AFTER (what a page's own copy assumes — `doc-editor`'s `shifted`): text put at its end joins it, at
+/// its start does not.
+#[test]
+fn a_mark_grows_at_its_end_not_at_its_start() {
+    let (mut a, _) = Doc::create(A).unwrap();
+    a.splice(0, 0, "abcdef").unwrap();
+    a.mark(2, 5, "bold", None, true).unwrap();
+    a.splice(5, 0, "X").unwrap();
+    assert_eq!(a.marks().unwrap()[0].end, 6, "at its end: joins it");
+    a.splice(2, 0, "Y").unwrap();
+    let m = &a.marks().unwrap()[0];
+    assert_eq!((m.start, m.end), (3, 7), "at its start: shifted, not joined");
+}

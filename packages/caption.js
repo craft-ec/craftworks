@@ -202,5 +202,5 @@ export async function mount(ctx, el) {
     if (drawn === where.key()) root.replaceChildren(top, body);
   }
   await draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/caption" && where.key() !== drawn && draw());
+  where.onMove(el, () => where.key() !== drawn && draw());
 }

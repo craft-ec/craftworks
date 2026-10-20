@@ -101,6 +101,6 @@ export async function mount(ctx, el) {
     root.replaceChildren(theme.loading?.("Opening…") ?? "");
     return (id ? one(id, tab, focus) : list()).catch(fail);
   };
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/spaces" && draw(), { signal: ctx.signal });
+  (await ctx.require("where")).onMove(el, () => draw());
   await draw();
 }

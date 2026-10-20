@@ -135,5 +135,5 @@ export async function mount(ctx, el) {
     if (drawn === where.key()) root.replaceChildren(top(w), ...(w.by && w.by !== me && !w.watch ? [h("div", { className: "row" }, h("h3", {}, who(w.by)), h("button", { type: "button", textContent: "Follow…", onclick: e => person.open(e.currentTarget, w.by) }))] : []), body);
   }
   await draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === C_ROUTE && where.key() !== drawn && draw());
+  where.onMove(el, () => where.key() !== drawn && draw(), C_ROUTE);
 }

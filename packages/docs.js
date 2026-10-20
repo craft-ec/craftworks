@@ -5,6 +5,7 @@
 // arrive as their changes do (read again while it is open).
 export async function mount(ctx, el) {
   const [items, where, codoc, actionsCap] = await Promise.all(["items", "where", "codoc", "actions"].map(n => ctx.require(n)));
+  // (`doc-editor`: the page and its toolbar — what a word processor shows.)
   const h = (await ctx.require("theme")).h;
   el.innerHTML = `
     <style>@layer apps {
@@ -14,12 +15,14 @@ export async function mount(ctx, el) {
       .dc .list a { display: block; padding: var(--cw-space-2) var(--cw-space-3); border: 1px solid var(--cw-line); border-radius: var(--cw-radius); }
       .dc .none, .dc .meta { color: var(--cw-muted); }
       .dc .said { color: var(--cw-danger); margin: 0; }
-      .dc textarea.body { box-sizing: border-box; width: 100%; min-height: 60vh; font: inherit; line-height: 1.6; padding: var(--cw-space-3); resize: vertical; }
       .dc .new { display: grid; gap: var(--cw-space-2); max-width: 640px; }
     }</style>
     <div class="dc"></div>`;
   const root = el.querySelector(".dc");
   const at = await where.of({ kind: "doc", app: "docs", yours: "Your docs" });
+  // ANOTHER ADDRESS in Docs (a document opened from the list, one just created): the app drawn again for it — read once
+  // at mount, a link inside it changed nothing (10-20: Create and every document in the list did nothing).
+  const stop = where.onMove(el, () => (stop(), el.replaceChildren(), mount(ctx, el)));
   const sub = at.sub;
   at.tabs([], { yoursOn: !sub, create: at.discover || at.saved || at.shared ? null : { label: "New document", href: at.href("new"), on: sub === "new" } });
   const said = h("p", { className: "said" });
@@ -39,55 +42,60 @@ export async function mount(ctx, el) {
     box.replaceChildren(h("h2", { textContent: "New document" }), h("div", { className: "new" }, title, who.el, go), said);
   }
 
-  // A DOCUMENT open: its text, edited here; what others write arrives as their changes do.
+  // A DOCUMENT open: a page and its toolbar (`doc-editor`) over its text and marks (`codoc`); every edit sent in order,
+  // what others write drawn once nothing of this page's is on its way and the person is not typing.
   async function edit(box, ref) {
     // (Strict: waited for, a failure said — a total read gives its fallback while it is still arriving.)
     const it = await items.get.strict(ref).catch(e => (fail(e), null));
     if (!it) return box.replaceChildren(h("p", { className: "none", textContent: "This document is not there, or not yours to read." }), said);
-    const area = h("textarea", { className: "body", spellcheck: true });
-    const meta = h("p", { className: "meta" });
-    let shown = "";
-    let v = 0;
-    let sending = Promise.resolve();
+    const first = await codoc.state(ref).catch(e => (fail(e), null));
+    let v = first?.v ?? 0;
     let queued = 0;
-    const draw = s => {
-      area.readOnly = !s.mayEdit;
-      meta.textContent = s.ready ? (s.mayEdit ? "Everyone with edit rights writes here at once." : "You may read this document.") : "Opening its first change…";
-      if (s.text === shown) return;
-      // ANOTHER's CHANGE: the cursor kept where it was, moved by what was put before it.
-      const [a, b] = [area.selectionStart, area.selectionEnd];
-      let i = 0;
-      while (i < shown.length && i < s.text.length && shown[i] === s.text[i]) i++;
-      const d = s.text.length - shown.length;
-      area.value = shown = s.text;
-      area.setSelectionRange(a > i ? a + d : a, b > i ? b + d : b);
-    };
-    // AN EDIT here: what changed from the text last shown (its common start and end), sent in order.
-    area.oninput = () => {
-      const now = area.value;
-      let i = 0;
-      while (i < shown.length && i < now.length && shown[i] === now[i]) i++;
-      let j = 0;
-      while (j < shown.length - i && j < now.length - i && shown[shown.length - 1 - j] === now[now.length - 1 - j]) j++;
-      const del = shown.length - i - j;
-      const ins = now.slice(i, now.length - j);
-      shown = now;
+    let sending = Promise.resolve();
+    // WHERE ITS CHANGES ARE (the shell's "Saving…" / "All changes saved"): every edit sent in order.
+    let shell = null;
+    const send = f => {
       queued += 1;
-      sending = sending.then(() => codoc.splice(ref, i, del, ins)).then(() => (queued -= 1), e => ((queued -= 1), fail(e)));
+      shell?.status("saving");
+      sending = sending.then(f).then(() => ((queued -= 1), queued || shell?.status("saved")), e => ((queued -= 1), fail(e), shell?.status("Not saved")));
     };
-    openArea = area;
-    box.replaceChildren(h("a", { href: at.base, textContent: "← Docs" }), h("h2", { textContent: it.title || "Untitled document" }), meta, area, actionsCap.bar(it, { comments: false }), said);
+    const ed = (await ctx.require("doc-editor")).create({
+      text: first?.text ?? "",
+      marks: first?.marks ?? [],
+      readOnly: !first?.mayEdit,
+      onSplice: (pos, del, ins) => send(() => codoc.splice(ref, pos, del, ins)),
+      onMark: (start, end, name, value, on) => send(() => codoc.mark(ref, start, end, name, value, on)),
+    });
+    // THE OFFICE SHELL (`office-shell`: the one top panel of Docs, Sheets and Slides) around its page.
+    shell = (await ctx.require("office-shell")).create({
+      app: { name: "Docs", icon: "📝", home: at.base },
+      title: it.title || "Untitled document",
+      readOnly: !first?.mayEdit,
+      onRename: first?.mayEdit && it.mine !== false ? name => items.editItem(ref, it.body ?? "", { title: name }).catch(fail) : null,
+      actions: actionsCap.bar(it, { comments: false }),
+      menus: ed.menus,
+      tools: ed.tools,
+      edit: { undo: ed.undo, redo: ed.redo },
+      canvas: ed.canvas,
+    });
+    shell.status(first?.ready === false ? "Opening its first change…" : first?.mayEdit ? "saved" : "View only");
+    openArea = shell.el;
+    box.replaceChildren(said, shell.el);
     // READ AGAIN while it is open: another's change drawn when nothing of this page's is still on its way.
     const tick = async () => {
-      if (!area.isConnected) return;
-      if (!queued) {
+      if (!shell.el.isConnected) return;
+      if (!queued && !ed.busy()) {
         const s = await codoc.state(ref).catch(e => (fail(e), null));
-        if (s && (s.v !== v || s.text !== shown) && !queued && area.value === shown) ((v = s.v), draw(s));
+        if (s && s.v !== v && !queued && !ed.busy()) {
+          v = s.v;
+          ed.set(s);
+          ed.readOnly(!s.mayEdit);
+          shell.readOnly(!s.mayEdit);
+          if (!s.mayEdit) shell.status("View only");
+        }
       }
       setTimeout(tick, 700);
     };
-    const first = await codoc.state(ref).catch(e => (fail(e), null));
-    if (first) (v = first.v), draw(first);
     setTimeout(tick, 700);
   }
 

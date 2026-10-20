@@ -435,8 +435,5 @@ export async function mount(ctx, el) {
   }
   let view = null;
   await draw();
-  addEventListener("craftworks:route", () => {
-    if (!el.isConnected || ctx.route !== "/blog" || whereCap.key() === drawn) return;
-    draw();
-  });
+  whereCap.onMove(el, () => whereCap.key() !== drawn && draw());
 }

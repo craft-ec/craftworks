@@ -46,5 +46,5 @@ export async function mount(ctx, el) {
     return results.refresh();
   }
   draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/tag" && draw());
+  (await ctx.require("where")).onMove(el, () => draw());
 }

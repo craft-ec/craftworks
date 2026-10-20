@@ -262,5 +262,5 @@ export async function mount(ctx, el) {
   }
   main.replaceChildren(theme.loading("Reading the posts…"));
   await draw();
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/board" && routeKey() !== drawnFor && draw());
+  whereCap.onMove(el, () => routeKey() !== drawnFor && draw());
 }

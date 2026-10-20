@@ -192,18 +192,12 @@ export async function mount(ctx, el) {
   await draw();
   // Another folder: drawn again. Another DRIVE (a space's, a person's, Discover): opened afresh — what it is, read once
   // above, is its own.
-  let drawnFor = where.key();
-  const whose = where.placeKey;
-  const opened = whose();
-  const moved = () => {
-    if (!el.isConnected || ctx.route !== "/drive") return removeEventListener("craftworks:route", moved);
-    const k = where.key();
-    if (k === drawnFor) return;
-    drawnFor = k;
-    if (whose() === opened) return draw();
-    removeEventListener("craftworks:route", moved);
+  // (Another place — yours, a space's: the app mounted again for it; within the place, drawn again.)
+  const opened = where.placeKey();
+  const stop = where.onMove(el, () => {
+    if (where.placeKey() === opened) return draw();
+    stop();
     el.replaceChildren();
     mount(ctx, el);
-  };
-  addEventListener("craftworks:route", moved);
+  });
 }

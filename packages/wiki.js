@@ -506,5 +506,5 @@ export async function mount(ctx, el) {
 
   await draw();
   // A route within the app (another page, the index, another place): drawn again.
-  addEventListener("craftworks:route", () => el.isConnected && ctx.route === "/wiki" && ((editing = false), draw()));
+  where.onMove(el, () => ((editing = false), draw()));
 }
