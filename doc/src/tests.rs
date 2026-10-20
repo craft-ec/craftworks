@@ -17,11 +17,27 @@ fn every_order_of_the_rows_and_duplicates_give_one_document() {
     let b1 = b.splice(5, 0, ", dear").unwrap();
     let rows: Vec<&[u8]> = vec![&first, &a1, &a2, &a3, &b1];
     let mut seen = None;
-    for order in [vec![0, 1, 2, 3, 4], vec![4, 3, 2, 1, 0], vec![2, 4, 0, 3, 1, 1, 4]] {
-        let mut d = Doc::load(&[0xC; 16], &order.iter().map(|&i| rows[i]).collect::<Vec<_>>()).unwrap();
+    for order in [
+        vec![0, 1, 2, 3, 4],
+        vec![4, 3, 2, 1, 0],
+        vec![2, 4, 0, 3, 1, 1, 4],
+    ] {
+        let mut d = Doc::load(
+            &[0xC; 16],
+            &order.iter().map(|&i| rows[i]).collect::<Vec<_>>(),
+        )
+        .unwrap();
         let got = (d.text().unwrap(), d.marks().unwrap(), d.heads());
         assert_eq!(got.0, "Hello, dear world!");
-        assert_eq!(got.1, vec![Span { start: 0, end: 5, name: "bold".into(), value: None }]);
+        assert_eq!(
+            got.1,
+            vec![Span {
+                start: 0,
+                end: 5,
+                name: "bold".into(),
+                value: None
+            }]
+        );
         if let Some(s) = &seen {
             assert_eq!(&got, s, "every order the same");
         }
@@ -84,7 +100,11 @@ fn a_mark_grows_at_its_end_not_at_its_start() {
     assert_eq!(a.marks().unwrap()[0].end, 6, "at its end: joins it");
     a.splice(2, 0, "Y").unwrap();
     let m = &a.marks().unwrap()[0];
-    assert_eq!((m.start, m.end), (3, 7), "at its start: shifted, not joined");
+    assert_eq!(
+        (m.start, m.end),
+        (3, 7),
+        "at its start: shifted, not joined"
+    );
 }
 
 /// CELLS: each key's last write wins, the same in every order; a cleared key is gone; two editors setting different
@@ -100,7 +120,14 @@ fn cells_merge_per_key() {
     let a4 = a.set("c:C1", None).unwrap();
     let rows: Vec<&[u8]> = vec![&first, &a1, &b1, &a2, &a3, &a4];
     for order in [vec![0, 1, 2, 3, 4, 5], vec![5, 4, 3, 2, 1, 0]] {
-        let d = Doc::load(&[0xC; 16], &order.iter().map(|&i| rows[i]).collect::<Vec<_>>()).unwrap();
-        assert_eq!(d.cells().unwrap(), vec![("c:A1".into(), "5".into()), ("c:B1".into(), "=A1*2".into())]);
+        let d = Doc::load(
+            &[0xC; 16],
+            &order.iter().map(|&i| rows[i]).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert_eq!(
+            d.cells().unwrap(),
+            vec![("c:A1".into(), "5".into()), ("c:B1".into(), "=A1*2".into())]
+        );
     }
 }

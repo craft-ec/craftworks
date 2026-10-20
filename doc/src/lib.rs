@@ -32,8 +32,10 @@ impl Doc {
     /// to be written as the maker's first row.
     pub fn create(actor: &[u8]) -> Result<(Doc, Vec<u8>), String> {
         let mut am = AutoCommit::new().with_actor(ActorId::from(actor));
-        am.put_object(ROOT, TEXT, ObjType::Text).map_err(|e| e.to_string())?;
-        am.put_object(ROOT, CELLS, ObjType::Map).map_err(|e| e.to_string())?;
+        am.put_object(ROOT, TEXT, ObjType::Text)
+            .map_err(|e| e.to_string())?;
+        am.put_object(ROOT, CELLS, ObjType::Map)
+            .map_err(|e| e.to_string())?;
         let first = am.save_incremental();
         Ok((Doc { am }, first))
     }
@@ -75,18 +77,37 @@ impl Doc {
     /// An EDIT: `delete` units at `pos` removed, `insert` put there. Returns the change — this device's next row.
     pub fn splice(&mut self, pos: usize, delete: usize, insert: &str) -> Result<Vec<u8>, String> {
         let t = self.text_obj()?;
-        self.am.splice_text(&t, pos, delete as isize, insert).map_err(|e| e.to_string())?;
+        self.am
+            .splice_text(&t, pos, delete as isize, insert)
+            .map_err(|e| e.to_string())?;
         Ok(self.am.save_incremental())
     }
 
     /// A MARK over `[start, end)` (bold, a link …; `value` none: a flag) — or taken off (`on` false). Returns the change.
-    pub fn mark(&mut self, start: usize, end: usize, name: &str, value: Option<&str>, on: bool) -> Result<Vec<u8>, String> {
+    pub fn mark(
+        &mut self,
+        start: usize,
+        end: usize,
+        name: &str,
+        value: Option<&str>,
+        on: bool,
+    ) -> Result<Vec<u8>, String> {
         let t = self.text_obj()?;
         if on {
-            let v = value.map(|v| ScalarValue::Str(v.into())).unwrap_or(ScalarValue::Boolean(true));
-            self.am.mark(&t, Mark::new(name.to_string(), v, start, end), ExpandMark::After).map_err(|e| e.to_string())?;
+            let v = value
+                .map(|v| ScalarValue::Str(v.into()))
+                .unwrap_or(ScalarValue::Boolean(true));
+            self.am
+                .mark(
+                    &t,
+                    Mark::new(name.to_string(), v, start, end),
+                    ExpandMark::After,
+                )
+                .map_err(|e| e.to_string())?;
         } else {
-            self.am.unmark(&t, name, start, end, ExpandMark::After).map_err(|e| e.to_string())?;
+            self.am
+                .unmark(&t, name, start, end, ExpandMark::After)
+                .map_err(|e| e.to_string())?;
         }
         Ok(self.am.save_incremental())
     }
@@ -136,7 +157,9 @@ impl Doc {
         };
         let mut out = Vec::new();
         for k in self.am.keys(&c) {
-            if let Some((Value::Scalar(v), _)) = self.am.get(&c, k.as_str()).map_err(|e| e.to_string())? {
+            if let Some((Value::Scalar(v), _)) =
+                self.am.get(&c, k.as_str()).map_err(|e| e.to_string())?
+            {
                 if let ScalarValue::Str(s) = v.as_ref() {
                     out.push((k.to_string(), s.to_string()));
                 }
@@ -168,7 +191,9 @@ mod page {
         JsValue::from_str(&e)
     }
     fn rows_of(rows: &js_sys::Array) -> Vec<Vec<u8>> {
-        rows.iter().map(|r| js_sys::Uint8Array::new(&r).to_vec()).collect()
+        rows.iter()
+            .map(|r| js_sys::Uint8Array::new(&r).to_vec())
+            .collect()
     }
 
     /// A co-edited document (`super::Doc`), as a page holds it.
@@ -180,28 +205,51 @@ mod page {
         /// A new document by its maker: `[doc, first change]`.
         pub fn create(actor: &[u8]) -> Result<js_sys::Array, JsValue> {
             let (d, first) = super::Doc::create(actor).map_err(err)?;
-            Ok([JsValue::from(Doc(d)), js_sys::Uint8Array::from(&first[..]).into()].into_iter().collect())
+            Ok([
+                JsValue::from(Doc(d)),
+                js_sys::Uint8Array::from(&first[..]).into(),
+            ]
+            .into_iter()
+            .collect())
         }
         /// The document from its rows (any order).
         pub fn load(actor: &[u8], rows: js_sys::Array) -> Result<Doc, JsValue> {
             let rows = rows_of(&rows);
-            super::Doc::load(actor, &rows.iter().map(Vec::as_slice).collect::<Vec<_>>()).map(Doc).map_err(err)
+            super::Doc::load(actor, &rows.iter().map(Vec::as_slice).collect::<Vec<_>>())
+                .map(Doc)
+                .map_err(err)
         }
         /// Rows read later: whether it changed.
         pub fn apply(&mut self, rows: js_sys::Array) -> Result<bool, JsValue> {
             let rows = rows_of(&rows);
-            self.0.apply(&rows.iter().map(Vec::as_slice).collect::<Vec<_>>()).map_err(err)
+            self.0
+                .apply(&rows.iter().map(Vec::as_slice).collect::<Vec<_>>())
+                .map_err(err)
         }
         pub fn text(&self) -> Result<String, JsValue> {
             self.0.text().map_err(err)
         }
         /// An edit: its change (this device's next row).
-        pub fn splice(&mut self, pos: usize, delete: usize, insert: &str) -> Result<Vec<u8>, JsValue> {
+        pub fn splice(
+            &mut self,
+            pos: usize,
+            delete: usize,
+            insert: &str,
+        ) -> Result<Vec<u8>, JsValue> {
             self.0.splice(pos, delete, insert).map_err(err)
         }
         /// A mark on or off: its change.
-        pub fn mark(&mut self, start: usize, end: usize, name: &str, value: Option<String>, on: bool) -> Result<Vec<u8>, JsValue> {
-            self.0.mark(start, end, name, value.as_deref(), on).map_err(err)
+        pub fn mark(
+            &mut self,
+            start: usize,
+            end: usize,
+            name: &str,
+            value: Option<String>,
+            on: bool,
+        ) -> Result<Vec<u8>, JsValue> {
+            self.0
+                .mark(start, end, name, value.as_deref(), on)
+                .map_err(err)
         }
         /// Its marks: `[{ start, end, name, value }]` (JSON).
         pub fn marks(&self) -> Result<String, JsValue> {
@@ -213,8 +261,15 @@ mod page {
                         r#"{{"start":{},"end":{},"name":{},"value":{}}}"#,
                         m.start,
                         m.end,
-                        js_sys::JSON::stringify(&JsValue::from_str(&m.name)).map(String::from).unwrap_or_default(),
-                        m.value.as_ref().map(|v| js_sys::JSON::stringify(&JsValue::from_str(v)).map(String::from).unwrap_or_default()).unwrap_or_else(|| "null".into())
+                        js_sys::JSON::stringify(&JsValue::from_str(&m.name))
+                            .map(String::from)
+                            .unwrap_or_default(),
+                        m.value
+                            .as_ref()
+                            .map(|v| js_sys::JSON::stringify(&JsValue::from_str(v))
+                                .map(String::from)
+                                .unwrap_or_default())
+                            .unwrap_or_else(|| "null".into())
                     ))
                     .collect::<Vec<_>>()
                     .join(",")
@@ -235,7 +290,9 @@ mod page {
             for (k, v) in cs {
                 js_sys::Reflect::set(&o, &JsValue::from_str(&k), &JsValue::from_str(&v))?;
             }
-            js_sys::JSON::stringify(&o).map(String::from).map_err(|_| JsValue::from_str("cells not written"))
+            js_sys::JSON::stringify(&o)
+                .map(String::from)
+                .map_err(|_| JsValue::from_str("cells not written"))
         }
         pub fn heads(&mut self) -> js_sys::Array {
             self.0.heads().into_iter().map(JsValue::from).collect()
