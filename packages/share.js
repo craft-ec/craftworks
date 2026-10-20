@@ -15,6 +15,9 @@
 //   await share.revoke(ref, did)   await share.setRole(ref, did, role)   await share.handOn(ref, did)
 //   await share.groups()           // the item groups this person is in (by them or with them)
 //   share.isShared(ref)            // its ref names an item group this person is in
+//   await share.privateIn(spaceId, kind, title)   // a space's PRIVATE item's group (its maker alone; `items.submit`)
+// IN A SPACE its setting rules (`share`/`with`, The space): shared with its MEMBERS only (the default — and anyone who
+// leaves the space taken off, `keepAll`), or with people outside it too. Only its author or the space's admins share it.
 //   share.button(it)               // the bar's "👥 Share with…" (`actions`): opens the dialog — people, roles, add,
 //                                  // remove, hand on (`share.open(ref)`: drawn by the host, in an app's frame too)
 // THE BUTTON, the same in the page and in an app's frame (FOUNDATION §3: a host capability's frame helper): it asks
@@ -39,25 +42,70 @@ export async function start(ctx) {
     return id ? ((await mine()).find(s => s.id === id) ?? null) : null;
   };
   const isShared = async ref => !!(await groupOf(ref));
+  // ITS SPACE (a space's item: its group's key names it, `item:<space>/<id>` — what an invite carries; yours: none).
+  const parentId = g => /^item:([0-9a-f]{64})\//.exec(g?.group ?? "")?.[1] ?? null;
+  const parentOf = async g => {
+    const id = parentId(g);
+    return id ? ((await space.mine.strict()).find(s => s.id === id) ?? null) : null;
+  };
+  // THE SPACE's RULE for what is shared from it (its setting `share`/`with`, The space): its members only (the
+  // default), or people outside it too ("anyone").
+  async function ruleOf(psp) {
+    const r = await roles.of.strict(psp);
+    await r.settled;
+    return { r, anyone: r.config("share", "with", "") === "anyone" };
+  }
+  // WHO IT MAY BE SHARED WITH: a space's item, as its space's rule says — said by name when someone is not a member.
+  async function mayShareWith(pid, dids) {
+    const p = pid ? ((await space.mine.strict()).find(s => s.id === pid) ?? null) : null;
+    if (!p) return;
+    const { r, anyone } = await ruleOf(p);
+    if (anyone) return;
+    const members = new Set(r.members().map(m => m.did));
+    const out = dids.filter(d => !members.has(d));
+    if (out.length) throw new Error(`${out.map(d => directory.shown(d)).join(", ")}: not ${space.shown(p)}'s member${out.length > 1 ? "s" : ""} — it shares what is in it with its members only`);
+  }
 
-  // ITS GROUP, made the first time the item is shared: the editor role, the `edit` and `post` policies naming it, and
-  // its kind's domain on — then the item moved in.
+  // A GROUP's EDITOR ROLE (once): the role, the `edit` and `post` policies naming it, and the item's domain on.
+  async function editorsIn(g, kind) {
+    const r = await roles.of.strict(g);
+    await r.settled;
+    if (!r.roles().some(x => x.id === ROLE)) {
+      await r.act({ act: "role", role: ROLE, name: "Editor", perms: ["post"] });
+      for (const action of ["edit", "post"]) await r.act({ act: "policy", path: "", action, who: `role:${ROLE}` });
+    }
+    const domain = (await ctx.require("kinds")).domain(kind);
+    if (!r.base().includes(domain) && r.capabilities().includes(domain) && !r.enabled().includes(domain)) await r.enable(domain, true);
+  }
+  // A NEW GROUP for an item: yours (`item:<id>`), or a space's (`item:<space>/<id>`).
+  async function newGroup(psp, id, name, kind) {
+    const g = await groups.of(`${KEY}${psp ? `${psp.id}/` : ""}${id}`, { name });
+    await editorsIn(g, kind);
+    return g;
+  }
+  // PRIVATE IN A SPACE (`items.submit`, "Only you" in a space): a group of its own, its maker alone — shared later.
+  async function privateIn(spId, kind, title) {
+    const psp = (await space.mine.strict()).find(s => s.id === spId);
+    if (!psp) throw new Error("not in that space");
+    return newGroup(psp, (await ctx.require("node")).newHex(8), title || `A private ${kind}`, kind);
+  }
+
+  // ITS GROUP, made the first time the item is shared — then the item moved in. Yours: by you; a space's: by its
+  // author or the space's admins.
   async function groupFor(ref) {
     const had = await groupOf(ref);
     if (had) return { sp: had, ref };
     const me = await space.me.strict();
-    if (spaceOf(ref) || !String(ref).startsWith(`${me}/`)) throw new Error("only your own items are shared from here (a space's are shared by the space)");
     const it = await items.get(ref);
     if (!it) throw new Error("no such item");
-    const domain = (await ctx.require("kinds")).domain(it.kind);
-    const sp = await groups.of(`${KEY}${it.id}`, {
-      name: it.title || `A shared ${it.kind}`,
-      setup: async (_, r) => {
-        await r.act({ act: "role", role: ROLE, name: "Editor", perms: ["post"] });
-        for (const action of ["edit", "post"]) await r.act({ act: "policy", path: "", action, who: `role:${ROLE}` });
-        if (!r.base().includes(domain) && r.capabilities().includes(domain)) await r.enable(domain, true);
-      },
-    });
+    let psp = null;
+    if (spaceOf(ref)) {
+      psp = (await space.mine.strict()).find(s => s.id === spaceOf(ref)) ?? null;
+      if (!psp) throw new Error("not in that space");
+      const { r } = await ruleOf(psp);
+      if (it.by !== me && !r.isAdmin(me)) throw new Error("only its author or the space's admins share it");
+    } else if (!String(ref).startsWith(`${me}/`)) throw new Error("only your own items are shared");
+    const sp = await newGroup(psp, it.id, it.title || `A shared ${it.kind}`, it.kind);
     const moved = await items.submit({ board: sp.id, title: it.title, body: it.body, kind: it.kind, files: it.files, meta: it.meta, at: it.at, audience: "members" });
     await items.remove(ref);
     return { sp, ref: moved };
@@ -81,6 +129,9 @@ export async function start(ctx) {
   }
 
   async function shareWith(ref, people_) {
+    // (Checked BEFORE anything moves: a space's item goes nowhere its space does not allow.)
+    const had = await groupOf(ref);
+    await mayShareWith(had ? parentId(had) : spaceOf(ref), people_.map(p => p.did));
     const { sp, ref: at } = await groupFor(ref);
     const r = await roles.of.strict(sp);
     await r.settled;
@@ -159,5 +210,27 @@ export async function start(ctx) {
     await draw().catch(fail);
   }
 
-  return { with: shareWith, people, revoke, setRole, handOn, groups: mine, isShared, open, button: buttonOf(open) };
+  // KEPT TO ITS SPACE (its rule members-only): each space item's group this person owns — whoever is no longer in the
+  // space taken off (`groups.keep`, the one keeper of a list; only who is wanted is decided here).
+  async function keepAll() {
+    const me = await space.me.strict();
+    if (!me) return 0;
+    let n = 0;
+    for (const g of await mine()) {
+      const p = await parentOf(g);
+      if (!p) continue;
+      const gr = await roles.of.strict(g);
+      await gr.settled;
+      if (gr.owner !== me) continue;
+      const { r, anyone } = await ruleOf(p);
+      if (anyone) continue;
+      const members = new Set(r.members().map(m => m.did));
+      const want = new Set(gr.roster().filter(d => d === me || members.has(d)));
+      if (want.size < gr.roster().length) (await groups.keep(g, want), (n += 1));
+    }
+    return n;
+  }
+  (await ctx.require("lifecycle")).job("share keep", { every: 600e3, delay: 60e3, needs: async () => !!(await space.me()) || "nobody is logged in", run: () => keepAll() });
+
+  return { with: shareWith, privateIn, keepAll, people, revoke, setRole, handOn, groups: mine, isShared, open, button: buttonOf(open) };
 }

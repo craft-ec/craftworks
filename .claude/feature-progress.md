@@ -2826,6 +2826,15 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
   the row; a refused delete leaves it) → content's rule (owner = the key's oldest version; an edit only by a role held
   AT ITS TIME — gov `held_history`/`passes_did_at`; unknown oldest writer: only it stands; re-judged on acts and on
   writers learned, roles `onWriters`). Known limit kept: a writer's own claimed time (`at`) can be backdated.
+- [x] S1a SPACE RULES (owner 10-20: "if a file or directory is set to private, private to the person who made it in the
+      space; shared only with space members if the space says so, with people outside if it allows"): "🔒 Only you" in
+      a space → its own group `item:<space>/<id>` (`share.privateIn`, the space named in the key an invite carries);
+      space setting `share`/`with` (The space → "Share with": members only (default) / members and people outside);
+      `share.with` refuses non-members by name under members-only; only the author or the space's admins share a space's
+      item; `keepAll` (lifecycle job, 10 min) takes whoever left the space off every shared item from it (`groups.keep`).
+      fx/fy probe pw/share2.mjs 9/9; control (rule check + keep off): fails at 2 and 4 only; pw/share.mjs regression PASS.
+- [ ] S1b FOLDERS: a folder shared → every file under its path moved into its group; a file added or moved into a
+      shared folder goes into the group (inherits its people and roles).
 - [ ] S2 the CRDT in core (Automerge or Loro: wasm size, rich text, lists), changes as rows in each editor's feed,
       snapshots as files.
 - [ ] S3 Docs; S4 Sheets; S5 Slides — each on S1+S2.

@@ -53,6 +53,8 @@ export async function start(ctx) {
             ? [["public", "🌐 Everyone (public)"], ["members", `👥 ${space.shown(sp)}'s members`]]
             : [["members", `👥 ${space.shown(sp)}'s members (the space keeps this app to its members)`]]),
           ...fewer,
+          // ONLY YOU: yours alone in the space until shared (`share`: with whom, as the space's setting allows).
+          ["private", "🔒 Only you"],
         ]
       : [["public", "🌐 Everyone (public)"], ["followers", "👣 Your followers"], ["friends", "🤝 Your friends"], ["private", "🔒 Only you"]];
     const sel = h("select", { className: "field", name: "audience" }, ...choices.map(([value, textContent]) => h("option", { value, textContent })));

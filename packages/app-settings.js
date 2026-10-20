@@ -105,6 +105,8 @@ export async function start(ctx) {
         { action: "post", path: "", label: "Post" },
         ...SIGNAL_FIELDS(""),
         { action: "edit", path: "", label: "Edit" },
+        // WHO WHAT IS IN IT MAY BE SHARED WITH (`share`): its members only, or people outside it too.
+        { key: "with", app: "share", label: "Share with", choices: [["", "Members only"], ["anyone", "Members and people outside it"]] },
       ],
       saved: async (changed, r, sp) => {
         // Public reading, the open door or requests: seen from outside (its requests bag made where people may ask).

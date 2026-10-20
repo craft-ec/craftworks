@@ -210,7 +210,8 @@ export async function start(ctx) {
     const el = h("div", { className: "cw-acts" });
 
     // SHARING (`share`: the one sharing piece): one's own personal item, or an item shared with chosen people.
-    const shareOf = ctx.optional("actions: share", ctx.require("share").then(async s => ((it.by === (await me()) && !String(it.ref).startsWith("space:")) || (await s.isShared(it.ref)) ? s : null)), () => null);
+    // (Yours — in your space or in a shared one, where its setting says with whom —, or one shared with you.)
+    const shareOf = ctx.optional("actions: share", ctx.require("share").then(async s => (it.by === (await me()) || (await s.isShared(it.ref)) ? s : null)), () => null);
     Promise.all([me(), isSaved(it.ref), shareOf]).then(([self, wasSaved, share]) => {
       const mine = it.by === self;
       const n = id => (countOf(it, id) ? ` ${short(countOf(it, id))}` : "");

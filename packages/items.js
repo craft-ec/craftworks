@@ -749,6 +749,11 @@ export async function start(ctx) {
       // The gate names the group (its owner and nonce prove its id): one at the level enters it by itself.
       return submit({ title, body: "", kind, meta: { level: meta.level, gate: { space: g.id, ref: sealed, name: g.name, kind: g.kind, owner: g.governance.owner, nonce: g.governance.nonce, ...(g.group ? { group: g.group } : {}) } }, at });
     }
+    // ONLY YOU, IN A SPACE: a group of its own (`share.privateIn`: its maker alone, kept to the space) — shared later.
+    if (board && audience === "private") {
+      board = (await (await ctx.require("share")).privateIn(board, kind, title)).id;
+      audience = "members";
+    }
     // YOUR FRIENDS or YOUR FOLLOWERS: an item of that CIRCLE's place (`circles`: sealed to its members).
     if (!board && (audience === "friends" || audience === "followers")) {
       board = (await (await ctx.require("circles")).of(audience)).id;
