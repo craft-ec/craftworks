@@ -130,6 +130,8 @@ export async function start(ctx) {
     const snap = codoc ? await codoc.snapshot(it.ref) : null;
     const moved = await items.submit({ board: at.board, title: it.title, body: it.body, kind: it.kind, files: fs, meta: at.meta, at: it.at, audience: at.audience });
     if (codoc) await codoc.seed(moved, snap);
+    // (Its changes taken back where it was: what was public there is not left public.)
+    if (codoc) await codoc.clear(it.ref);
     await items.remove(it.ref);
     return moved;
   }

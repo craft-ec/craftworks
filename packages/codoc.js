@@ -12,7 +12,7 @@
 //   await codoc.splice(ref, pos, del, insert)  // an edit (positions: UTF-16 units, a text field's) → { text, v }
 //   await codoc.mark(ref, start, end, name, value, on)
 //   await codoc.set(ref, key, value)   // a cell (a sheet's `c:A1`, a slide's `s:<id>:title`; null: cleared); state's `cells`
-//   await codoc.snapshot(ref)   await codoc.seed(ref, snapshot)   // the document moved with its item (`share.moveTo`)
+//   await codoc.snapshot(ref)   await codoc.seed(ref, snapshot)   await codoc.clear(ref)   // moved with its item (`share.relocate`)
 // Every call takes and gives plain values: an app in its own frame reaches it through the host.
 export async function start(ctx) {
   const [items, storage, space, roles, node] = await Promise.all(["items", "storage", "space", "roles", "node"].map(n => ctx.require(n)));
@@ -24,7 +24,6 @@ export async function start(ctx) {
   // presentation — their CELLS).
   const K = await ctx.require("kinds");
   const KINDS = { has: kind => K.coedited(kind) };
-  const spaceOf = ref => (String(ref).startsWith("space:") ? String(ref).slice(6, String(ref).indexOf("/")) : null);
   const b64 = bytes => btoa(Array.from(bytes, c => String.fromCharCode(c)).join(""));
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   const keyOf = async bytes => node.hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).slice(0, 32);
@@ -42,19 +41,17 @@ export async function start(ctx) {
       open_.set(
         ref,
         (async () => {
-          const it = await items.get(ref);
+          // (A public space's, read from outside: its public description names where.)
+          const it = await items.get(ref, { outside: await items.outsideOf(ref) });
           if (!it || !KINDS.has(it.kind)) throw new Error("not a document, a spreadsheet or a presentation");
-          const sid = spaceOf(ref);
-          const sp = sid ? ((await space.mine.strict()).find(s => s.id === sid) ?? null) : null;
-          if (sid && !sp) throw new Error("not in that space");
-          // WHERE ITS CHANGES ARE: a space's table (its members'); a PUBLIC one of a person's own space, their public
-          // tail (`directory.publicOf`: anyone reads it, only their account writes it — 10-21, a doc made public read
-          // empty by everyone else: each reader opened a table of their OWN); a private one, its maker's own table.
-          const pub = !sid && !it.private;
-          const t = pub ? await (await ctx.require("directory")).publicOf(it.by, `doc-${it.id}`) : await storage.table(`doc-${it.id}`, sp);
-          if (!t) throw new Error("its maker's public tables are not known here yet");
-          await (pub ? t.answer() : t.settled);
-          const r = sp ? await roles.of.strict(sp) : null;
+          // ITS CHANGES are kept where its item is (`items.placeOf`: the one placement — a space's members or public
+          // table, read from outside where public; a person's public tail or own account), opened the one way
+          // (`content.table`). Never a test of its own (10-21: three branches here, a public space doc unreadable).
+          const at = await items.placeOf(it);
+          const sp = at.place && !at.outside ? at.place : null;
+          const t = await (await ctx.require("content")).table(at.table(`doc-${it.id}`));
+          await (t.settled ?? t.answer?.());
+          const r = at.place ? await (at.outside ? roles.ofPublic.strict(at.place) : roles.of.strict(at.place)) : null;
           if (r) await r.settled;
           const R = await ctx.require("roles");
           // A ROW STANDS by its writer: the maker's, or an editor's as of the row's time; an unknown writer's not yet.
@@ -172,6 +169,16 @@ export async function start(ctx) {
     await flush(o);
     return b64(o.doc.save());
   }
+  // ITS CHANGES TAKEN BACK where it was (an item moved: `share.relocate`) — this writer's rows removed, so what was
+  // public there is not left public (10-21: a doc made private kept its text in its maker's public tail).
+  async function clear(ref) {
+    const o = await open(ref);
+    await flush(o);
+    // (Only its OWN rows, as `content` counts them — the writer by its roles; a person's own table is all theirs.)
+    const me = await space.me.strict();
+    for (const x of o.t.rows().filter(row => !o.r || o.r.author(row) === me)) await o.t.remove(x.key);
+    open_.delete(ref);
+  }
   async function seed(ref, snap) {
     const o = await open(ref);
     const bytes = unb64(snap);
@@ -183,5 +190,5 @@ export async function start(ctx) {
     await o.t.put(key, JSON.stringify({ at: Date.now(), c: snap }));
   }
 
-  return { create, state, splice, mark, set, snapshot, seed };
+  return { create, state, splice, mark, set, snapshot, seed, clear };
 }

@@ -2889,3 +2889,18 @@ are files (erasure). Freenet merges each contract's state commutatively — the 
 - [x] Apps fill like Chat (no padding, no overscroll containment); apps grouped by category (Home, App Store, ▦
       browser: app-icons.byCategory); dock Home | pins | last 4 opened | browser.
 - Next: release (owner's say), then Blog stepped up (plan above).
+
+## 10-21: ONE PLACEMENT (owner: "you are patching things up… look at how everything fits together")
+Audit found ~9 placement rules (items row, board public copies, codoc, files by app name, comment files, captions,
+Drive, publisher, per-app audience defaults) — policy engine one, its SUBJECT chosen per caller. Design: ARCHITECTURE §7
+"One placement": items.route decides once; items.placeOf(item) answers everyone after; attached data follows its root.
+- [x] P1 items.placeOf + board public copies by the ROOT's audience+domain (leak: comments on members-only items public).
+- [x] P2 codoc on placeOf + content.table; codoc.clear on move (leak: made-private doc kept its text public). A public
+      space doc now readable from outside (needs the space LISTED — listing is done by the Settings page's handler, not
+      the policy act: app-settings.madePublic + conversation; a raw act leaves it unlisted — note for P5/cleanup).
+      Space docs made public BEFORE this read empty now (their rows are in the members table) — dev mode, not migrated.
+      fx: placement.mjs 7/7, share5 PASS.
+- [ ] P3 files follow their item — design first: an upload into space S then adopted into a narrower group leaves
+      its key row in S (members of S read it); upload where the item will live (files+items rule, not per app).
+- [ ] P4 file re-key by the item's domain, not the row's app name.
+- [ ] P5 one audience default (audience capability), apps only compose.

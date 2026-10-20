@@ -304,6 +304,18 @@ video, subtitle …: `kinds.policyDomain`), so any app — one per domain, or on
 app) — shows under the same rules; a setting from before under an app's name (board, videos, subtitles) stands for its
 domain until the domain has its own. What attaches to an item in the same place follows that item.
 
+**One placement (10-21).** WHERE an item is and WHO reads it is decided ONCE — `items.route` when it is made, and
+`items.placeOf(item)` for everyone after: its place (a space, a group, or a person's own), whether it is read from
+outside, whether it is public (a space's item by its room's one rule — its OWN audience and its kind's domain; a person's
+by not being private), and `table(name)`: the container of any table kept for it, beside it (`content.table` opens it —
+a space's members table, its `pub-` table, a person's public tail or their account's). Everything kept FOR an item — a
+document's changes, its files, comments, votes, signals, sections, ballots, captions — is kept and judged there, never
+by a test of its own: an attached row is public exactly when the ROOT item it is about is (its audience, not the row's);
+one about an item ELSEWHERE (a full reference) is its own root; a root not yet read is not public yet. The policy
+engine (`roles`) is one; this is the one SUBJECT it is asked about. (Found 10-21: codoc, files, comment files,
+captions, Drive and the board's public copies each answered it themselves — comments on a members-only item went
+public, a doc made private kept its text public, files of narrower audiences stayed readable by the whole space.)
+
 **Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
 reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),
 one file each, its fragments indexed by byte range and time; a MANIFEST names them with a poster, a scrub strip

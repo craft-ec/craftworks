@@ -398,5 +398,6 @@ export async function start(ctx) {
     };
   }
 
-  return { in: in_ };
+  // (`table`: a container's table, the one way — `items.placeOf(...).table(name)` names an item's sibling table.)
+  return { in: in_, table: tableOf };
 }

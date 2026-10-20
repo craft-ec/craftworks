@@ -217,26 +217,33 @@ export async function start(ctx) {
       // PUBLIC is per item, by its own APP's setting now (a video: Videos'; a post: Board's) — what attaches to an item
       // (a comment, a vote, a subtitle) as that item is. Not bound to Board: a space's place holds every kind.
       const readsAnyone = domain => domainReads(r, domain);
-      const kindOf = new Map(); // item id → kind (every author's, as listed)
-      const learnKinds = () => [...a.list(), ...b.list()].forEach(x => kindOf.set(x.id, x.kind));
-      // What governs an item: its own kind's domain — or, attached to an item HERE, that item's (a comment, a vote, a
-      // subtitle beside its video); an attaching item about something elsewhere is its own (a team's subtitle).
-      const rootDomain = (kind, about, depth = 0) => {
-        if (TOP.has(kind)) return kinds.policyDomain(kind);
-        const k = kindOf.get(about);
-        if (k && depth < 8) return rootDomain(k, null, depth + 1);
-        return kinds.of(kind) ? kinds.policyDomain(kind) : "text";
+      const rootsHere = new Map(); // item id → { kind, aud, in } (every author's, as listed)
+      const learnKinds = () => [...a.list(), ...b.list()].forEach(x => rootsHere.set(x.id, { kind: x.kind, aud: x.aud ?? null, in: x.in ?? null }));
+      // WHAT ATTACHES TO AN ITEM FOLLOWS THAT ITEM (ARCHITECTURE §7): a comment, a vote, a section, a ballot is public
+      // exactly when the ROOT item it is about, here, is — the root's own kind's domain AND the root's own audience (10-21:
+      // the row's own `aud`, never set on a comment, made comments on a members-only item public). An item kept about
+      // something ELSEWHERE (`in` a full reference: a team's subtitle) is its own root. A root not read yet: not public
+      // yet (the next sync, once it is read, decides) — never guessed.
+      const rootOf = (x, depth = 0) => {
+        const about = TOP.has(x.kind) ? null : x.in ?? x.item ?? null;
+        if (!about || String(about).includes("/")) return x;
+        const up = rootsHere.get(about);
+        if (!up || depth >= 8) return null;
+        return rootOf(up, depth + 1);
+      };
+      const isPublic = x => {
+        const root = rootOf(x);
+        if (!root || root.aud === "members" || x.aud === "members") return false;
+        return readsAnyone(kinds.of(root.kind) ? kinds.policyDomain(root.kind) : "text");
       };
       const pubOfValue = v => {
         try {
-          const x = JSON.parse(v);
-          return x.aud !== "members" && readsAnyone(rootDomain(x.kind ?? "post", x.in ?? x.item ?? null));
+          return isPublic({ kind: "post", ...JSON.parse(v) });
         } catch {
           return false;
         }
       };
-      // PUBLIC: what its app reads in public (the space's policy, the ceiling) — unless made for the members only.
-      const pubOfItem = it => it.aud !== "members" && readsAnyone(rootDomain(it.kind, it.in ?? null));
+      const pubOfItem = it => isPublic(it);
       // THE SYNC: this person's rows — a public copy of each while ITS APP reads in public, none while it does not.
       let syncing = null;
       const sync = () =>
@@ -792,6 +799,44 @@ export async function start(ctx) {
     }
     return { board, audience, meta, place: board ? await boardOf(board) : null };
   }
+  // WHERE AN ITEM IS, and WHO READS IT — the one answer (ARCHITECTURE §7, "What attaches to an item follows that
+  // item"): everything kept FOR an item (a document's changes, its files, what is attached) is kept where this says,
+  // never by a test of its own (10-21: codoc, files, captions, comments each decided it themselves — and disagreed).
+  //   place     the space it is in (a group too), or null: a person's own
+  //   outside   read from outside that space (not a member: its public side only)
+  //   public    anyone reads it — a space's item by its room's one rule (`pub`), a person's by not being private
+  //   table(n)  the CONTAINER of the item's own table `n`, beside it (`content.table`): a space's members table or its
+  //             public one (`pub-…`: anyone reads, its members write); a person's public tail, or their own account's
+  // A SIBLING TABLE's NAME, made to fit (a table's name is 1 to 32 bytes; a space's own prefix `x<12>-` takes 14): a
+  // name too long is its stable short hash — its `pub-` kept in front (what makes a space's table public: storage).
+  const fitName = (prefix, n, room) => {
+    if (prefix.length + n.length <= room) return prefix + n;
+    let h1 = 0x811c9dc5, h2 = 0x01000193;
+    for (const c of n) (h1 = Math.imul(h1 ^ c.charCodeAt(0), 16777619) >>> 0), (h2 = Math.imul(h2 ^ c.charCodeAt(0), 2246822519) >>> 0);
+    return (prefix + "h" + h1.toString(36) + h2.toString(36)).slice(0, room);
+  };
+  async function placeOf(ref) {
+    const it = typeof ref === "string" ? await get(ref, { outside: await outsideOf(ref) }) : ref;
+    if (!it) throw Object.assign(new Error("that item is not here"), { kind: "absent" });
+    if (String(it.ref).startsWith("space:")) {
+      const sid = it.ref.slice(6, it.ref.indexOf("/"));
+      const sp = (await space.mine.strict()).find(s => s.id === sid) ?? null;
+      if (sp) {
+        const pub = !!it.pub;
+        // (A members table keeps its plain name, as tables kept for items always had; a public one is the space's `pub-`
+        // table, the form storage makes public.)
+        return { place: sp, outside: false, public: pub, table: n => ({ messages: pub ? space.tableOf(sp, fitName("pub-", n, 18)) : n, scope: sp }) };
+      }
+      const desc = await outsideOf(it.ref);
+      if (!desc) throw Object.assign(new Error("you are not in that space, and it lists nothing in public"), { kind: "refused-expected" });
+      return { place: desc, outside: true, public: true, table: n => ({ outside: true, messages: space.tableOf(desc, fitName("pub-", n, 18)), scope: desc }) };
+    }
+    const did = whereOf(it.ref);
+    const pub = !it.private;
+    const acc = await space.account.strict();
+    return { place: null, outside: false, public: pub, did, table: n => (pub ? { kind: "public", did, name: fitName("", n, 32) } : { messages: fitName("", n, 32), scope: acc }) };
+  }
+
   // `audience` (the `audience` picker's value): yours — "public" or "private"; a space's — "public" or "members".
   // `at`: when it was made (an item brought over from before keeps its own time).
   // `write`: who may comment and vote on it ({ comment, vote }: anyone · followers · friends · members · author) — its
@@ -1199,5 +1244,5 @@ export async function start(ctx) {
     },
     // THE RANKING (a feed's sort), the one: what `list` orders by — for a list made of several (`tag`'s).
     rank: (list, sort = "new", by = null) => [...list].sort(sorter(sort, by)),
-    route, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    route, placeOf, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }
