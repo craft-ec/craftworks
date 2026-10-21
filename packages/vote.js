@@ -370,7 +370,7 @@ export async function mount(ctx, el) {
   async function draw() {
     let at;
     try {
-      at = await (await ctx.require("where")).of({ kind: "poll", kinds: ["poll", "proposal"], app: "vote", yours: "Your votes" });
+      at = await (await ctx.require("where")).of({ kind: "poll", kinds: ["poll", "proposal"], app: "vote" });
     } catch (e) {
       return outer.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
     }

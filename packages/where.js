@@ -53,6 +53,9 @@ export async function start(ctx) {
     // turning it off that counted. Never because it looks unused while the acts are still arriving (a member's acts
     // merge in after "settled": the app would be sent away from a space that uses it).
     const app_ = ctx.apps.find(a => a.route === `/${app}`);
+    // ITS "YOURS", one name on every page (the manifest's: the app's own words — owner 10-22: "Yours" on one page, "Your
+    // votes" on another, as each page named it).
+    yours = app_?.yours ?? yours;
     if (sp)
       ctx.background("where: roles.of", roles
         .of.strict(sp)

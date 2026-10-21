@@ -16,7 +16,7 @@ export async function mount(ctx, el) {
   const bar = (await ctx.require("feed-bar")).create({ onChange: () => draw() });
   // WHERE Board is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.
   const whereCap = await ctx.require("where");
-  let at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });
+  let at = await whereCap.of({ kind: "post", app: "board" });
   const discovering = () => at.who === "discover";
   const base = () => at.base;
   // The route: what is shown.
@@ -239,7 +239,7 @@ export async function mount(ctx, el) {
     listView?.stop();
     listView = null;
     drawnFor = routeKey();
-    at = await whereCap.of({ kind: "post", app: "board", yours: "Your posts" });
+    at = await whereCap.of({ kind: "post", app: "board" });
     // ITS OWN SETTINGS (a space's, for who may manage its apps): drawn here, in the app.
     if (at.sub === "settings") return void (at.tabs([]), await at.settings(main));
     const w = route();

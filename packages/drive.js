@@ -38,7 +38,7 @@ export async function mount(ctx, el) {
   // Where Drive is: yours, or the space open; and the folder (`f/<path>`).
   // WHERE (`where`: yours, a space's, a person's, Discover — the last two read only).
   const where = await ctx.require("where");
-  const place = await where.of({ kind: "file", app: "drive", yours: "Your Drive" });
+  const place = await where.of({ kind: "file", app: "drive" });
   const sp = place.space;
   const them = place.person;
   const others = place.others;

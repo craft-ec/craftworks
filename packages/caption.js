@@ -32,7 +32,7 @@ export async function mount(ctx, el) {
   // its tracks), read at each draw.
   const where = await ctx.require("where");
   const actionsCap = await ctx.require("actions");
-  let at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
+  let at = await where.of({ kind: "caption", app: "caption" });
   const sp = () => at.space?.id ?? null;
   const route = () => {
     const s = at.sub;
@@ -191,7 +191,7 @@ export async function mount(ctx, el) {
   async function draw() {
     listView?.stop();
     listView = null;
-    at = await where.of({ kind: "caption", app: "caption", yours: "Your captions" });
+    at = await where.of({ kind: "caption", app: "caption" });
     const w = route();
     drawn = where.key();
     const top = h("div", { className: "top" }, w.person ? h("h2", { textContent: `🔤 ${directory.shown(w.person)}'s captions` }) : null);

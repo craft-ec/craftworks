@@ -122,7 +122,7 @@ export async function start(ctx) {
     });
 
     const where = async () => {
-      const at = await (await ctx.require("where")).of({ kinds: own, app, yours: "Yours" });
+      const at = await (await ctx.require("where")).of({ kinds: own, app });
       return { at, plain: { who: at.who, sub: at.sub, space: at.space ? { id: at.space.id, name: at.space.name ?? null } : null, saved: at.saved, others: at.others, base: at.base } };
     };
     // A WRITE (make, edit, remove, copy) only on the person's own gesture: this page's user activation — a click or a key

@@ -30,11 +30,12 @@ export async function open(ctx, el, spec) {
     }</style>
     <div class="oa"></div>`;
   const root = el.querySelector(".oa");
-  const at = await where.of({ kind, app: route, yours: `Your ${nouns}` });
+  const at = await where.of({ kind, app: route });
   // ANOTHER ADDRESS in the app (an item opened from the list, one just made): drawn again for it (`where.onMove`).
   const stop = where.onMove(el, () => (stop(), el.replaceChildren(), open(ctx, el, spec)));
   const sub = at.sub;
-  at.tabs([], { yoursOn: !sub, create: at.discover || at.saved || at.shared ? null : { label: `New ${noun}`, href: at.href("new"), on: sub === "new" } });
+  // (＋ New always there, whichever page is open — owner 10-22; from Discover, Saved or Shared it makes one of yours.)
+  at.tabs([], { yoursOn: !sub, create: { label: `New ${noun}`, href: at.discover || at.saved || at.shared ? `#/${route}/new` : at.href("new"), on: sub === "new" } });
   const said = h("p", { className: "said" });
   // (In an app's frame `ctx.say` answers through the host: awaited, or a refusal would be shown as nothing.)
   // (A quiet kind is said as nothing: never the word "null".)

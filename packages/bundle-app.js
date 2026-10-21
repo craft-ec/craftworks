@@ -99,7 +99,7 @@ export async function mount(ctx, el) {
     for (const v of views) v.stop();
     views = [];
     said.hidden = true;
-    at = await where.of({ kind: "bundle", app: "bundle", yours: "Your bundles" });
+    at = await where.of({ kind: "bundle", app: "bundle" });
     const mine = at.who === "mine";
     at.tabs([], { yoursOn: mine && !at.sub });
     root.replaceChildren(theme.loading("Reading the bundles…"));

@@ -395,7 +395,7 @@ export async function mount(ctx, el) {
 
   let drawn = null;
   async function draw() {
-    at = await whereCap.of({ kind: "post", app: "blog", yours: "Your blog" });
+    at = await whereCap.of({ kind: "post", app: "blog" });
     drawn = whereCap.key();
     // ITS OWN SETTINGS (a space's, for who may manage its apps): drawn here, in the app.
     if (at.sub === "settings") return void (view?.stop(), (view = null), (root = outer), at.tabs([]), await at.settings(outer));
@@ -405,7 +405,8 @@ export async function mount(ctx, el) {
     at.tabs(
       [
         ...(at.who === "space" && editor ? [{ label: "Review", href: at.href("review"), on: s === "review" }] : []),
-        ...(mine || at.who === "discover" || at.who === "space" ? [{ label: "Drafts", href: "#/blog/drafts", on: mine && s === "drafts" }] : []),
+        // (Always there, whichever page is open: your drafts — owner 10-22, no nav that comes and goes.)
+        { label: "Drafts", href: "#/blog/drafts", on: mine && s === "drafts" },
       ],
       { yoursOn: mine && (!s || s.startsWith("t/")), create: { label: "Write", href: at.space ? at.href("write") : "#/blog/write", on: s === "write" || s.startsWith("write/") } },
     );

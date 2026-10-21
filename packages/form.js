@@ -446,13 +446,14 @@ export async function mount(ctx, el) {
   async function draw() {
     let at;
     try {
-      at = await (await ctx.require("where")).of({ kind: "form", app: "form", yours: "Your forms" });
+      at = await (await ctx.require("where")).of({ kind: "form", app: "form" });
     } catch (e) {
       return outer.replaceChildren(h("p", { className: "none", textContent: ctx.say(e) }));
     }
     const s = at.sub;
     const mayMake = at.who === "mine" || at.who === "space";
-    at.tabs(at.who === "mine" || at.who === "discover" ? [{ label: "Sent", href: "#/form/sent", on: s === "sent" }] : [], { yoursOn: !s, ...(mayMake || at.who === "discover" ? { create: { label: "New form", href: at.who === "space" ? at.href("new") : "#/form/new", on: s === "new" } } : {}) });
+    // (Sent: always there, whichever page is open — owner 10-22.)
+    at.tabs([{ label: "Sent", href: "#/form/sent", on: at.who === "mine" && s === "sent" }], { yoursOn: !s, ...(mayMake || at.who === "discover" ? { create: { label: "New form", href: at.who === "space" ? at.href("new") : "#/form/new", on: s === "new" } } : {}) });
     view?.stop();
     view = null;
     // A FORM BEING ANSWERED or BUILT: drawn once — never again under its writer.

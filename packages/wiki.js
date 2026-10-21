@@ -69,14 +69,15 @@ export async function mount(ctx, el) {
     const n = ++drawing;
     let at;
     try {
-      at = await where.of({ kind: "wiki", app: "wiki", yours: "Your wiki" });
+      at = await where.of({ kind: "wiki", app: "wiki" });
     } catch (e) {
       return outer.replaceChildren(said(errText(e)));
     }
     const sub = at.sub;
     // A CIRCLE of yours opened as a space (an item's link): your own wiki.
     if (at.space?.circle && spaceCap.madeBy(at.space, at.me)) return location.replace(`#/wiki${sub ? `/${sub}` : ""}`);
-    at.tabs([], { yoursOn: !sub, create: at.discover || at.saved ? null : { label: "New page", href: at.href("new"), on: sub === "new" || sub.startsWith("new/") } });
+    // (＋ New page always there — owner 10-22; from Discover or Saved it makes one in your wiki.)
+  at.tabs([], { yoursOn: !sub, create: { label: "New page", href: at.discover || at.saved || at.shared ? "#/wiki/new" : at.href("new"), on: sub === "new" || sub.startsWith("new/") } });
     // DISCOVER: every public wiki page (people's, public spaces'), each opened in its own wiki. The global wiki — one
     // for everyone, owned by nobody — comes after Vote.
     view?.stop();

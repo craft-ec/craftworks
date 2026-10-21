@@ -103,7 +103,7 @@ export async function mount(ctx, el) {
   try {
     edge = await ctx.require("edge");
     // WHERE (`where`: yours, a space's, a person's, Discover) — a space's notes by its policies.
-    at = await (await ctx.require("where")).of({ kind: "note", app: "note", yours: "Your notes" });
+    at = await (await ctx.require("where")).of({ kind: "note", app: "note" });
     sp = at.space;
     if (sp) {
       rs = await (await ctx.require("roles")).of(sp);
@@ -174,7 +174,9 @@ export async function mount(ctx, el) {
       .catch(e => said(`Could not delete: ${ctx.say(e)}`));
 
   // The view: Notes or Archive, grid or list (finding one: the header's search, every app's).
-  let archive = false;
+  // ARCHIVE is an address (`…/archive`: always in the side panel, lit while open — owner 10-22: no nav that comes and
+  // goes with the page); grid or list is the page's own switch (its toolbar, never the side panel).
+  let archive = /^archive(\/|$)/.test(at?.sub ?? "");
   let list = false;
   let label = null; // showing one label's notes: its id
 
@@ -352,6 +354,12 @@ export async function mount(ctx, el) {
   // device, a pin, a label). What it reads includes this page's own choices (grid or list, archive, a label), so a
   // toggle draws it too (`render()`).
   const notesEl = root.querySelector(".notes");
+  // THE VIEW, the page's: grid or list (a switch in its toolbar).
+  const viewBtn = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", style: "justify-self:end;margin:0 0 8px" });
+  const viewLabel = () => (viewBtn.textContent = list ? "▦ Grid view" : "☰ List view");
+  viewBtn.onclick = () => ((list = !list), viewLabel(), render());
+  viewLabel();
+  notesEl.before(viewBtn);
   let notesView = null;
   const render = () => notesView?.refresh();
   const drawNotes = () => {
@@ -448,10 +456,7 @@ export async function mount(ctx, el) {
   rs?.onChange(() => root.isConnected && decide().then(() => (gate(), render())));
   // THE TABS (`where`'s, in every app's order): Your notes · the app's own · Discover.
   const actions = () => {
-    at.tabs([
-      { label: list ? "Grid view" : "List view", run: () => ((list = !list), render(), actions()) },
-      ...(others ? [] : [{ label: "Archive", on: archive, run: () => ((archive = !archive), render(), actions()) }]),
-    ], { yoursOn: !archive });
+    at.tabs([{ label: "Archive", href: at.space && !at.outside ? at.href("archive") : "#/note/archive", on: archive }], { yoursOn: !archive });
   };
   actions();
   notesView = ctx.view(notesEl, {
