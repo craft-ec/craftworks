@@ -163,8 +163,20 @@ export async function start(ctx) {
     });
     const btn = h("button", { type: "submit", className: "main", textContent: "Save" });
     const f0 = S.fields.some(f => f.action) ? "Who" : "Setting";
+    // WHAT IS PUBLIC ANYWAY (the space's own section): Visibility is the space's own read; a part made public at its own
+    // level — joining, an app's or a kind's reading — said beside it (10-22: "Private" showed for a space anyone could
+    // join and read the posts of).
+    const publicParts = key === "" && !r.personal ? await (async () => {
+      const K = await ctx.require("kinds");
+      const domains = [...new Set(K.all().map(k => K.policyDomain(k)))];
+      const parts = [
+        ...(["anyone", "ask"].includes(r.policy("", "join")) ? [r.policy("", "join") === "anyone" ? "anyone may join" : "anyone may ask to join"] : []),
+        ...domains.filter(d => r.readsAnyone(d)).map(d => `${d} read by anyone`),
+      ];
+      return parts.length && r.policy("", "read") !== "anyone" ? h("p", { className: "said", style: "color:var(--cw-fg)" }, `Public in part: ${parts.join(" · ")} — so it is listed in Discover. Set each to Members to keep it private.`) : null;
+    })() : null;
     const more = S.extra ? h("div", {}) : null;
-    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "") || "everything"}` }, h("h3", { textContent: S.title }), h("div", { className: "set-grid", style: "display:grid;grid-template-columns:max-content minmax(0,24rem);gap:var(--cw-space-2) var(--cw-space-3);align-items:center" }, h("b", { textContent: "Action" }), h("b", { textContent: f0 }), ...inputs.flatMap(({ f, input }) => [h("label", { textContent: f.label, style: "margin:0", htmlFor: (input.id ||= `set-${key || "space"}-${f.action ?? f.key}-${f.path ?? ""}`) }), input])), more, h("div", { className: "row" }, said, btn));
+    const form = h("form", { className: "cw-appset", id: `settings-${(key || "space").replace("me:", "") || "everything"}` }, h("h3", { textContent: S.title }), publicParts, h("div", { className: "set-grid", style: "display:grid;grid-template-columns:max-content minmax(0,24rem);gap:var(--cw-space-2) var(--cw-space-3);align-items:center" }, h("b", { textContent: "Action" }), h("b", { textContent: f0 }), ...inputs.flatMap(({ f, input }) => [h("label", { textContent: f.label, style: "margin:0", htmlFor: (input.id ||= `set-${key || "space"}-${f.action ?? f.key}-${f.path ?? ""}`) }), input])), more, h("div", { className: "row" }, said, btn));
     // The button says saving and saved (`theme.action`, the one button feedback); a failure, said beside it.
     const submit = theme.action(btn, async () => {
         const changed = {};
@@ -190,10 +202,31 @@ export async function start(ctx) {
   }
   // THE SPACE's PAGE (the Settings app): the space's own section only — its apps' settings are in each app, its
   // capabilities' rules in the Spaces app.
+  // ITS ACTS READ WHOLE before a setting is shown (R4: nothing drawn from a short read — 10-22: a public space's
+  // Settings showed every default, "Private — members only" and "Join: Default: Members", its 56 acts still arriving).
+  // Waited for (30 s at most); still arriving then: said, its Save held, and drawn again the moment they are whole.
+  async function whole(r, draw) {
+    await r.settled;
+    for (const end = Date.now() + 30000; !r.whole() && Date.now() < end; ) await new Promise(t => setTimeout(t, 500));
+    const box = h("div", { style: "display:contents" });
+    const fill = async () => {
+      const el = await draw();
+      if (!r.whole()) {
+        for (const b of el.querySelectorAll?.("button[type=submit]") ?? []) b.disabled = true;
+        box.replaceChildren(h("p", { className: "said", textContent: "Its settings are still arriving — shown as read so far; saving waits until they are all here." }), el);
+      } else box.replaceChildren(el);
+    };
+    await fill();
+    if (!r.whole()) {
+      let done = false;
+      r.onChange(() => !done && r.whole() && box.isConnected && ((done = true), ctx.background("app-settings: drawn whole", fill())));
+    }
+    return box;
+  }
   async function page(sp) {
     const r = await roles.of.strict(sp);
     const me = (await (await ctx.require("space")).account()).id;
-    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, await section(sp, "", r, me));
+    return h("div", { className: "cw-settings", style: "display:grid;gap:var(--cw-space-3)" }, await whole(r, () => section(sp, "", r, me)));
   }
   // AN APP's settings, drawn INSIDE the app (its own Settings page): null when it has none.
   const has = key => !!SECTIONS[key];
@@ -201,7 +234,7 @@ export async function start(ctx) {
     if (!SECTIONS[key]) return null;
     const r = await roles.of.strict(sp);
     const me = (await (await ctx.require("space")).account()).id;
-    return section(sp, key, r, me);
+    return whole(r, () => section(sp, key, r, me));
   }
   // A CAPABILITY's RULES (the Spaces app, beside its switch): who may read, post, edit, and each signal, in its domain.
   // Read by anyone: the space listed in public.
@@ -212,7 +245,7 @@ export async function start(ctx) {
       title,
       fields: [...["read", "post", "edit"].map(action => ({ action, path: cap, label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS(cap)],
     };
-    return section(sp, `cap:${cap}`, r, me);
+    return whole(r, () => section(sp, `cap:${cap}`, r, me));
   }
   // WHERE A SECTION IS SET: a space's capability rules in the Space app (its Capabilities, at that capability), an app's
   // own settings in the app; yours in Settings, "Permissions".

@@ -622,7 +622,10 @@ export async function start(ctx) {
     const pr = await (await ctx.require("roles")).ofPublic(d);
     const st = (await pr.decided?.()) ?? pr.state;
     if (st?.s === "unknown") throw new Error(`${d.id.slice(0, 8)}: its public acts not read yet`);
-    return pr.acts().length > 0;
+    // PUBLIC NOW (its acts, as `gov::is_public` reads them: anyone may read, join or ask) — never "it had public acts
+    // once": a space made private again leaves the list (10-22).
+    await pr.settled;
+    return pr.isPublic();
   };
   let leftoverSaid = false;
   async function publicSpaces() {

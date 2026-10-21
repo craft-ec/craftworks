@@ -44,10 +44,8 @@ export async function start(ctx) {
       const domain = (await ctx.require("kinds")).policyDomain(kind);
       // (Both refusals are ANSWERS, not failures: `expected` — the loader says them, never as a fault.)
       if (!desc) throw new Fault("refused-expected", "not in that space", { message: "you are not in that space (left, or not joined yet)" });
-      // Why not, said (its public rules: the app not on there, or who reads it).
-      // (Its roles read with `await`: the same here and in an app's frame, where they cross the bridge.)
-      const on = (await pr.apps()).includes(app);
-      const reads = await pr.policyIn(domain, "read");
+      // Why not, said (its public rules: the app not on there, or who reads it) — the one rule (`opensFromOutside`).
+      const { on, reads } = await outsideRule(pr, app, domain);
       if (!on || reads !== "anyone") throw new Fault("refused-expected", "members only", { message: `${space.shown(desc)}'s ${app} is for its members (${on ? `read by: ${reads ?? "members"}` : "not public there"}): join it to open it` });
       sp = { ...desc, outside: true };
     }
@@ -99,12 +97,10 @@ export async function start(ctx) {
           return (await st.has(app)) === true && (await (await roles.of.strict(sp)).can(me, "apps")) === true;
         })(), () => false)
       : Promise.resolve(false);
-    let mayConfigure = false;
     // Each entry's ROLE, where the side panel puts it (owner 10-15, YouTube's: Home · Subscriptions, then You): `discover`,
     // `feed` (what you follow — `feed: true` where the app's own page IS its feed, as Videos'), `you` (yours, saved,
     // the app's extras unless they say otherwise), `create`.
     const tabs = (extra = [], { yoursOn = true, before = [], create = null, feed = false } = {}) => {
-      settingsRead.then(ok => ok && ((mayConfigure = true), draw()));
       const draw = () => {
       const home = who === "mine" || who === "discover";
       // THE SIDE PANEL, the same in every app (owner 10-21): HOME (the public items), DISCOVER (the public spaces with
@@ -130,7 +126,6 @@ export async function start(ctx) {
             ...(saves ? [{ label: "Saved", href: `#/${app}/saved`, on: saved, role: "you" }] : []),
             ...(saves ? [{ label: "Shared", href: `#/${app}/shared`, on: shared, role: "you" }] : []),
             ...extra.map(e => ({ role: "you", ...e })),
-            ...(mayConfigure ? [{ label: "Settings", href: `${base}/settings`, on: sub === "settings", role: "you" }] : []),
             ...(create && who !== "person" && !sp?.outside ? [{ ...create, label: `＋ ${create.label}`, end: true, role: "create" }] : []),
           ];
       dispatchEvent(new CustomEvent("craftworks:actions"));
@@ -151,6 +146,23 @@ export async function start(ctx) {
       return true;
     };
     return { settings, who, saved, shared, following, friends, outside: !!sp?.outside, others: who === "person" || who === "discover" || saved || following || friends || !!sp?.outside, discover: who === "discover", guest: !me, space: sp, person, me, sub, base, href: s => (s ? `${base}/${s}` : base), read, tabs };
+  }
+  // A SPACE OPENED FROM OUTSIDE in an app (the one rule — opening it here, and Discover listing it): the app on there
+  // and its domain read by anyone (10-22: Board's panel listed spaces by their posts' reading, Discover by the app — each
+  // showed one the other refused).
+  async function outsideRule(pr, app, domain) {
+    await pr.settled;
+    return { on: (await pr.apps()).includes(app), reads: await pr.policyIn(domain, "read") };
+  }
+  async function opensFromOutside(desc, app) {
+    const pr = await roles.ofPublic.strict(desc);
+    const a = ctx.apps.find(x => x.route === `/${app}`);
+    const domains = a?.needs?.length ? a.needs : ["text"];
+    for (const d of domains) {
+      const { on } = await outsideRule(pr, app, d);
+      if (on && (await pr.readsAnyone(d))) return true;
+    }
+    return false;
   }
   // AN APP's DISCOVER PAGE (`#/discover/<app>/spaces`): the public spaces that have this app on — each opened, joined
   // or followed there (`join-button`). The same page for every app (the loader draws it in the app's place).
@@ -173,12 +185,10 @@ export async function start(ctx) {
     ctx.view(box, {
       read: async () => {
         const all = await items.publicSpaces();
-        const on = await Promise.all(all.map(d => ctx.optional("where: a space's apps", (async () => {
-          const pr = await roles.ofPublic.strict(d);
-          await pr.settled;
-          return (await pr.apps()).includes(app) ? pr : null;
-        })(), () => null)));
-        return all.map((d, i) => on[i] && { d, pr: on[i] }).filter(Boolean);
+        // (Listed as it would open: `opensFromOutside`, the one rule.)
+        const ok = await Promise.all(all.map(d => ctx.optional("where: opens from outside", opensFromOutside(d, app), () => false)));
+        const prs = await Promise.all(all.map((d, i) => (ok[i] ? roles.ofPublic.strict(d) : null)));
+        return all.map((d, i) => ok[i] && { d, pr: prs[i] }).filter(Boolean);
       },
       empty: list => !list.length,
       draw: async list => {
@@ -214,5 +224,5 @@ export async function start(ctx) {
     addEventListener("craftworks:route", moved);
     return () => removeEventListener("craftworks:route", moved); // (stop: an app mounted again in the same element)
   }
-  return { of, menu, spacesPage, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
+  return { of, menu, spacesPage, opensFromOutside, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }

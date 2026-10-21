@@ -375,7 +375,12 @@ export async function start(ctx) {
           const fill = async () => {
             if (!rules.open || drawn) return;
             drawn = true;
-            rules.append(await ctx.require("app-settings").then(a => a.capabilityPage(server, cap, WORDS[cap] ?? cap)).catch(e => el("p", { className: "said", textContent: ctx.say(e) })));
+            const A = await ctx.require("app-settings");
+            rules.append(await A.capabilityPage(server, cap, WORDS[cap] ?? cap).catch(e => el("p", { className: "said", textContent: ctx.say(e) })));
+            // ITS APPS' OWN SETTINGS here too (Board's rules, Blog's approval, Chat's channels: each app built on this
+            // capability) — a space's settings are the Space app's, never an entry in an app's side panel (owner 10-22).
+            for (const a of (ctx.apps ?? []).filter(x => (x.needs ?? []).includes(cap) && A.has(x.route.slice(1))))
+              rules.append(await A.appPage(server, a.route.slice(1)).catch(e => el("p", { className: "said", textContent: ctx.say(e) })) ?? "");
           };
           rules.ontoggle = fill;
           fill();

@@ -46,7 +46,6 @@ export async function mount(ctx, el) {
     const page = !w.post && !w.submit && !w.via;
     at.tabs(
       [
-        ...(at.who === "space" ? [{ label: "Posts", href: base(), on: page }] : []),
       ],
       { yoursOn: page && w.by === me, create: { label: "Post", href: at.space ? `${base()}/submit` : "#/board/submit", on: !!w.submit } },
     );
@@ -139,16 +138,12 @@ export async function mount(ctx, el) {
     );
   }
   async function sidePanel(w) {
-    // Discover: the public spaces; one public space: its name (joining is a member's way to post).
+    // ONE PUBLIC SPACE open from Discover: its name and how to join (the list of public spaces is the side panel's
+    // Discover — `where.spacesPage`, the one list; 10-22: Board kept a second one, by a rule of its own).
     if (discovering()) {
-      // Public boards only (a space may be listed for joining, its board still its members').
-      const listed = await posts.publicSpaces();
-      const spaces = (await Promise.all(listed.map(async x => ((await roles.ofPublic(x))?.readsAnyone("text") ? x : null)))).filter(Boolean);
-      const d = w.pub ? spaces.find(x => x.id === w.pub) : null;
-      return [
-        d ? await publicPanel(d) : null,
-        h("div", { className: "panel" }, h("h3", { textContent: "Public spaces" }), spaces.length ? h("ul", {}, ...spaces.map(x => h("li", {}, h("button", { type: "button", className: "link", textContent: space.shown(x), onclick: e => person.openSpace(e.currentTarget, x) })))) : h("p", { textContent: "None listed yet." })),
-      ].filter(Boolean);
+      if (!w.pub) return [];
+      const d = (await posts.publicSpaces()).find(x => x.id === w.pub) ?? null;
+      return d ? [await publicPanel(d)] : [];
     }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
     if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "Your spaces · following · friends" }), create)];

@@ -120,6 +120,8 @@ async function mountDock(ctx, el) {
   }
 
   addEventListener("craftworks:route", () => (note(), draw()));
+  // AN APP CLOSED (the header's ×): no longer among the open apps — the dock and the browser's OPEN list.
+  addEventListener("craftworks:close-app", e => (open.delete(e.detail?.route), draw()));
   addEventListener("craftworks:installed", () => draw());
   note();
   draw();

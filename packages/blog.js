@@ -404,7 +404,6 @@ export async function mount(ctx, el) {
     const editor = at.space ? await ctx.optional("blog: press.mayEdit", press.mayEdit(at.space), () => false) : false;
     at.tabs(
       [
-        ...(at.who === "space" ? [{ label: "Articles", href: base(), on: !s }] : []),
         ...(at.who === "space" && editor ? [{ label: "Review", href: at.href("review"), on: s === "review" }] : []),
         ...(mine || at.who === "discover" || at.who === "space" ? [{ label: "Drafts", href: "#/blog/drafts", on: mine && s === "drafts" }] : []),
       ],

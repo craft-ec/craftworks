@@ -223,9 +223,10 @@ export function mount(ctx, el) {
     const box = el.querySelector(".name");
     const app = ctx.apps.find(a => a.route === ctx.route);
     const here = ctx.route === "/" || ctx.route === "/space" ? "Home" : ctx.route === "/settings" ? "Settings" : (app?.name ?? "");
-    // CLOSE THE APP (×, beside its name): back where it was opened from — a space's home in a space, yours otherwise.
+    // CLOSE THE APP (×, beside its name): back where it was opened from — a space's home in a space, yours otherwise —
+    // and out of the dock's open apps (`craftworks:close-app`: the footer drops it).
     const close = app && ctx.route !== "/" && ctx.route !== "/space"
-      ? Object.assign(document.createElement("button"), { type: "button", className: "close", textContent: "×", title: `Close ${app.name}`, ariaLabel: `Close ${app.name}`, onclick: () => (location.hash = ctx.space && ctx.space !== "discover" ? `#/s/${ctx.space}` : "#/") })
+      ? Object.assign(document.createElement("button"), { type: "button", className: "close", textContent: "×", title: `Close ${app.name}`, ariaLabel: `Close ${app.name}`, onclick: () => (dispatchEvent(new CustomEvent("craftworks:close-app", { detail: { route: app.route } })), (location.hash = ctx.space && ctx.space !== "discover" ? `#/s/${ctx.space}` : "#/")) })
       : null;
     box.replaceChildren(app ? `${app.icon ?? ""} ${here}` : here, ...(close ? [close] : []));
   }
