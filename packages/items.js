@@ -152,6 +152,9 @@ export async function start(ctx) {
     }
     return rooms.get(key);
   };
+  // ANY CONTAINER's ROOM (a channel, a conversation — `content`'s): opened ONCE a page, as a space's is — the one opener
+  // every app reads and writes through (10-22: Chat and Activity each opened their own, a fresh room every time).
+  const roomOf = c => opened(`c:${c.id}`, () => content.in(c, { paged: true }));
   // The spaces this person is in that have a Board (an app of the space, added by its owner or admins: `roles`).
   const roles = await ctx.require("roles");
   // A space's board room is its place for every item `posts` keeps — posts, videos, captions — so any app on it opens
@@ -1384,5 +1387,5 @@ export async function start(ctx) {
     },
     // THE RANKING (a feed's sort), the one: what `list` orders by — for a list made of several (`tag`'s).
     rank: (list, sort = "new", by = null) => [...list].sort(sorter(sort, by)),
-    route, placeOf, homeIdOf, uploadPlace, setAudienceHere, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    room: roomOf, route, placeOf, homeIdOf, uploadPlace, setAudienceHere, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }

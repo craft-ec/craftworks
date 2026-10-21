@@ -10,7 +10,7 @@
 //   const r = await room.show(el, conversation, "# general")   // renders into `el`
 //   r.close()                                                 // stops following it
 export async function start(ctx) {
-  const [content, directory, space, attachments, markdown, mdEditor] = await Promise.all(["content", "directory", "space", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
+  const [directory, space, attachments, markdown, mdEditor] = await Promise.all(["directory", "space", "attachments", "markdown", "md-editor"].map(n => ctx.require(n)));
   // The emoji offered: the react signal's (`signals`: one list for messages and every kind).
   const EMOJI = (await ctx.require("signals")).of("react").choices;
   const PAGE = 60;
@@ -109,7 +109,8 @@ export async function start(ctx) {
     let replyTo = null;
     let editing = null;
     // Read by PAGES: the newest messages first, older ones as asked (phase 3, Reads).
-    const room = await content.in(conversation, { paged: true });
+    // (The one room of this conversation, opened once a page — `items.room`: reopening it draws what it holds at once.)
+    const room = await (await ctx.require("items")).room(conversation);
     room.settled.finally(() => {
       settled = true;
       if (open) draw();

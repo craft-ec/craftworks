@@ -16,7 +16,7 @@
 //                                // open() }] newest first; `open()` goes to the very item (a message: shown in its room)
 //   activity.mentionsNew() / await activity.mentionsSeen()   // how many since last looked / looked now
 export async function start(ctx) {
-  const [space, storage, conversation, content, directory, roles] = await Promise.all(["space", "storage", "conversation", "content", "directory", "roles"].map(n => ctx.require(n)));
+  const [space, storage, conversation, directory, roles] = await Promise.all(["space", "storage", "conversation", "directory", "roles"].map(n => ctx.require(n)));
   const watched = new Map(); // container id → { container, kind, route, serverId, serverName, room, seen }
   const changed = [];
   const fire = () => changed.forEach(f => f());
@@ -66,7 +66,8 @@ export async function start(ctx) {
     const w = { container, kind, ...extra, seen: new Set() };
     watched.set(container.id, w);
     // Only the NEWEST page (phase 3, Reads): what is new is all this counts — never a whole history read at startup.
-    w.room = await content.in(container, { paged: true });
+    // (The one room, `items.room` — the same object Chat draws: nothing read twice.)
+    w.room = await (await ctx.require("items")).room(container);
     for (const m of w.room.list()) w.seen.add(m.id);
     if (onScreen.has(container.id) && visible()) markRead(container.id);
     w.room.onChange(() => {

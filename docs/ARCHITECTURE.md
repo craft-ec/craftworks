@@ -322,6 +322,11 @@ places have not all answered and read nothing is STILL ARRIVING (`not-yet`), nev
 draws "Still arriving…" and reads again as feeds answer. (Found 10-22, live: a space's board read empty for 15 s, its
 feeds silent, and every app drew it as no posts until the next redraw — the public post on Home all the while.)
 
+**One room, one reader (10-22).** Every read of a place goes through ONE room per place, opened once a page: a space's
+items by `roomItems` (Home, the space's feed, `get`, a place's list, outsiders), any other container's — a channel, a
+conversation — by `items.room` (Chat, Activity). Apps differ only in the view they compose over it (Chat and Mail
+keep their own views); reopening a place draws what its room holds at once.
+
 **Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
 reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),
 one file each, its fragments indexed by byte range and time; a MANIFEST names them with a poster, a scrub strip
