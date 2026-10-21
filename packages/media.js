@@ -51,7 +51,7 @@ export async function mount(ctx, el) {
   const h = (await ctx.require("theme")).h;
   // WHERE it is (`where`: the one reading of an address — yours, a space's, a person's, Discover), read at each draw.
   const where = await ctx.require("where");
-  let at = await where.of({ kinds: VIDEO, app: C.app, yours: "Following" });
+  let at = await where.of({ kinds: VIDEO, app: C.app, yours: C.mine });
   const base = () => at.base;
   const route = () => {
     const s = at.sub;
@@ -125,7 +125,7 @@ export async function mount(ctx, el) {
   async function draw() {
     listView?.stop();
     listView = null;
-    at = await where.of({ kinds: VIDEO, app: C.app, yours: "Following" });
+    at = await where.of({ kinds: VIDEO, app: C.app, yours: C.mine });
     const w = route();
     drawn = where.key();
     root.replaceChildren(top(w), theme.loading(w.watch ? `Opening the ${C.one}…` : `Reading the ${C.ones}…`));
