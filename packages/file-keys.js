@@ -59,14 +59,16 @@ export async function start(ctx) {
     // THE ONE PLAN (`rules::rekey::plan`, the node's too): a new salt due, and the rows due with this page's turn.
     const st = await files.salt(sp);
     const rows = await files.rows.strict(sp);
-    const apps = [...new Set(rows.map(x => (!x.app || x.app === "drive" ? "file" : x.app)))];
+    // What the policy may be asked about for these rows (each row's SUBJECT is chosen by the one rule,
+    // `rules::rekey::subject`: its item's domain, else its app) — every name they carry, asked here (the IO).
+    const apps = [...new Set(rows.flatMap(x => [x.dom, x.app ?? "drive"].filter(Boolean)).concat("file"))];
     const plan = JSON.parse(glue.rekey_plan(JSON.stringify({
       salt: r ? { n: st.n, removals: st.removals } : null,
       out: r ? r.outActs().map(a => a.did ?? a.by) : [],
       members: r ? r.members().map(m => m.did) : [me],
       gone: r ? r.goneList() : [],
       banned: r ? r.bannedList() : [],
-      rows: await Promise.all(rows.map(async x => ({ id: x.id, n: x.n ?? -2, pub: !!x.pub, app: x.app ?? "drive", moved: await files.lastMoved(sp, x) }))),
+      rows: await Promise.all(rows.map(async x => ({ id: x.id, n: x.n ?? -2, pub: !!x.pub, app: x.app ?? "drive", ...(x.dom ? { dom: x.dom } : {}), moved: await files.lastMoved(sp, x) }))),
       anyone: apps.filter(a => !shared(sp) || !!r?.readsAnyone(a)),
       me,
       now: Date.now(),

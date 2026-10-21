@@ -2904,5 +2904,8 @@ Drive, publisher, per-app audience defaults) — policy engine one, its SUBJECT 
       your own account first) and items.placeFiles (after every make/edit/move/comment/attach: adopted where the item
       is, public exactly when it is). Picker, publisher, Drive, comments, item page, Blog, captions ask; relocate's and
       Drive folders' own adopts deleted. Captions never more public than their video. fx files-place 6/6 + regressions.
-- [ ] P4 file re-key by the item's domain, not the row's app name.
+- [x] P4 file re-key by the item's domain: placeFiles writes the row's `dom` (kinds.policyDomain of its item);
+      rules::rekey::subject(dom, app) — ONE rule, page (core wasm) and delegate both call it; rows from before keep
+      their app. Identity build changes (delegate): the release needs the upgrade gate. Note: this repo is NOT kept
+      rustfmt-clean (cargo fmt --check fails on many untouched files) — never run rustfmt on whole files here.
 - [ ] P5 one audience default (audience capability), apps only compose.

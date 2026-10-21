@@ -21,7 +21,7 @@
 //   const bytes = await files.chunk(ref, i)                                 // one chunk alone (a seek)
 //   const bytes = await files.range(ref, start, length)                     // a byte range (its chunks alone)
 //   const ref2 = await files.adopt(ref, space)          // a file from another space: listed in this one (then copied)
-//   await files.publicity(refs, space, pub)             // the items holding them are (not) read by anyone now
+//   await files.publicity(refs, space, pub, dom)        // the items holding them are (not) read by anyone now; dom: their domain
 export async function start(ctx) {
   const { core, glue, ask, get: nodeGet } = await ctx.require("node");
   const [storage, space] = await Promise.all(["storage", "space"].map(n => ctx.require(n)));
@@ -128,11 +128,13 @@ export async function start(ctx) {
 
   // PUBLICITY: the items holding these files are read by anyone (or no longer): their rows say so, and a row keyed
   // public that no longer is becomes due (a public key is never taken back, only replaced).
-  async function publicity(refs, sp, pub) {
+  // `dom`: the DOMAIN of the item holding them (`kinds.policyDomain`) — what re-keying asks the space's policy about
+  // (`file-keys`), the same subject as the item's own (10-21: it asked by the row's app name, another vocabulary).
+  async function publicity(refs, sp, pub, dom = null) {
     for (const ref of refs ?? []) {
       if (!ref?.id || (ref.in ?? null) !== inOf(sp)) continue;
       const row = await ctx.optional("files: rowOf", rowOf(sp, ref.id), () => null);
-      if (row && !!row.pub !== !!pub) await setRow(sp, { ...row, pub: !!pub });
+      if (row && (!!row.pub !== !!pub || (dom && row.dom !== dom))) await setRow(sp, { ...row, pub: !!pub, ...(dom ? { dom } : {}) });
     }
   }
 

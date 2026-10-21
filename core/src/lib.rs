@@ -2373,7 +2373,7 @@ mod js {
         let v: Value = serde_json::from_str(input).map_err(|e| JsValue::from_str(&format!("rekey_plan: {e}")))?;
         let strs = |k: &str| -> Vec<String> { v[k].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
         let salt = v["salt"].as_object().map(|o| (o.get("n").and_then(Value::as_i64).unwrap_or(0), o.get("removals").and_then(Value::as_u64).unwrap_or(0) as usize));
-        let rows: Vec<craftworks_rules::rekey::Row> = v["rows"].as_array().map(|a| a.iter().filter_map(|r| Some(craftworks_rules::rekey::Row { id: r["id"].as_str()?.to_string(), n: r["n"].as_i64().unwrap_or(-2), public: r["pub"].as_bool().unwrap_or(false), app: r["app"].as_str().unwrap_or("drive").to_string(), moved: r["moved"].as_u64().unwrap_or(0) })).collect()).unwrap_or_default();
+        let rows: Vec<craftworks_rules::rekey::Row> = v["rows"].as_array().map(|a| a.iter().filter_map(|r| Some(craftworks_rules::rekey::Row { id: r["id"].as_str()?.to_string(), n: r["n"].as_i64().unwrap_or(-2), public: r["pub"].as_bool().unwrap_or(false), app: craftworks_rules::rekey::subject(r["dom"].as_str(), r["app"].as_str()), moved: r["moved"].as_u64().unwrap_or(0) })).collect()).unwrap_or_default();
         let anyone = strs("anyone");
         let p = craftworks_rules::rekey::plan(salt, &strs("out"), &strs("members"), &strs("gone"), &strs("banned"), &rows, &|app| anyone.iter().any(|a| a == app), v["me"].as_str().unwrap_or(""), v["now"].as_u64().unwrap_or(0));
         Ok(json!({ "rotate": p.rotate, "due": p.due.iter().map(|d| json!({ "id": d.id, "pub": d.public, "rank": d.rank, "wait": d.wait, "moved": d.moved })).collect::<Vec<_>>() }).to_string())

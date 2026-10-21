@@ -12,8 +12,22 @@ pub struct Row {
     pub id: String,
     pub n: i64,
     pub public: bool,
+    /// What the space's policy is asked about for it: `subject(dom, app)`.
     pub app: String,
     pub moved: u64,
+}
+
+/// A row's SUBJECT (page and node, the one rule): the DOMAIN of the item holding it (`dom`, written where the item
+/// placed it) — the vocabulary every item's own policy is asked in; a row from before names its app instead (`drive`:
+/// a file's).
+pub fn subject(dom: Option<&str>, app: Option<&str>) -> String {
+    match dom.filter(|d| !d.is_empty()) {
+        Some(d) => d.to_string(),
+        None => match app.unwrap_or("drive") {
+            "drive" => "file".to_string(),
+            a => a.to_string(),
+        },
+    }
 }
 
 /// One row due: what it becomes (public, or sealed under the salt now), this member's turn, the wait from `moved`.
@@ -45,7 +59,7 @@ pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone
     let ranked: Vec<String> = members.iter().filter(|m| !gone.contains(m) && !banned.contains(m)).cloned().collect();
     let mut due = Vec::new();
     for row in rows {
-        let public = row.public && reads_anyone(if row.app == "drive" { "file" } else { &row.app });
+        let public = row.public && reads_anyone(&row.app);
         let is_due = row.n == -2 || (if row.n == -1 { !public } else { row.n < n_now });
         let Ok(rank) = u64::try_from(admission::turn(&row.id, &ranked, me)) else { continue };
         if is_due {
@@ -100,7 +114,19 @@ mod tests {
     use super::*;
 
     fn row(id: &str, n: i64, public: bool) -> Row {
-        Row { id: id.into(), n, public, app: "drive".into(), moved: 0 }
+        Row { id: id.into(), n, public, app: subject(None, Some("drive")), moved: 0 }
+    }
+    #[test]
+    fn a_rows_subject_is_its_items_domain() {
+        assert_eq!(subject(Some("video"), Some("board")), "video", "the item's domain over the app it came from");
+        assert_eq!((subject(None, Some("drive")), subject(None, None), subject(Some(""), Some("board"))), ("file".into(), "file".into(), "board".into()));
+        // A public row, uploaded from Board, held by a VIDEO: the space reads its videos in public, not its posts.
+        let r = Row { id: "v".into(), n: -1, public: true, app: subject(Some("video"), Some("board")), moved: 0 };
+        let reads = |d: &str| d == "video";
+        assert!(plan(None, &[], &["me".into()], &[], &[], std::slice::from_ref(&r), &reads, "me", 0).due.is_empty(), "public as its video is: not due");
+        // CONTROL — asked by its app name, the same row is judged as a post (not public): due to be sealed.
+        let by_app = Row { app: "board".into(), ..r };
+        assert_eq!(plan(None, &[], &["me".into()], &[], &[], &[by_app], &reads, "me", 0).due.len(), 1);
     }
     #[test]
     fn a_key_row_written_reads_back() {

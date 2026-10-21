@@ -42,6 +42,10 @@ impl KeyRow {
     pub fn app(&self) -> &str {
         self.v.get("app").and_then(Value::as_str).unwrap_or("drive")
     }
+    /// What the space's policy is asked about for it (`rules::rekey::subject`: its item's domain, else its app).
+    pub fn subject(&self) -> String {
+        craftworks_rules::rekey::subject(self.v.get("dom").and_then(Value::as_str), self.v.get("app").and_then(Value::as_str))
+    }
     pub fn public(&self) -> bool {
         self.v.get("pub").and_then(Value::as_bool).unwrap_or(false)
     }
@@ -123,7 +127,7 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
     let out: Vec<String> = g.out_acts().iter().filter_map(|a| a["did"].as_str().or_else(|| a["by"].as_str()).map(str::to_string)).collect();
     let rows = key_rows(&files);
     let progress = |id: &str| files.get(format!("p/{id}").as_bytes()).and_then(|p| serde_json::from_slice::<Value>(&p.value).ok()).and_then(|v| v["at"].as_u64()).unwrap_or(0);
-    let input: Vec<craftworks_rules::rekey::Row> = rows.iter().map(|k| craftworks_rules::rekey::Row { id: k.id.clone(), n: k.n(), public: k.public(), app: k.app().to_string(), moved: k.at().max(progress(&k.id)) }).collect();
+    let input: Vec<craftworks_rules::rekey::Row> = rows.iter().map(|k| craftworks_rules::rekey::Row { id: k.id.clone(), n: k.n(), public: k.public(), app: k.subject(), moved: k.at().max(progress(&k.id)) }).collect();
     let reads_anyone = |app: &str| g.effective(app, "read", f64::INFINITY) == "anyone";
     let (gone, bans): (Vec<String>, Vec<String>) = (g.gone.iter().cloned().collect(), g.bans.iter().cloned().collect());
     let p = craftworks_rules::rekey::plan(salt(&files).map(|s| (s.n, s.removals)), &out, members, &gone, &bans, &input, &reads_anyone, me, now_ms);

@@ -805,6 +805,7 @@ export async function start(ctx) {
   //   place     the space it is in (a group too), or null: a person's own
   //   outside   read from outside that space (not a member: its public side only)
   //   public    anyone reads it — a space's item by its room's one rule (`pub`), a person's by not being private
+  //   domain    its kind's policy domain (`kinds.policyDomain`): what a place's policy is asked about for it
   //   table(n)  the CONTAINER of the item's own table `n`, beside it (`content.table`): a space's members table or its
   //             public one (`pub-…`: anyone reads, its members write); a person's public tail, or their own account's
   // A SIBLING TABLE's NAME, made to fit (a table's name is 1 to 32 bytes; a space's own prefix `x<12>-` takes 14): a
@@ -825,16 +826,16 @@ export async function start(ctx) {
         const pub = !!it.pub;
         // (A members table keeps its plain name, as tables kept for items always had; a public one is the space's `pub-`
         // table, the form storage makes public.)
-        return { place: sp, outside: false, public: pub, table: n => ({ messages: pub ? space.tableOf(sp, fitName("pub-", n, 18)) : n, scope: sp }) };
+        return { place: sp, outside: false, public: pub, domain: kinds.policyDomain(it.kind), table: n => ({ messages: pub ? space.tableOf(sp, fitName("pub-", n, 18)) : n, scope: sp }) };
       }
       const desc = await outsideOf(it.ref);
       if (!desc) throw Object.assign(new Error("you are not in that space, and it lists nothing in public"), { kind: "refused-expected" });
-      return { place: desc, outside: true, public: true, table: n => ({ outside: true, messages: space.tableOf(desc, fitName("pub-", n, 18)), scope: desc }) };
+      return { place: desc, outside: true, public: true, domain: kinds.policyDomain(it.kind), table: n => ({ outside: true, messages: space.tableOf(desc, fitName("pub-", n, 18)), scope: desc }) };
     }
     const did = whereOf(it.ref);
     const pub = !it.private;
     const acc = await space.account.strict();
-    return { place: null, outside: false, public: pub, did, table: n => (pub ? { kind: "public", did, name: fitName("", n, 32) } : { messages: fitName("", n, 32), scope: acc }) };
+    return { place: null, outside: false, public: pub, domain: kinds.policyDomain(it.kind), did, table: n => (pub ? { kind: "public", did, name: fitName("", n, 32) } : { messages: fitName("", n, 32), scope: acc }) };
   }
 
   // WHERE AN ITEM's FILES ARE UPLOADED, before it is made (the one rule — every picker, the publisher, Drive ask it,
@@ -853,11 +854,12 @@ export async function start(ctx) {
   }
   // AN ITEM's FILES PUT WHERE IT IS: adopted into its place (a copy under that place's key, where they were elsewhere),
   // public exactly when it is — after every make, edit and move (`submit`, `editItem`), never by a caller.
-  async function placeFiles(refs, place, pub) {
+  // `domain`: its item's (what the place's policy is asked about — re-keying asks the same).
+  async function placeFiles(refs, place, pub, domain = null) {
     if (!refs?.length) return refs ?? [];
     const F = await ctx.require("files");
     const out = await Promise.all(refs.map(f => (f && !f.inline ? F.adopt(f, place, { pub }) : f)));
-    await F.publicity(out, place, pub);
+    await F.publicity(out, place, pub, domain);
     return out;
   }
 
@@ -891,7 +893,7 @@ export async function start(ctx) {
     if (board) {
       const sp = await boardOf(board);
       // Its files where it is (a space's: public exactly when it is).
-      if (sp) files = await placeFiles(files, sp, audience === "public" && (await publicIn(sp, kind)));
+      if (sp) files = await placeFiles(files, sp, audience === "public" && (await publicIn(sp, kind)), kinds.policyDomain(kind));
       // NOT IN IT, where its policy lets anyone post: kept in this person's profile, for that space (`meta.space`),
       // pointed in its bag — one more item of its room (`outsideSource`), the room's one filter deciding.
       if (!sp && outside?.id === board) {
@@ -909,7 +911,7 @@ export async function start(ctx) {
     }
     const self = await me();
     // Its files: yours, public exactly when the post is (one picked while "Everyone" was chosen, posted "Only you": re-keyed).
-    files = await placeFiles(files, null, !only);
+    files = await placeFiles(files, null, !only, kinds.policyDomain(kind));
     const ref = `${self}/${await (await profileRoom(self)).post(kind, body, { title, private: only, files, meta, at })}`;
     // Listed in Discover (its own bag made with it: nobody reading it waits on one that does not exist).
     // UNLISTED (`meta.unlisted`): public — anyone with its link reads it — but never listed in Discover.
@@ -1001,7 +1003,7 @@ export async function start(ctx) {
     // Its files where the item it is about is, public exactly when that item is (what attaches follows its item).
     if (files?.length && !outside) {
       const at = await placeOf(post);
-      if (!at.outside) files = await placeFiles(files, at.place, at.public);
+      if (!at.outside) files = await placeFiles(files, at.place, at.public, at.domain);
     }
     body = String(body ?? "").trim();
     if (!body && !files.length) throw new Error("a comment needs something in it");
@@ -1141,7 +1143,7 @@ export async function start(ctx) {
     // Its files: where it is kept — beside its item (that item's place and publicity), or the place named.
     if (files?.length && place === undefined) {
       const at = await ctx.optional("items: placeOf", placeOf(post), () => null);
-      if (at && !at.outside) files = await placeFiles(files, at.place, at.public);
+      if (at && !at.outside) files = await placeFiles(files, at.place, at.public, at.domain);
     }
     // KEPT ELSEWHERE (`place`: a space, or null — this person's own): about `post` by its full reference.
     if (place !== undefined && !(place && post.startsWith(`space:${place.id}/`))) {
@@ -1189,7 +1191,7 @@ export async function start(ctx) {
     // Its files where it is, public exactly when it is (`placeOf`).
     if (files?.length) {
       const at = await placeOf(ref);
-      if (!at.outside) files = await placeFiles(files, at.place, at.public);
+      if (!at.outside) files = await placeFiles(files, at.place, at.public, at.domain);
     }
     if (ref.startsWith("space:")) {
       const sp = await boardOf(ref);
