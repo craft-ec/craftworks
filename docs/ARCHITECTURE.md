@@ -316,6 +316,12 @@ engine (`roles`) is one; this is the one SUBJECT it is asked about. (Found 10-21
 captions, Drive and the board's public copies each answered it themselves — comments on a members-only item went
 public, a doc made private kept its text public, files of narrower audiences stayed readable by the whole space.)
 
+**Answered or arriving (10-22).** A table read is the place's ANSWER only when every feed it is built on had the node's
+answer (rows, or "not there") — not silence (`storage`: a table's `answered()`, a room's, the feed's). A feed whose
+places have not all answered and read nothing is STILL ARRIVING (`not-yet`), never "nothing here": the shared view
+draws "Still arriving…" and reads again as feeds answer. (Found 10-22, live: a space's board read empty for 15 s, its
+feeds silent, and every app drew it as no posts until the next redraw — the public post on Home all the while.)
+
 **Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
 reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),
 one file each, its fragments indexed by byte range and time; a MANIFEST names them with a poster, a scrub strip

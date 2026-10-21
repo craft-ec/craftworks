@@ -320,6 +320,8 @@ export async function start(ctx) {
       paged,
       reactions: () => reactionsOf(every()),
       settled: Promise.all([t.settled, r?.settled, first]).then(() => {}),
+      // Whether what it lists is the place's ANSWER (every feed answered — `storage`) or still arriving.
+      answered: () => (typeof t.answered === "function" ? t.answered() : true),
       onChange: f => changed.push(f),
       mayRemove: it => it.by === me || (governed && !!r?.can(me, "moderate")),
       // May this person post here now (the app's setting; a conversation: always).

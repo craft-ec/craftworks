@@ -224,7 +224,9 @@ export async function start(ctx) {
       const reply = r => frame.contentWindow?.postMessage({ id, ...r }, "*");
       if (!Object.hasOwn(ops, op)) return reply({ ok: false, error: `no such call: ${op}`, kind: "refused" });
       try {
-        reply({ ok: true, value: await ops[op](...args) });
+        // (A result STILL ARRIVING keeps its mark across: a copy drops an array's own properties.)
+        const value = await ops[op](...args);
+        reply({ ok: true, value, ...(value?.arriving ? { arriving: true } : {}) });
       } catch (err) {
         reply({ ok: false, error: String(err?.message ?? err), kind: err?.kind ?? "refused" });
       }
@@ -359,7 +361,7 @@ export async function start(ctx) {
     // A READ (by its exact name) needs no gesture; EVERY OTHER call — a capability's or a handle's (a step a call gave
     // back, named by its key) — only on the person's gesture. Fails closed: a read not named here is refused until named
     // (a visible refusal), never a write let through because its name was not on a list (fx 10-15: \`delegate\` was not).
-    const READS = new Set(["bagOf", "get", "list", "feed", "placeOf", "uploadPlace", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level", "settled", "ready",
+    const READS = new Set(["bagOf", "get", "list", "feed", "placeOf", "uploadPlace", "readsAnyone", "isPublic", "read", "of", "ofPublic", "find", "mine", "me", "account", "shown", "name", "nameEl", "handle", "card", "levelOf", "publicOf", "devices", "isListed", "view", "attached", "inPlaces", "mayWriteOn", "mayWrite", "spaceOf", "pollView", "proposalView", "inSpace", "people", "personal", "tagsOf", "pageOf", "appOf", "graphOf", "participation", "delegationChains", "onChange", "onChecked", "onDevices", "followable", "credToCite", "policy", "policyIn", "policiesAt", "members", "role", "allowsIn", "can", "config", "enabled", "capabilities", "apps", "tableOf", "owner", "answer", "rows", "held", "loaded", "isNsfw", "spaceIdOf", "linkOf", "refOf", "loginNeeded", "level", "settled", "ready",
       // (10-16, from what the framed apps' code calls — and the methods of what those calls return.)
       "allows", "asked", "askedCodes", "boardOf", "boards", "following", "history", "keepers", "mayOpen", "nsfwShown", "outsideOf", "personalPolicy",
       "pins", "labels", "people", "prefs", "progress", "publicIn", "publicSpace", "publicSpaces", "range", "reaches", "visible", "waiting", "page", "pages",
@@ -514,7 +516,9 @@ export async function start(ctx) {
       await turn();
       if (!Object.hasOwn(ops, op)) return reply({ ok: false, error: `no such call: ${op}`, kind: "refused" });
       try {
-        reply({ ok: true, value: await ops[op](...args) });
+        // (A result STILL ARRIVING keeps its mark across: a copy drops an array's own properties.)
+        const value = await ops[op](...args);
+        reply({ ok: true, value, ...(value?.arriving ? { arriving: true } : {}) });
       } catch (err) {
         reply({ ok: false, error: String(err?.message ?? err), kind: err?.kind ?? "refused" });
       }

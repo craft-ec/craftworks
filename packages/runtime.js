@@ -59,6 +59,8 @@ export function install(ctx, { handled, stateOf, theme }) {
     let running = null;
     let again = false;
     let stopped = false;
+    let retryIn = 0; // (a read still arriving: read again after this long, doubling)
+    let retryT = null;
     const look = async (k, text) => {
       const own = looks[k];
       if (own) return typeof own === "function" ? own() : Object.assign(document.createElement("p"), { className: "none", textContent: own });
@@ -77,11 +79,27 @@ export function install(ctx, { handled, stateOf, theme }) {
         data = await read();
       } catch (e) {
         clearTimeout(slow);
-        const b = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", textContent: "Try again", onclick: () => refresh() });
         seen = null;
+        // STILL ARRIVING (`not-yet`, a transient fault): said so, and READ AGAIN by itself — 2 s, 4 s … at most 60 s —
+        // until it answers (10-22: an arriving read drawn as a failure with "Try again" and never read again: a list
+        // stayed empty beside the same list, drawn again, full).
+        if (e?.kind === "not-yet" || e?.kind === "transient") {
+          retryIn = Math.min(60000, retryIn ? retryIn * 2 : 2000);
+          clearTimeout(retryT);
+          retryT = setTimeout(() => el.isConnected && !stopped && refresh(), retryIn);
+          return el.replaceChildren(await look("notRead", "Still arriving…"));
+        }
+        const b = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", textContent: "Try again", onclick: () => refresh() });
         return el.replaceChildren(await look("failed", ctx.say(e)), b);
       }
       clearTimeout(slow);
+      // WHAT IS READ SO FAR, STILL ARRIVING (`data.arriving`, an array's mark): drawn, and read again by itself the same
+      // way — until it is the whole answer.
+      if (data?.arriving) {
+        retryIn = Math.min(60000, retryIn ? retryIn * 2 : 2000);
+        clearTimeout(retryT);
+        retryT = setTimeout(() => el.isConnected && !stopped && refresh(), retryIn);
+      } else retryIn = 0;
       if (stopped || !el.isConnected) return;
       const st = data?.state?.s;
       const key = (() => {
@@ -95,7 +113,7 @@ export function install(ctx, { handled, stateOf, theme }) {
       if (key === seen) return;
       if (typing()) return void (again = true); // drawn when they leave the field
       seen = key;
-      if (st === "unknown" && empty(data)) return el.replaceChildren(await look("notRead", "Still arriving…"));
+      if ((st === "unknown" || data?.arriving) && empty(data)) return el.replaceChildren(await look("notRead", "Still arriving…"));
       if (st === "failed") return el.replaceChildren(await look("failed", data.state.why ?? "Could not be read"));
       if (empty(data)) return el.replaceChildren(await look("empty", "Nothing here yet."));
       const out = await draw(data);
@@ -113,7 +131,7 @@ export function install(ctx, { handled, stateOf, theme }) {
     const onLeave = () => again && setTimeout(refresh, 0); // (after focus has moved)
     addEventListener("craftworks:data", onData);
     el.addEventListener("focusout", onLeave);
-    const stop = () => ((stopped = true), removeEventListener("craftworks:data", onData), el.removeEventListener("focusout", onLeave));
+    const stop = () => ((stopped = true), clearTimeout(retryT), removeEventListener("craftworks:data", onData), el.removeEventListener("focusout", onLeave));
     refresh();
     return { refresh, stop };
   };

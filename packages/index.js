@@ -102,7 +102,8 @@ export async function start(ctx) {
       const said = await ctx.optional("index: ask", contract(id, what, { frames: () => core.frames_follow(bytes(id))[1], match: x => (x.kind === "got" || x.kind === "get-failed") && x.id === id, ms: WAIT.answer }), () => ({ kind: "silent" }));
       if (said.held || said.kind === "got") return held(address, id);
       if (said.kind === "get-failed" && !madeBags.has(id)) madeBags.add(id), ctx.optional("index: drop", drop(address, new Uint8Array(0), `making ${what}`), () => madeBags.delete(id));
-      if (said.kind === "silent" && strict) throw new Error(`no answer: ${what}`);
+      // (Silence is not "empty": a strict read says it is still arriving — the view's "Still arriving…", R4.)
+      if (said.kind === "silent" && strict) throw Object.assign(new Error(`no answer: ${what}`), { kind: "not-yet" });
       return [];
     })();
     if (!show) return full;
@@ -152,7 +153,7 @@ export async function start(ctx) {
   const refAddress = async ref => Core.inbox_address(new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(`craftworks pointers ${ref}`))));
   const openPointers = async ref => drop(await refAddress(ref), new Uint8Array(0), "making a pointer bag");
   const point = async (ref, item) => drop(await refAddress(ref), enc.encode(JSON.stringify(item)), "pointing");
-  const pointers = async (ref, { show = false } = {}) => parse(await read(await refAddress(ref), `the bag of ${ref}`, { show }));
+  const pointers = async (ref, { show = false, strict = false } = {}) => parse(await read(await refAddress(ref), `the bag of ${ref}`, { show, strict }));
   // A THING's BAG WATCHED: followed (this node subscribed: its copy kept current), `fn` run each time the node says it
   // changed (its `changed`: what a followed contract that is not a tail pushes) — never read again on a timer.
   const watchers = new Map(); // the bag's address as the node names it → [fn]
@@ -247,7 +248,9 @@ export async function start(ctx) {
 
   const SPACES = "discover:spaces";
   const listSpace = desc => point(SPACES, { id: desc.id, name: desc.name, kind: desc.kind, governance: { owner: desc.governance.owner, nonce: desc.governance.nonce } });
-  const spaces = () => pointers(SPACES);
+  // (Strict: the list of public spaces never read as empty when the node has not answered — 10-22, Board's panel drew 0
+  // and kept it while Discover, drawn again, showed 2.)
+  const spaces = () => pointers(SPACES, { strict: true });
   // HEALTH (10-09, owner: "auto report and you keep monitor"): a problem a page meets, written into the day's health
   // bag (`health YYYY-MM-DD`, UTC) — never content: its kind, a short space id, epochs, the reason, the reporting
   // package's version. Once a kind per space per hour from a page. The bag is PUBLIC (anyone writes a report) but each

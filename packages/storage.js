@@ -1472,6 +1472,10 @@ export async function start(ctx) {
           return t.state;
         },
         // R3: the writers whose feed did not open here, GATHERED AGAIN (keys arrived since).
+        // ANSWERED: every feed it is built on had the node's answer (rows, or "not there") — not silence — and none
+        // failed to open. Until then what it holds is NOT "empty": it is still arriving (R4; 10-22, live: a space's
+        // board read empty for 15 s, its feeds silent, and every app drew "no posts").
+        answered: () => failedOwners.size === 0 && all.every(f => (typeof f.answered === "function" ? f.answered() : true)),
         retryFailed: () => {
           for (const o of [...failedOwners]) {
             failedOwners.delete(o);
@@ -1727,7 +1731,8 @@ export async function start(ctx) {
         name,
       );
     const settled = add(owners);
-    return { rows: () => rows, onChange: f => changed.push(f), settled, add };
+    // (Answered: as a merged table's — every feed it is built on answered.)
+    return { rows: () => rows, onChange: f => changed.push(f), settled, add, answered: () => all.every(f => (typeof f.answered === "function" ? f.answered() : true)) };
   }
 
   // THIS NODE's tables opened on this page (the account's, and its own feeds in spaces): what keeping keeps.

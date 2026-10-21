@@ -82,6 +82,7 @@ export const itemRef = (by, id) => `${by}/${id}`;
 
 export async function start(ctx) {
   const [content, index, space, edge] = await Promise.all(["content", "index", "space", "edge"].map(n => ctx.require(n)));
+  const { Fault } = await ctx.require("fault");
   const TAIL = "posts";
   // SIGNALS (`signals`): every interaction with an item — a vote, a view, a save, a share, a tag — kept as a reaction
   // where its giver's vote is, counted, windowed and sealed by the one path below.
@@ -295,6 +296,7 @@ export async function start(ctx) {
         loadAll: () => Promise.all([a.loadAll?.(), b.loadAll?.()]),
         onChange: f => (a.onChange(f), b.onChange(f)),
         settled: Promise.all([a.settled, b.settled]),
+        answered: () => a.answered() && b.answered(),
         sync,
         post: async (kind, body, opts = {}) => {
           await Promise.all([a.settled, b.settled]);
@@ -478,9 +480,12 @@ export async function start(ctx) {
     const votes = tally(r.reactions(), new Map(), since);
     const counts = new Map();
     for (const it of items) if (it.kind === "comment" && it.at >= since) counts.set(postOf(it), (counts.get(postOf(it)) ?? 0) + 1);
-    return items
+    const out = items
       .filter(it => kinds.includes(it.kind))
       .map(it => ({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), pub: it.pub, comments: counts.get(it.id) ?? 0, ...scored(it.id, votes, self), mayRemove: r.mayRemove(it), mayEdit: !!r.mayEdit?.(it) }));
+    // STILL ARRIVING (its room's feeds not all answered — `storage.answered`): said with what it holds, never as all of it.
+    if (typeof r.answered === "function" && !r.answered()) Object.defineProperty(out, "arriving", { value: true });
+    return out;
   }
   // OUTSIDERS' PART in a space (public participation): comments and votes by people not in it — kept in their own
   // profiles (only they write there), each pointed ONCE in the space's bag (`space:<id>`). Counted where the space's
@@ -639,9 +644,15 @@ export async function start(ctx) {
       seen.set(d.id, { id: d.id, name: String(d.name ?? "").slice(0, 100), kind: "server", governance: d.governance });
       candidates.push(seen.get(d.id));
     }
-    const ok = await Promise.all(candidates.map(d => ctx.optional("items: opens", opens(d), () => false)));
-    const shown = candidates.filter((_, i) => ok[i]);
-    const hidden = candidates.length - shown.length;
+    // Each candidate PUBLIC or not — or NOT DECIDED YET (its public acts not read): left out for now, and the list said
+    // to be still ARRIVING (`arriving`: drawn as read so far, read again — never "these are all": 10-22, a list of 0 drawn
+    // beside the same list of 3, its spaces' acts still being read).
+    const UNDECIDED = Symbol("undecided");
+    const ok = await Promise.all(candidates.map(d => opens(d).catch(e => (/not read yet/.test(String(e?.message)) ? UNDECIDED : ctx.optional("items: opens", Promise.reject(e), () => false)))));
+    const shown = candidates.filter((_, i) => ok[i] === true);
+    const undecided = ok.filter(x => x === UNDECIDED).length;
+    if (undecided) Object.defineProperty(shown, "arriving", { value: true });
+    const hidden = candidates.length - shown.length - undecided;
     if (hidden && !leftoverSaid) {
       leftoverSaid = true;
       ctx.background("items: index.health", index.health({ k: "leftover", s: "spaces", why: `${hidden} of ${candidates.length} listed space(s) do not open: left out of Discover`, d: { hidden, of: candidates.length } }));
@@ -665,7 +676,16 @@ export async function start(ctx) {
       Promise.all(
         [...bySpace].map(async ([id, ptrs]) =>
           // A space that does not read: SAID (never a silent empty list).
-          (async () => boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) }))().catch(e => (ctx.failed("posts", e, `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}`), [])),
+          // A space this person is IN: its ONE room (`boardRoom`, opened once a page — the space's own view reads the same
+          // object, so what Home loaded shows there at once: 10-22, the same table opened twice, fetched twice). One they
+          // are not in: the writers its pointers name.
+          (async () => {
+            const mine = await boardOf(id);
+            if (!mine) return boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) });
+            const room = await boardRoom(mine);
+            await room.since?.(since);
+            return boardPostsOf(mine, { kinds: kinds_, window: "held", room });
+          })().catch(e => (ctx.failed("posts", e, `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}`), [])),
         ),
       ).then(x => x.flat()),
       dids.size ? ctx.optional("items: profilePosts", profilePosts([...dids], [], kinds_, since), () => []) : [],
@@ -701,7 +721,12 @@ export async function start(ctx) {
   // in a space; a space's public post on its board and not in the public feed, 10-20.)
   async function fromSource(src, kinds, since, window) {
     // (A board read within the feed's window: what a list shows is that span of the place, never all of it.)
-    const boardsOf = sps => Promise.all(sps.map(sp => ctx.optional("items: boardPosts", boardPosts(sp, { kinds, window }), () => []))).then(x => x.flat());
+    // (A place still arriving marks what is read so: `arriving`, kept through the merge.)
+    const boardsOf = sps => Promise.all(sps.map(sp => ctx.optional("items: boardPosts", boardPosts(sp, { kinds, window }), () => []))).then(parts => {
+      const all = parts.flat();
+      if (parts.some(x => x?.arriving)) Object.defineProperty(all, "arriving", { value: true });
+      return all;
+    });
     if (src.home) return pointedPosts(kinds, since);
     if (src.space) {
       const id = typeof src.space === "string" ? src.space : src.space.id;
@@ -742,6 +767,9 @@ export async function start(ctx) {
     const since = sinceOf(window) ?? 0;
     const t0 = performance.now();
     const read = await fromSource(src, kinds, since, window);
+    // NOTHING READ YET from a place still arriving: said as arriving (the view's "still arriving", drawn again when it
+    // answers) — never "no posts" (R4; 10-22: a space's public post hidden for minutes on its first read).
+    if (read?.arriving && !read.length) throw new Fault("not-yet", "still arriving", { message: "its posts are still arriving" });
     if (performance.now() - t0 > WAIT.hint) ctx.log("posts", { what: `the feed ${Object.keys(src).join("+")}: read slowly`, ms: Math.round(performance.now() - t0) });
     // ONE PIPELINE: each item once, in its window, as the moderation lists this person applies leave it, NSFW and a tag.
     const lists = await (await ctx.require("moderation")).lists();

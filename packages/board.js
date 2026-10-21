@@ -141,9 +141,17 @@ export async function mount(ctx, el) {
     // ONE PUBLIC SPACE open from Discover: its name and how to join (the list of public spaces is the side panel's
     // Discover — `where.spacesPage`, the one list; 10-22: Board kept a second one, by a rule of its own).
     if (discovering()) {
-      if (!w.pub) return [];
-      const d = (await posts.publicSpaces()).find(x => x.id === w.pub) ?? null;
-      return d ? [await publicPanel(d)] : [];
+      // THE LIST: `where.spacesFor` — Discover's own, drawn through the one view (drawn again as it arrives: 10-22, drawn
+      // once from a list not read yet, it stayed empty beside Discover's two).
+      const W = await ctx.require("where");
+      const d = w.pub ? (await W.spacesFor("board")).map(x => x.d).find(x => x.id === w.pub) ?? null : null;
+      const box = h("div", {});
+      ctx.view(box, {
+        read: async () => (await W.spacesFor("board")).map(x => x.d),
+        draw: spaces => h("ul", {}, ...spaces.map(x => h("li", {}, h("a", { href: `#/s/${x.id}/board`, textContent: space.shown(x) })))),
+        looks: { empty: () => h("p", { textContent: "No public space has Board yet." }) },
+      });
+      return [d ? await publicPanel(d) : null, h("div", { className: "panel" }, h("h3", { textContent: "Spaces with Board" }), box)].filter(Boolean);
     }
     const create = h("a", { className: "go", href: `${base()}/submit`, textContent: "Create post" });
     if (w.feed) return [h("div", { className: "panel" }, h("h3", { textContent: "Feed" }), h("p", { textContent: "Your spaces · following · friends" }), create)];

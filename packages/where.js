@@ -167,6 +167,17 @@ export async function start(ctx) {
     }
     return false;
   }
+  // THE PUBLIC SPACES AN APP OPENS IN (the one list — Discover's page and any panel listing them draw it: 10-22, Board's
+  // panel and Discover each kept a list of their own): `[{ d, pr }]`.
+  async function spacesFor(app) {
+    const all = await items.publicSpaces();
+    const ok = await Promise.all(all.map(d => ctx.optional("where: opens from outside", opensFromOutside(d, app), () => false)));
+    const prs = await Promise.all(all.map((d, i) => (ok[i] ? roles.ofPublic.strict(d) : null)));
+    const out = all.map((d, i) => ok[i] && { d, pr: prs[i] }).filter(Boolean);
+    // (Still arriving as the list it is drawn from is: some spaces not decided yet.)
+    if (all.arriving) Object.defineProperty(out, "arriving", { value: true });
+    return out;
+  }
   // AN APP's DISCOVER PAGE (`#/discover/<app>/spaces`): the public spaces that have this app on — each opened, joined
   // or followed there (`join-button`). The same page for every app (the loader draws it in the app's place).
   async function spacesPage(host, app) {
@@ -187,11 +198,8 @@ export async function start(ctx) {
     host.replaceChildren(css, box);
     ctx.view(box, {
       read: async () => {
-        const all = await items.publicSpaces();
-        // (Listed as it would open: `opensFromOutside`, the one rule.)
-        const ok = await Promise.all(all.map(d => ctx.optional("where: opens from outside", opensFromOutside(d, app), () => false)));
-        const prs = await Promise.all(all.map((d, i) => (ok[i] ? roles.ofPublic.strict(d) : null)));
-        return all.map((d, i) => ok[i] && { d, pr: prs[i] }).filter(Boolean);
+        // (The one list: `spacesFor`.)
+        return spacesFor(app);
       },
       empty: list => !list.length,
       draw: async list => {
@@ -227,5 +235,5 @@ export async function start(ctx) {
     addEventListener("craftworks:route", moved);
     return () => removeEventListener("craftworks:route", moved); // (stop: an app mounted again in the same element)
   }
-  return { of, menu, spacesPage, opensFromOutside, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
+  return { of, menu, spacesPage, spacesFor, opensFromOutside, personOf, onMove, key, placeKey: () => `${ctx.space ?? ""}|${personOf() ?? ""}` };
 }
