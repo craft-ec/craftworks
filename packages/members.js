@@ -341,6 +341,8 @@ export async function start(ctx) {
         }),
       placed: () => !!g?.placed(),
       members: () => (g ? [...g.members()] : []),
+      // The generation NUMBERS this tree reaches (no secret): what `keepGenerations` hands the identity.
+      generationNumbers: () => (g ? g.generations().map(([n]) => String(n)) : []),
       me,
     };
     groups.set(sp.id, handle);

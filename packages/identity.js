@@ -181,7 +181,11 @@ export async function start(ctx) {
     mlsLoad: (space = NONE) => call(core.frames_mls_load(space), "reading the group's keys"),
     // The space's EARLIER epochs' secrets held here (below `below`): `[[epoch, secretHex]…]` — for a member let in later.
     epochSecrets: (space, below) => call(core.frames_epoch_secrets(space, below), "the space's earlier keys").then(r => r?.epochs ?? []),
-    epochKeep: (epoch, secret, space = NONE) => call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key").then(keysChanged(space)),
+    // (A REFUSAL is an answer here, not a throw: said as a failure — 10-22, a key generation refused and counted as kept.)
+    epochKeep: (epoch, secret, space = NONE) =>
+      call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key").then(r =>
+        r?.refused ? Promise.reject(Object.assign(new Error(`keeping epoch ${epoch}'s key: refused (${typeof r.refused === "string" ? r.refused : JSON.stringify(r.refused)})`), { kind: "refused" })) : keysChanged(space)(r),
+      ),
     // A table's key in an MLS epoch (-1: the newest this node holds).
     tableKeyAt: (table, epoch = -1, space = NONE) => call(core.frames_table_key_at(table, epoch, space), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),

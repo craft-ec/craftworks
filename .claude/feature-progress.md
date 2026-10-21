@@ -2940,3 +2940,6 @@ Next: Blog stepped up (plan above); K8 (MLS beside the tree caused the removal b
 
 ## 10-22: v414 RELEASED (siteV 6919fcaacb8d, main 7a88c30) — public spaces one answer, Settings read whole, app settings in the Space app, x closes the dock entry, one side panel per app. Gate 3/3 from v413.
 Next (owner to choose): K8 groundwork — new spaces still seal with MLS epochs (fx: circle epoch 1, a space 1→2 on removal), the K4 write switch to tree generations not in effect; measure before removing MLS. Or Blog.
+
+## 10-22: v415 RELEASED (siteV a117e034b3b0, main 1e8d67d): reads answered or arriving (storage→room→feed; shared view re-reads), readsAnyone/isPublic reads at the frame bridge (Board panel 3→0), one room per space (Home and the space view share it), Board panel = where.spacesFor.
+K4 measured (fx 10-22): the tree has NO generations (g.generations() empty) — no key change is ever made, so storage keeps sealing with MLS; and A keeps a stale cached "no member yet" for B (card has it 40 s later) so B is never added. identity.epochKeep now rejects a refusal (was counted as kept).
