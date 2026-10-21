@@ -2937,3 +2937,6 @@ Gate ×3 from v412 PASS (retired yes, delegate failures 0); live findable 1508/1
 0; Wren moved to the new build (6dP6Ss and 2dkD91 retired), wrote and read back. Carries: the removal security fix,
 one placement (P1–P5, C1–C3), Sheets/Slides, one feed + side panel, layout, grouped apps, dock.
 Next: Blog stepped up (plan above); K8 (MLS beside the tree caused the removal bug); key-tree short-read test owed.
+
+## 10-22: v414 RELEASED (siteV 6919fcaacb8d, main 7a88c30) — public spaces one answer, Settings read whole, app settings in the Space app, x closes the dock entry, one side panel per app. Gate 3/3 from v413.
+Next (owner to choose): K8 groundwork — new spaces still seal with MLS epochs (fx: circle epoch 1, a space 1→2 on removal), the K4 write switch to tree generations not in effect; measure before removing MLS. Or Blog.
