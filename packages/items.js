@@ -325,23 +325,7 @@ export async function start(ctx) {
   }
   // A PUBLIC SPACE read as its pointers name it — never every member: the room over exactly the writers of these items
   // and those who answered them (each item's own bag), and only those the space's roles count.
-  async function pointedRoom(desc, ptrs) {
-    const answered = (await Promise.all(ptrs.map(p => answerers(p.ref)))).flatMap(s => [...s]);
-    const writers = [...new Set([...ptrs.map(p => p.w).filter(Boolean), ...answered])];
-    const b = await content.in({ ...space.board(desc, { outside: true }), writers }, { extra: outsideSource(desc) });
-    return { ...b, list: () => b.list().map(x => ({ ...x, pub: true })), mayRemove: () => false };
-  }
-  // The pointer of ONE item seen from outside: its month from its id's time (`t` ‖ ms base 36), its domain's bags.
-  async function pointerOf(ref) {
-    const m = /\/t([0-9a-z]{9})[0-9a-f]{8}$/.exec(ref);
-    if (!m) return null;
-    const at = parseInt(m[1], 36);
-    for (const d of new Set([...TOP].map(domainOf))) {
-      const p = (await index.discoverPointers(d, [index.monthOf(at)])).find(x => x?.ref === ref);
-      if (p) return p;
-    }
-    return null;
-  }
+
   // A public space's ROOM from outside: as its pointers name it (`ptrs`), or — none given — every member (`roles`).
   const outsideRoom = desc =>
     opened(`outside:${desc.id}`, () => content.in(space.board(desc, { outside: true }), { extra: outsideSource(desc) }).then(b => ({ ...b, list: () => b.list().map(x => ({ ...x, pub: true })), mayRemove: () => false })));
@@ -467,6 +451,18 @@ export async function start(ctx) {
   // when it answers — the lists drawn again on `onChange`).
   const { WAIT } = await ctx.require("node");
   const boardPosts = (sp, opts = {}) => boardPostsOf(sp, opts);
+  // A SPACE's ITEMS — THE ONE READ (Home's and the space's own page, every feed): its one room (opened once a page), what
+  // it already holds given AT ONCE, what is newer fetched behind it (drawn again when it lands — `craftworks:data`);
+  // waited for only when it holds nothing yet. (10-22, live: Home drew a space's post at once, the space's own page
+  // made it wait on a fresh load every time it opened — two reads of one room.)
+  // `outside`: a space read from outside (not a member): its ONE outside room (`outsideRoom`, opened once a page, its
+  // public writers) — the same read, never a fresh one per call.
+  async function roomItems(sp, kinds, since, { outside = false } = {}) {
+    const room = await (outside ? outsideRoom(sp) : boardRoom(sp));
+    const fetched = ctx.background("items: a space's newer items", since ? (room.since?.(since) ?? Promise.resolve()) : (room.loadAll?.() ?? Promise.resolve()));
+    if (!room.list().length) await fetched;
+    return boardPostsOf(sp, { kinds, window: "held", room, outside });
+  }
   async function boardPostsOf(sp, { outside = false, kinds = ["post"], window = "all", room = null } = {}) {
     const r = room ?? (await (outside ? outsideRoom(sp) : boardRoom(sp)));
     // `window: "held"`: what is read already (a caller read its own span: one item and what came after it).
@@ -681,10 +677,7 @@ export async function start(ctx) {
           // are not in: the writers its pointers name.
           (async () => {
             const mine = await boardOf(id);
-            if (!mine) return boardPostsOf(spaces.get(id), { outside: true, kinds: kinds_, room: await pointedRoom(spaces.get(id), ptrs) });
-            const room = await boardRoom(mine);
-            await room.since?.(since);
-            return boardPostsOf(mine, { kinds: kinds_, window: "held", room });
+            return mine ? roomItems(mine, kinds_, since) : roomItems(spaces.get(id), kinds_, since, { outside: true });
           })().catch(e => (ctx.failed("posts", e, `Discover: ${spaces.get(id).name ?? id.slice(0, 8)} not read: ${e?.message ?? e}`), [])),
         ),
       ).then(x => x.flat()),
@@ -722,7 +715,7 @@ export async function start(ctx) {
   async function fromSource(src, kinds, since, window) {
     // (A board read within the feed's window: what a list shows is that span of the place, never all of it.)
     // (A place still arriving marks what is read so: `arriving`, kept through the merge.)
-    const boardsOf = sps => Promise.all(sps.map(sp => ctx.optional("items: boardPosts", boardPosts(sp, { kinds, window }), () => []))).then(parts => {
+    const boardsOf = sps => Promise.all(sps.map(sp => ctx.optional("items: a space's items", roomItems(sp, kinds, since), () => []))).then(parts => {
       const all = parts.flat();
       if (parts.some(x => x?.arriving)) Object.defineProperty(all, "arriving", { value: true });
       return all;
@@ -797,23 +790,18 @@ export async function start(ctx) {
       const sid = ref.slice(6, ref.indexOf("/"));
       const sp = outside ?? (await space.mine.strict()).find(s => s.id === sid) ?? null;
       if (!sp) return null;
-      // ONE item: its place read from its time on (it, its votes and comments) — never the place whole.
-      if (!outside) await sinceItem(await boardRoom(sp), idOf(ref));
-      // From outside: read where its pointer names (its writer and who answered it), never every member.
-      const p = outside ? await pointerOf(ref) : null;
-      const room = p ? await pointedRoom(outside, [p]) : null;
-      const find = async () => (await boardPosts(sp, { outside: !!outside, kinds: [...TOP], window: outside ? "all" : "held", room })).find(x => x.ref === ref) ?? null;
+      // ONE item: through the one read (`roomItems`) — what its room holds at once, its place read from the item's own
+      // time on (it, its votes and comments; never the place whole).
+      const at = /^t([0-9a-z]{9})/.exec(idOf(ref)) ? parseInt(idOf(ref).slice(1, 10), 36) : 0;
+      const find = async () => (await roomItems(sp, [...TOP], at, { outside: !!outside })).find(x => x.ref === ref) ?? null;
       const it = await find();
-      if (it || outside) return it;
-      // NOT FOUND YET is not "not there" (R4: nothing from a short read): its place's writers each tried once
+      if (it) return it;
+      // NOT FOUND YET is not "not there" (R4: nothing from a short read): its room's writers each tried once
       // (`settled` — a writer's feed is found as its space is read: 10-20, a shared document opened at once read as
-      // gone), then looked for again.
-      const r = await boardRoom(sp);
+      // gone), then looked for again until it shows or 15 s have passed — then "not there".
+      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
       await r.settled;
-      // …and its writers are found as the place is read (a shared item's maker's feed: seconds), so it is looked for
-      // until it shows or 15 s have passed — then "not there".
       for (const end = Date.now() + 15000; Date.now() < end; await new Promise(x => setTimeout(x, 1000))) {
-        await sinceItem(r, idOf(ref));
         const got = await find();
         if (got) return got;
       }
@@ -1036,8 +1024,7 @@ export async function start(ctx) {
     if (ref.startsWith("space:")) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
-      const ptr = outside ? await pointerOf(ref) : null;
-      const r = await (outside ? (ptr ? pointedRoom(sp, [ptr]) : outsideRoom(sp)) : boardRoom(sp));
+      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
       // A thread's comments are all made AFTER its post: the place read from the post's time on — complete, whatever
       // the list's window, and nothing older.
       if (!outside) await sinceItem(r, idOf(ref));
@@ -1284,8 +1271,7 @@ export async function start(ctx) {
     if (ref.startsWith("space:")) {
       const sp = outside ?? (await boardOf(ref));
       if (!sp) return [];
-      const ptr = outside ? await pointerOf(ref) : null;
-      const r = await (outside ? (ptr ? pointedRoom(sp, [ptr]) : outsideRoom(sp)) : boardRoom(sp));
+      const r = await (outside ? outsideRoom(sp) : boardRoom(sp));
       // What attaches to an item is made AFTER it: read from its time on — never bounded by a list's window.
       if (!outside) await sinceItem(r, idOf(ref));
       for (const it of r.list()) if (it.kind === kind && it.in === idOf(ref)) out.push({ ...shape(it, `space:${sp.id}/${it.id}`, { id: sp.id, name: sp.name }), mayRemove: r.mayRemove(it) });
@@ -1357,7 +1343,7 @@ export async function start(ctx) {
     const read = async sp => {
       if (sp.outside) return pointedPosts(ks, 0, { space: sp });
       if (after) await sinceItem(await boardRoom(sp), after);
-      return boardPosts(sp, { kinds: ks, window: after ? "held" : "all" });
+      return after ? boardPosts(sp, { kinds: ks, window: "held" }) : roomItems(sp, ks, 0);
     };
     const [a, b] = await Promise.all([Promise.all(spaces.map(sp => ctx.optional("items: read", read(sp), () => []))), ctx.optional("items: profilePosts", profilePosts(dids, [], ks, 0, { withVotes }), () => [])]);
     // (An item moved elsewhere left a pointer here: not listed — it is listed where it is.)
