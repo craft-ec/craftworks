@@ -2931,3 +2931,9 @@ account, which never rotates); a space made public is listed only by the Setting
       carried; a real move (group, circle) leaves a POINTER (meta.movedTo, items.get follows; lists hide it) and the new
       item's `was` brings its old thread. share's own placeOf (which misread circles) folded into items.placeOf.
       fx: identity 13/13, regressions PASS.
+
+## 10-22: v413 RELEASED (siteV 1e48716c61c2, identity 6a1d4a95…, main e1d1b3c)
+Gate ×3 from v412 PASS (retired yes, delegate failures 0); live findable 1508/1508; owner node 1509/1509, unrebuildable
+0; Wren moved to the new build (6dP6Ss and 2dkD91 retired), wrote and read back. Carries: the removal security fix,
+one placement (P1–P5, C1–C3), Sheets/Slides, one feed + side panel, layout, grouped apps, dock.
+Next: Blog stepped up (plan above); K8 (MLS beside the tree caused the removal bug); key-tree short-read test owed.
