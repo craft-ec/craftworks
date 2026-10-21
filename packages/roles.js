@@ -85,6 +85,26 @@ export async function start(ctx) {
   const outside = new Map();
   // (A view that failed to open is not kept: R4.)
   const ofPublic = desc => ctx.cache(outside, desc.id, () => open(desc, { outside: true }));
+  // A PUBLIC SPACE LISTED: its acts published (the roster with them) and the space in Discover's list (`index`).
+  async function listed(r) {
+    await r.publish();
+    await (await ctx.require("index")).listSpace(r.space);
+    return true;
+  }
+  // KEPT TRUE (the owner's page, every hour): each space they own whose settings make it public (`isPublic`), listed —
+  // a setting made on another device, or by code that never asked (the act's own hook lists it at once).
+  async function keepListed() {
+    const me = await space.me();
+    if (!me) return 0;
+    let n = 0;
+    for (const sp of (await space.mine.strict()).filter(x => x.kind === "server" && !space.isGroup(x))) {
+      const r = await of(sp);
+      await r.settled;
+      if (r.owner === me && r.isPublic()) (await listed(r), (n += 1));
+    }
+    return n;
+  }
+  ctx.background("roles: lifecycle", ctx.require("lifecycle").then(L => L.job("public spaces listed", { every: 3600e3, delay: 120e3, needs: async () => !!(await space.me()) || "nobody is logged in", run: () => keepListed() })));
   function of(sp) {
     // A space READ FROM OUTSIDE (`where`'s, `outside: true`: its public description): its public acts only.
     if (sp.outside) return ofPublic(sp);
@@ -466,6 +486,10 @@ export async function start(ctx) {
         // in while no page ran: the act says when); and the acts it builds on.
         await (toPublic ? pubActs : sealedActs).put(newId(), JSON.stringify(stamp(a)));
         if (toPublic) await listActWriter();
+        // MADE PUBLIC (anyone may read, join or ask — `gov::is_public`'s own terms): its acts published and the space
+        // LISTED in Discover, here, by the act — whichever page or code made it (10-21: only Settings' handler listed it).
+        if (a.act === "policy" && (a.action === "read" || a.action === "join") && ["anyone", "ask"].includes(a.who) && role(me.id) === "owner")
+          ctx.background("roles: a space made public, listed", listed(r));
       },
       grant: (did, to) => r.act({ act: "grant", did, role: to }),
       onChange: f => changed.push(f),

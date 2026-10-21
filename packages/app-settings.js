@@ -85,8 +85,8 @@ export async function start(ctx) {
     return true;
   }
 
-  // EVERY APP's SETTINGS — its fields, what saving one does beyond the act (a space made public: listed).
-  const madePublic = async (r, sp) => (await ctx.background("app-settings: r.publish", r.publish()), await (await ctx.require("index")).listSpace(sp));
+  // EVERY APP's SETTINGS — its fields, what saving one does beyond the act (a space made public is listed by the act
+  // itself: `roles`).
   // A SIGNAL's own rule at a path (`signals`: react, save, share, tag — each, unset, as its parent): every settings
   // section lists them, so a new signal shows up here by itself.
   const SIGNAL_FIELDS = path => S.interactions().map(a => ({ action: a.action, path, label: a.label.replace(/^Who may /, "").replace(/^./, c => c.toUpperCase()) }));
@@ -111,7 +111,6 @@ export async function start(ctx) {
       saved: async (changed, r, sp) => {
         // Public reading, the open door or requests: seen from outside (its requests bag made where people may ask).
         if (changed["|join"] === "ask") await (await ctx.require("index")).openRequests(await (await ctx.require("conversation")).bagOf("open", sp.id));
-        if (changed["|read"] === "anyone" || ["anyone", "ask"].includes(changed["|join"])) await madePublic(r, sp);
       },
     },
     // AN APP's OWN SETTINGS only (ARCHITECTURE §1): what the app is and does — Board's rules, Blog's approval, Chat's
@@ -212,7 +211,6 @@ export async function start(ctx) {
     SECTIONS[`cap:${cap}`] ??= {
       title,
       fields: [...["read", "post", "edit"].map(action => ({ action, path: cap, label: action[0].toUpperCase() + action.slice(1) })), ...SIGNAL_FIELDS(cap)],
-      saved: async (c, rr, s_) => c[`${cap}|read`] === "anyone" && madePublic(rr, s_),
     };
     return section(sp, `cap:${cap}`, r, me);
   }

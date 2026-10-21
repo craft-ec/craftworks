@@ -634,9 +634,8 @@ export async function start(ctx) {
   async function setJoin(sp, how) {
     const r = await (await ctx.require("roles")).of.strict(sp);
     if (how === "open" || how === "ask") await index.openRequests(openCode(sp.id));
+    // (Open or asked: listed in Discover, its acts published — by the act itself, `roles`.)
     await r.act({ act: "policy", path: "", action: "join", who: how === "open" ? "anyone" : how === "ask" ? "ask" : "members" });
-    // Open or asked: listed in Discover, its acts published (who is in, how to join).
-    if (how !== "members") (await ctx.background("conversation: r.publish", r.publish()), await index.listSpace(sp));
   }
 
   // A SERVER's CHANNELS: ITEMS of kind `channel` in the space (`items`: title its name, `meta.cid` its messages'
