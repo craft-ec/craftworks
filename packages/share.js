@@ -46,7 +46,8 @@ export async function start(ctx) {
   };
   const isShared = async ref => !!(await groupOf(ref));
   // ITS SPACE (a space's item: its group's key names it, `item:<space>/<id>` — what an invite carries; yours: none).
-  const parentId = g => /^item:([0-9a-f]{64})\//.exec(g?.group ?? "")?.[1] ?? null;
+  // (The one parser of a group's key: `items.homeIdOf`.)
+  const parentId = g => (String(g?.group ?? "").startsWith(KEY) ? items.homeIdOf(g.group) : null);
   const parentOf = async g => {
     const id = parentId(g);
     return id ? ((await space.mine.strict()).find(s => s.id === id) ?? null) : null;
@@ -126,31 +127,19 @@ export async function start(ctx) {
     // A DOCUMENT's text is its own table's (`codoc`): taken whole before it moves, its new table's first row after.
     const codoc = (await ctx.require("kinds")).coedited(it.kind) ? await ctx.require("codoc") : null;
     const snap = codoc ? await codoc.snapshot(it.ref) : null;
-    const moved = await items.submit({ board: at.board, title: it.title, body: it.body, kind: it.kind, files: fs, meta: at.meta, at: it.at, audience: at.audience });
+    // (It remembers where it was — `was`: its thread shows what was said there.)
+    const moved = await items.submit({ board: at.board, title: it.title, body: it.body, kind: it.kind, files: fs, meta: { ...(at.meta ?? {}), was: [...(it.meta?.was ?? []), it.ref].slice(-4) }, at: it.at, audience: at.audience });
     if (codoc) await codoc.seed(moved, snap);
     // (Its changes taken back where it was: what was public there is not left public.)
     if (codoc) await codoc.clear(it.ref);
-    await items.remove(it.ref);
+    // WHERE IT WAS, A POINTER (its author's row): no content kept there, only where it went (`items.get` follows it —
+    // saves, bundles and links still open it). Another's row (an admin's move): removed, as before.
+    if (it.by === (await space.me.strict())) await items.editItem(it.ref, "", { title: "", files: [], meta: { movedTo: moved } });
+    else await items.remove(it.ref);
     return moved;
   }
   const moveTo = (it, to, meta = it.meta) => relocate(it, { board: to?.id ?? null, audience: to ? "members" : "private", meta });
 
-  // WHERE AN ITEM IS and WHO SEES IT, as the audience picker names it: its HOME (the space it belongs to; yours: null)
-  // and its audience there — a private item's group, a circle, a narrower audience's group each read back to theirs.
-  async function placeOf(it) {
-    const id = spaceOf(it.ref);
-    if (!id) return { home: null, audience: it.private ? "private" : "public" };
-    const all = await space.mine.strict();
-    const sp = all.find(s => s.id === id);
-    if (!sp) throw new Error("you are not in that item's space");
-    const g = sp.group ?? "";
-    const find = pid => all.find(s => s.id === pid) ?? null;
-    if (g.startsWith("circle:")) return { home: null, audience: g.slice(7) };
-    if (g.startsWith("level:")) return { home: null, audience: "public", level: true };
-    if (g.startsWith("audience:")) return { home: find(/^audience:([0-9a-f]{64})\//.exec(g)?.[1]), audience: it.meta?.aud ?? "members" };
-    if (g.startsWith(KEY)) return { home: parentId(sp) ? find(parentId(sp)) : null, audience: "private", group: sp };
-    return { home: sp, audience: it.pub ? "public" : "members" };
-  }
   // WHO SEES IT, changed after it was made (owner 10-20: "after docs created, there is no way to change its policy"):
   // its author, or its space's admins; the item moved to that audience where it is. One shared with chosen people
   // keeps them (its sharing is changed in Share: the people taken off first).
@@ -158,7 +147,8 @@ export async function start(ctx) {
     const me = await space.me.strict();
     const it = await items.get.strict(ref);
     if (!it) throw new Error("no such item");
-    const at = await placeOf(it);
+    // (Where it is and who sees it: `items.placeOf`, the one answer.)
+    const at = await items.placeOf(it);
     if (at.level) throw new Error("a level's item: who sees it is its level");
     if (at.audience === audience) return ref;
     let admin = false;
@@ -168,8 +158,16 @@ export async function start(ctx) {
     }
     if (it.by !== me && !admin) throw new Error(at.home ? "only its author or the space's admins change who sees it" : "only your own items");
     if (at.group && ((await people(ref)) ?? []).length > 1) throw new Error("it is shared with chosen people: take them off in Share first");
+    // THE SAME PLACE (a space's anyone ↔ members, yours public ↔ private): the SAME item, changed where it is — its
+    // id kept, so its comments, votes, saves and links stay with it (10-21); a document's changes carried across.
+    const codoc = (await ctx.require("kinds")).coedited(it.kind) ? await ctx.require("codoc") : null;
+    const carry = codoc ? { before: async () => { const snap = await codoc.snapshot(ref); await codoc.clear(ref); return snap; }, after: snap => codoc.seed(ref, snap) } : {};
+    const here = await items.setAudienceHere(ref, audience, carry);
+    if (here) return here;
+    // ANOTHER PLACE (a group, a circle, a role's): moved — the old one left pointing at the new (`relocate`).
     return relocate(it, { board: at.home?.id ?? null, audience });
   }
+
 
   async function people(ref) {
     const sp = await groupOf(ref);
@@ -271,13 +269,13 @@ export async function start(ctx) {
     const whoBox = h("div", { style: "display:grid;gap:6px" });
     const drawWho = async () => {
       const it = await items.get.strict(ref);
-      const at = it ? await placeOf(it) : null;
+      const at = it ? await items.placeOf(it) : null;
       if (!it || at.level || (at.group && ((await people(ref)) ?? []).length > 1)) return whoBox.replaceChildren();
       const pick = await (await ctx.require("audience")).picker({ space: at.home, kind: it.kind, initial: at.audience });
       const save = h("button", { type: "button", className: "cw-btn", textContent: "Change", onclick: async () => {
         save.disabled = true;
-        said.textContent = "Moving it…";
-        await setAudience(ref, pick.value()).then(at2 => ((ref = at2), (said.textContent = "Who sees it: changed"), follow(first, at2), drawWho(), draw()), fail);
+        said.textContent = "Changing who sees it…";
+        await setAudience(ref, pick.value()).then(at2 => (at2 !== ref && follow(ref, at2), (ref = at2), (said.textContent = "Who sees it: changed"), drawWho(), draw()), fail);
         save.disabled = false;
       } });
       whoBox.replaceChildren(h("h4", { textContent: "Who sees it", style: "margin:0" }), pick.el, save);

@@ -335,9 +335,11 @@ export async function start(ctx) {
       mayEdit,
       postingRule: () => (governed && app ? r.policy(app, "post") : "members"),
       // `at`: when it was made (a note brought over from before: its own time).
-      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null, aud = null, at = Date.now() } = {}) {
+      // `id`: its own, kept (an item changing table in its place — yours made public or private — keeps its identity,
+      // so what attaches to it, saves and links still find it).
+      async post(kind, body, { re = null, title = null, in: where = null, files = [], meta = null, aud = null, at = Date.now(), id: keep = null } = {}) {
         if (outside) throw new Error("only the space's members post here");
-        const id = newId(at);
+        const id = keep ?? newId(at);
         await t.put(id, JSON.stringify({ kind, body, at, by: me, ...(re ? { re } : {}), ...(title ? { title } : {}), ...(where ? { in: where } : {}), ...(files.length ? { files } : {}), ...(meta && Object.keys(meta).length ? { meta } : {}), ...(aud ? { aud } : {}) }));
         return id;
       },
@@ -350,8 +352,10 @@ export async function start(ctx) {
         if (on) await t.put(key, JSON.stringify({ kind: "reaction", item: id, emoji, at: Date.now(), by: me, ...(cred ? { meta: { cred } } : {}) }));
         else await t.remove(key);
       },
-      async edit(id, body, { files = null, meta = null, title = undefined } = {}) {
+      // `aud`: who sees it changed in place (`"members"`, or null: as its place reads) — its id kept.
+      async edit(id, body, { files = null, meta = null, title = undefined, aud = undefined } = {}) {
         const it = mine(id);
+        if (aud !== undefined) it.aud = aud;
         // The version it replaces written out first (`storage.flushOwn`): kept in its history, however soon the edit.
         await (t.flushOwn ?? t.flushNow)?.().catch(e => ctx.failed("history", e, `before an edit: ${e?.message ?? e}`));
         const fs = files ?? it.files ?? [];

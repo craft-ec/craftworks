@@ -2916,3 +2916,18 @@ REMAINING from the audit (not built): what is attached is LEFT BEHIND on a move 
 pointers, bundle members, wiki sections, ballots, captions) — the fix is an item keeping its id when its audience
 changes (ARCHITECTURE §7 one placement, point 3); circle file keys never rotate on unfriend (file-keys passes the
 account, which never rotates); a space made public is listed only by the Settings page's handler, not the act.
+
+## 10-22: C1–C3 (owner: "continue to complete all")
+- [x] C1 a space made public is listed by its act (roles.act + an hourly owner job; Settings/join handler copies gone).
+- [x] SECURITY (found finishing C2): a member REMOVED from any BeeKEM-tree space read on — content is still sealed by
+      the MLS group (until K8) and the node's follower, for a tree space, followed the tree only (upkeep.rs: the tree
+      branch never reached the MLS catch-up). Fix: Round.mls_owed — next_space runs the MLS follow-out after the tree.
+      fx: ordinary space, matched epochs 1/1 → 2 in 20 s, B reads nothing after (before: 1 → 1 in 300 s, B read on);
+      circle unfriend: B reads nothing after. Likely LIVE in v412 → release soon (identity build changes: gate).
+- [x] C2 circle file keys: files land in the circle (P3); file-keys rotates only once no one put out holds a place in
+      the key group (it rotated under an epoch the removed still held).
+- [x] C3 an item keeps its identity: an audience of the same place is changed WHERE IT IS (items.setAudienceHere —
+      space anyone↔members by the row's aud; yours public↔private by moving the row under its own id), its doc text
+      carried; a real move (group, circle) leaves a POINTER (meta.movedTo, items.get follows; lists hide it) and the new
+      item's `was` brings its old thread. share's own placeOf (which misread circles) folded into items.placeOf.
+      fx: identity 13/13, regressions PASS.

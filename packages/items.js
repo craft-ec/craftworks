@@ -378,6 +378,18 @@ export async function start(ctx) {
         setFiles: async (id, files) => (await roomOf(id)).setFiles(id, files),
         editFull: async (id, body, o) => (await roomOf(id)).edit(id, body, o),
         history: async id => (await roomOf(id)).history(id),
+        // MADE PRIVATE or PUBLIC, the same item: its row moved between this person's public posts and their private
+        // ones under its OWN id (what attaches to it, saves and links still find it — 10-21: a move made it a new item).
+        setPrivate: async (id, on) => {
+          await privReady;
+          const from = isPrivate(id) ? priv : pub;
+          const to = on ? priv : pub;
+          if (from === to) return;
+          const it = from.list().find(x => x.id === id);
+          if (!it) throw new Error("that item is not yours here");
+          await to.post(it.kind, it.body, { id, at: it.at, ...(it.title ? { title: it.title } : {}), ...(it.re ? { re: it.re } : {}), ...(it.in ? { in: it.in } : {}), files: it.files ?? [], meta: it.meta ?? null });
+          await from.remove(id);
+        },
       };
     });
   // Each read bounded where it is read (`storage`): a silent profile shows as held, never waited on.
@@ -731,7 +743,7 @@ export async function start(ctx) {
     // ONE PIPELINE: each item once, in its window, as the moderation lists this person applies leave it, NSFW and a tag.
     const lists = await (await ctx.require("moderation")).lists();
     const once = new Set();
-    const kept = read.filter(p => p && !once.has(p.ref) && once.add(p.ref) && (since === 0 || p.at >= since) && !lists.flagged({ by: p.by, id: p.id, ref: p.ref, space: p.board?.id }));
+    const kept = read.filter(p => p && !p.meta?.movedTo && !once.has(p.ref) && once.add(p.ref) && (since === 0 || p.at >= since) && !lists.flagged({ by: p.by, id: p.id, ref: p.ref, space: p.board?.id }));
     return (await shownOf(kept, { tag })).sort(sorter(sort, by));
   }
   // A LIST, as it was asked before the one feed (`where`, every app): the same feed, its source named the old way.
@@ -740,7 +752,14 @@ export async function start(ctx) {
     return (src.person === null ? me().then(by => feed({ person: by }, { kinds: kind, sort, tag: where.tag, ...opts })) : feed(src, { kinds: kind, sort, tag: where.tag, ...opts }));
   }
 
-  async function get(ref, { outside = null } = {}) {
+  // AN ITEM MOVED to another place (`share.relocate`: into a group, a circle) left a POINTER where it was
+  // (`meta.movedTo`): followed — a save, a bundle, a link to it still opens it, for whoever may read where it is now.
+  async function get(ref, opts = {}, hops = 0) {
+    const it = await getHere(ref, opts);
+    if (!it?.meta?.movedTo || hops >= 4) return it;
+    return get(it.meta.movedTo, { outside: await outsideOf(it.meta.movedTo) }, hops + 1);
+  }
+  async function getHere(ref, { outside = null } = {}) {
     if (ref.startsWith("space:")) {
       // ONE item of a space: read where this person is a member (whatever apps the space shows — its acts may not be
       // read yet on a page just opened), or from outside.
@@ -806,6 +825,8 @@ export async function start(ctx) {
   //   outside   read from outside that space (not a member: its public side only)
   //   public    anyone reads it — a space's item by its room's one rule (`pub`), a person's by not being private
   //   domain    its kind's policy domain (`kinds.policyDomain`): what a place's policy is asked about for it
+  //   home      the space it belongs to (a group read back to its space; a circle's, yours: null)
+  //   audience  who sees it as the audience picker names it ("public", "members", "private", "friends", a role …)
   //   table(n)  the CONTAINER of the item's own table `n`, beside it (`content.table`): a space's members table or its
   //             public one (`pub-…`: anyone reads, its members write); a person's public tail, or their own account's
   // A SIBLING TABLE's NAME, made to fit (a table's name is 1 to 32 bytes; a space's own prefix `x<12>-` takes 14): a
@@ -816,26 +837,75 @@ export async function start(ctx) {
     for (const c of n) (h1 = Math.imul(h1 ^ c.charCodeAt(0), 16777619) >>> 0), (h2 = Math.imul(h2 ^ c.charCodeAt(0), 2246822519) >>> 0);
     return (prefix + "h" + h1.toString(36) + h2.toString(36)).slice(0, room);
   };
+  // A GROUP's HOME SPACE, by its key (`item:<space>/…` — a space's item shared or kept private; `audience:<space>/…`):
+  // the one parser of that key (`share.parentId` too). Null: a person's own.
+  const homeIdOf = key => /^(?:item|audience):([0-9a-f]{64})\//.exec(String(key ?? ""))?.[1] ?? null;
   async function placeOf(ref) {
     const it = typeof ref === "string" ? await get(ref, { outside: await outsideOf(ref) }) : ref;
     if (!it) throw Object.assign(new Error("that item is not here"), { kind: "absent" });
     if (String(it.ref).startsWith("space:")) {
       const sid = it.ref.slice(6, it.ref.indexOf("/"));
-      const sp = (await space.mine.strict()).find(s => s.id === sid) ?? null;
+      const all = await space.mine.strict();
+      const sp = all.find(s => s.id === sid) ?? null;
       if (sp) {
         const pub = !!it.pub;
+        // ITS HOME and its AUDIENCE as the picker names it (a group read back to the space and the choice it is for).
+        const find = id => all.find(s => s.id === id) ?? null;
+        const g = String(sp.group ?? "");
+        const [home, audience, extra] = sp.circle
+          ? [null, sp.circle, {}]
+          : g.startsWith("level:")
+            ? [null, "public", { level: true }]
+            : g.startsWith("audience:")
+              ? [find(homeIdOf(g)), it.meta?.aud ?? "members", {}]
+              : g.startsWith("item:")
+                ? [homeIdOf(g) ? find(homeIdOf(g)) : null, "private", { group: sp }]
+                : [sp, pub ? "public" : "members", {}];
         // (A members table keeps its plain name, as tables kept for items always had; a public one is the space's `pub-`
         // table, the form storage makes public.)
-        return { place: sp, outside: false, public: pub, domain: kinds.policyDomain(it.kind), table: n => ({ messages: pub ? space.tableOf(sp, fitName("pub-", n, 18)) : n, scope: sp }) };
+        return { place: sp, outside: false, public: pub, home, audience, ...extra, domain: kinds.policyDomain(it.kind), table: n => ({ messages: pub ? space.tableOf(sp, fitName("pub-", n, 18)) : n, scope: sp }) };
       }
       const desc = await outsideOf(it.ref);
       if (!desc) throw Object.assign(new Error("you are not in that space, and it lists nothing in public"), { kind: "refused-expected" });
-      return { place: desc, outside: true, public: true, domain: kinds.policyDomain(it.kind), table: n => ({ outside: true, messages: space.tableOf(desc, fitName("pub-", n, 18)), scope: desc }) };
+      return { place: desc, outside: true, public: true, home: desc, audience: "public", domain: kinds.policyDomain(it.kind), table: n => ({ outside: true, messages: space.tableOf(desc, fitName("pub-", n, 18)), scope: desc }) };
     }
     const did = whereOf(it.ref);
     const pub = !it.private;
     const acc = await space.account.strict();
-    return { place: null, outside: false, public: pub, domain: kinds.policyDomain(it.kind), did, table: n => (pub ? { kind: "public", did, name: fitName("", n, 32) } : { messages: fitName("", n, 32), scope: acc }) };
+    return { place: null, outside: false, public: pub, home: null, audience: pub ? "public" : "private", domain: kinds.policyDomain(it.kind), did, table: n => (pub ? { kind: "public", did, name: fitName("", n, 32) } : { messages: fitName("", n, 32), scope: acc }) };
+  }
+
+  // WHO SEES IT, CHANGED WHERE IT IS (`share.setAudience`: an audience of the same place — a space's anyone or members,
+  // yours public or private): the SAME item, its id kept — what attaches to it follows by itself (a row is public when
+  // its root is: `boardRoom`), its files placed as it now is. Null: not of this place (a group, a circle, chosen people —
+  // a move, `share.relocate`).
+  // `carry`: { before(), after() } — what is kept FOR it beside it (a document's changes: `codoc`) taken out of where it
+  // is just before the change and put where it now is just after (run only when the change is made here).
+  async function setAudienceHere(ref, audience, carry = {}) {
+    const it = await get(ref);
+    if (!it) throw Object.assign(new Error("that item is not here"), { kind: "absent" });
+    // (Its row is its author's: another's — an admin's change — moves it instead.)
+    if (it.by !== (await me())) return null;
+    const dom = kinds.policyDomain(it.kind);
+    if (String(ref).startsWith("space:")) {
+      if (audience !== "public" && audience !== "members") return null;
+      const sp = await boardOf(ref);
+      if (!sp || String(sp.group ?? "").startsWith("item:") || String(sp.group ?? "").startsWith("audience:") || sp.circle) return null;
+      if (audience === "public" && !(await publicIn(sp, it.kind))) throw new Error(`${space.shown(sp)} keeps this to its members: it cannot be public`);
+      const kept = await carry.before?.();
+      await (await boardRoom(sp)).editFull(idOf(ref), it.body ?? "", { aud: audience === "members" ? "members" : null });
+      await placeFiles(it.files ?? [], sp, audience === "public", dom);
+      await carry.after?.(kept);
+      return ref;
+    }
+    if (audience !== "public" && audience !== "private") return null;
+    if (whereOf(ref) !== (await me())) throw new Error("only your own items");
+    const kept = await carry.before?.();
+    await (await profileRoom(await me())).setPrivate(idOf(ref), audience === "private");
+    await placeFiles(it.files ?? [], null, audience === "public", dom);
+    if (audience === "public" && !it.meta?.unlisted) await listPublic(ref, { kind: it.kind, at: it.at }, { did: await me() }).catch(e => ctx.failed("posts", e, `listing ${ref}: ${e.message}`));
+    await carry.after?.(kept);
+    return ref;
   }
 
   // WHERE AN ITEM's FILES ARE UPLOADED, before it is made (the one rule — every picker, the publisher, Drive ask it,
@@ -920,7 +990,16 @@ export async function start(ctx) {
   }
 
   // THE THREAD: comments as a tree, best first (a reply whose parent is gone goes to the top).
-  async function thread(ref, { outside = null } = {}) {
+  // ITS THREAD: its comments — and, an item moved here from elsewhere (`meta.was`), those written where it was.
+  async function thread(ref, opts = {}) {
+    const here = await threadHere(ref, opts);
+    const it = (await ctx.optional("items: thread's item", get(ref, opts), () => null)) ?? null;
+    const was = (it?.meta?.was ?? []).filter(w => typeof w === "string" && w !== ref).slice(-4);
+    if (!was.length) return here;
+    const before = await Promise.all(was.map(async w => ctx.optional("items: thread where it was", threadHere(w, { outside: await outsideOf(w) }), () => [])));
+    return [...here, ...before.flat()];
+  }
+  async function threadHere(ref, { outside = null } = {}) {
     const self = await me();
     const all = [];
     if (ref.startsWith("space:")) {
@@ -1250,7 +1329,8 @@ export async function start(ctx) {
       return boardPosts(sp, { kinds: ks, window: after ? "held" : "all" });
     };
     const [a, b] = await Promise.all([Promise.all(spaces.map(sp => ctx.optional("items: read", read(sp), () => []))), ctx.optional("items: profilePosts", profilePosts(dids, [], ks, 0, { withVotes }), () => [])]);
-    return [...a.flat(), ...b];
+    // (An item moved elsewhere left a pointer here: not listed — it is listed where it is.)
+    return [...a.flat(), ...b].filter(p => !p?.meta?.movedTo);
   }
 
   // WHERE AN ITEM IS SHOWN — the one link to its page, for every app that links to one: a video or a track where it
@@ -1287,5 +1367,5 @@ export async function start(ctx) {
     },
     // THE RANKING (a feed's sort), the one: what `list` orders by — for a list made of several (`tag`'s).
     rank: (list, sort = "new", by = null) => [...list].sort(sorter(sort, by)),
-    route, placeOf, uploadPlace, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
+    route, placeOf, homeIdOf, uploadPlace, setAudienceHere, mayWriteOn: ctx.total("items.mayWriteOn", () => false, mayWriteOn), pageOf, linkOf, refOf, appOf, list: ctx.total("items.list", () => [], list), feed: ctx.total("items.feed", () => [], feed), get: ctx.total("items.get", () => null, get), setFiles, attach, attached: ctx.total("items.attached", () => [], attached), history, publicIn: ctx.total("items.publicIn", () => [], publicIn), inPlaces: ctx.total("items.inPlaces", () => [], inPlaces), following, thread: ctx.total("items.thread", () => [], thread), vote, remove, boards: ctx.total("items.boards", () => [], boards), boardOf: ctx.total("items.boardOf", () => null, boardOf), spaceIdOf, publicSpaces: ctx.total("items.publicSpaces", () => [], publicSpaces), publicSpace: ctx.total("items.publicSpace", () => null, publicSpace), outsideOf: ctx.total("items.outsideOf", () => null, outsideOf), syncPublic, signal, view, used, tagsOf, normalTags, isNsfw, nsfwShown, visible: (list, where = {}) => shownOf(list, where), onChange: f => changed.push(f) };
 }
