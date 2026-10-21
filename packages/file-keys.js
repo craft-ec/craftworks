@@ -26,9 +26,13 @@ export async function start(ctx) {
   const later = new Map(); // row → its takeover timer
   const seen = new Map(); // row → when this page first saw it due
 
-  // A NEW SALT, when the plan says one is due (`rules::rekey::plan`): written once this table seals with the newest
-  // epoch (what the removed cannot read) — else the next trigger (`craftworks:keys`).
+  // A NEW SALT, when the plan says one is due (`rules::rekey::plan`): written once NOBODY PUT OUT still holds a place
+  // in the key group (their removal committed — 10-21: a circle's salt rotated while the unfriended still held the
+  // epoch it was sealed under) and this table seals with the newest epoch — else the next trigger (`craftworks:keys`).
   async function rotate(sp, removals) {
+    const r = await roles.of.strict(sp);
+    await r.settled;
+    if ([...r.goneList(), ...r.bannedList()].some(did => r.nodesOf(did).length)) return false;
     const g = await keys.group(sp).ready();
     await storage.sealNewest();
     const t = await storage.table(space.tableOf(sp, "files"), sp);

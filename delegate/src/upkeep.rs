@@ -122,6 +122,10 @@ pub(crate) struct Round {
     /// The files this round wrote, to list in the space's `files` table (`k/<id>` rows) once its operations are written.
     #[serde(default)]
     listing: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// A BeeKEM space's round, its tree followed: the MLS follow-out still owed (MLS seals what is written until K8 —
+    /// the put-out taken out of THAT group too: `next_space`).
+    #[serde(default)]
+    mls_owed: bool,
 }
 
 pub const ROUND: &[u8] = b"identity_upkeep/round";
@@ -247,14 +251,23 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
             continue;
         };
         let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
-        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false, files_unread: Vec::new(), listing: Vec::new() };
+        let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false, files_unread: Vec::new(), listing: Vec::new(), mls_owed: false };
         keep(h, Some(&r));
         return io;
     }
     keep(h, None);
     Vec::new()
 }
-pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, r: Round) -> Vec<Io> {
+pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, mut r: Round) -> Vec<Io> {
+    // MLS STILL SEALS WHAT IS WRITTEN (until K8: the design's "MLS keeps running beside it"): a BeeKEM space's round, its
+    // tree followed, goes on to the MLS follow-out — whoever the acts put out taken out of the group its content is
+    // sealed for (10-21, fx: a member removed from a tree space read on, its MLS epoch never moving — the tree branch
+    // returned here and the MLS path never ran).
+    if std::mem::take(&mut r.mls_owed) {
+        if let Some(m) = mandate(h, &r) {
+            return catch_up(h, c, r, &m);
+        }
+    }
     begin(h, c, r.member, r.me, r.rest)
 }
 
@@ -417,6 +430,8 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             }
             // A SPACE WITH A BEEKEM TREE (its operations in `pub-keyops`): kept to the list here (K5), not by MLS.
             if !r.reading.rows("pub-keyops").is_empty() {
+                // (Its MLS group followed after its tree: `next_space`.)
+                r.mls_owed = true;
                 if r.by_list {
                     return keys_round::reconcile(h, &c, r, &m, now_ms);
                 }
