@@ -290,6 +290,10 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    self-entrant's PROOF also rides its own leaf (a leaf extension): the follower keeps that entry while the acts admit
    it NOW (`Gov::admits`: never the banned, never one REMOVED — back only by an invite) and the acts have not put it
    out, until its own `join` act lists it.
+   THE LIST CARRIED OVER (10-22): a space made before 10-17 has no act listing its members — its list is its owner
+   alone, every other member a stray (Ivvor taken out of the owner's direct conversation). One who may list puts on it
+   (an `added` act) whoever is in its group and a direct conversation's other, never listed and never put out, once
+   the list reads whole; one not in the group is told again and enters by itself (`conversation.relist`, upkeep).
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.

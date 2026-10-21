@@ -111,6 +111,27 @@ export async function start(ctx) {
     await tell(sp, did, directory.shown(me.id, (await directory.card.strict(me.id))?.handle));
     return sp;
   }
+  // THE LIST CARRIED OVER: a space made before members were listed by acts (10-17) lists only its owner — every
+  // other member a stray each member's commit takes out (Ivvor out of a direct conversation, 10-22). One who may list
+  // puts on it whoever is in its group, and a direct conversation's other, never listed and never put out — the other
+  // told again, so their device enters by itself. Only once the list reads whole (an act not read yet may be a removal).
+  async function relist(sp) {
+    const me = await space.account.strict();
+    const r = await (await ctx.require("roles")).of(sp);
+    if (!me || !r || r.left || !r.whole() || !r.can(me.id, "invite")) return 0;
+    const out = new Set(r.outActs().map(a => a.did ?? a.by));
+    const inGroup = new Set(r.members().map(m => m.did));
+    const want = new Set([...inGroup, ...(sp.kind === "direct" && sp.with ? [sp.with] : [])]);
+    let n = 0;
+    for (const did of want) {
+      if (did === me.id || r.listed(did) || out.has(did) || r.mayList(did)) continue;
+      await r.act({ act: "added", did });
+      n += 1;
+      ctx.log("conversation", { what: `${space.shown(sp)}: ${short(did)} put on its list (made before the list)` });
+      if (!inGroup.has(did)) await tell(sp, did, sp.kind === "direct" ? directory.shown(me.id, (await directory.card.strict(me.id))?.handle) : sp.name);
+    }
+    return n;
+  }
   // INVITE a person into a space this account is in: on its list, then told.
   async function invite(sp, did) {
     await listIn(sp, did);
@@ -350,7 +371,9 @@ export async function start(ctx) {
         const k = `invited:${it.desc.id}|${it.from}|${it.at ?? ""}`;
         if (done(k)) continue;
         const had = mine.find(s => s.id === it.desc.id);
-        if (had && (await keys.group(had).ready())) {
+        // (Held and still in it: done. One TAKEN OUT — never listed, then listed again — enters again.)
+        const st = had ? await keys.group(had).ready() : null;
+        if (st && !st.removed) {
           await ctx.background("conversation: once.put", once.put(k, String(Date.now())));
           continue;
         }
@@ -1026,5 +1049,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, accept, joinLevel, lapse, bagOf, keyStatus, reportReads, selfState, observe, list, members: ctx.total("conversation.members", () => [], members), person: ctx.total("conversation.person", () => null, person), mail, createInvite, revokeInvite, join, joinOpen, requestJoin, cancelJoin, asked: ctx.total("conversation.asked", () => null, asked), waiting: ctx.total("conversation.waiting", () => [], waiting), requestsOf, letIn, reject, setJoin, befriend, friendRequests: ctx.total("conversation.friendRequests", () => [], friendRequests), answerFriend, unfriend, channels , keepReaders, audience };
+  return { direct, group, invite, relist, accept, joinLevel, lapse, bagOf, keyStatus, reportReads, selfState, observe, list, members: ctx.total("conversation.members", () => [], members), person: ctx.total("conversation.person", () => null, person), mail, createInvite, revokeInvite, join, joinOpen, requestJoin, cancelJoin, asked: ctx.total("conversation.asked", () => null, asked), waiting: ctx.total("conversation.waiting", () => [], waiting), requestsOf, letIn, reject, setJoin, befriend, friendRequests: ctx.total("conversation.friendRequests", () => [], friendRequests), answerFriend, unfriend, channels , keepReaders, audience };
 }

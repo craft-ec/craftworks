@@ -78,6 +78,8 @@ export async function start(ctx) {
         // Whoever the acts put out (banned, removed, left) still in the group: where their feeds stand recorded — their
         // entries are the node's follower's to take out.
         if (r && !r.left && r.role(me.id)) {
+          // A space made before its members were listed: they put on its list (by one who may list).
+          await conversation.relist(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: its list carried over: ${e.message}`));
           const n = await (await ctx.require("moderation")).of(sp).then(m => m.enforce()).catch(e => (ctx.failed("upkeep", e, `${sp.name}: those out: ${e.message}`), 0));
           // (The node asked when that count CHANGES — never every tick while it waits its turn.)
           if (n !== (lastOut.get(sp.id) ?? 0) && n > 0) (follow = true), ctx.log("upkeep", { what: `${sp.name}: ${n} put out by the acts still in its group — the node takes them out` });

@@ -446,6 +446,8 @@ export async function start(ctx) {
       isPublic,
       // WHO THE ACTS SAY IS IN (added, admitted or listed, not removed, banned or left since) — the group carries it out.
       roster: () => [...roster],
+      // EVER LISTED (`Gov::entry_listed`): one never listed is a stray every member's commit may take out.
+      listed: did => !!gv?.entry_listed(did),
       // All writers known here (their devices' keys): whose public tails a reader outside reads.
       writerKeys: () => [...writers.keys()],
       // PUBLISH (the owner): the counted acts so far, and a `member` act for each member, into the public acts.
