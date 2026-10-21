@@ -2908,4 +2908,11 @@ Drive, publisher, per-app audience defaults) — policy engine one, its SUBJECT 
       rules::rekey::subject(dom, app) — ONE rule, page (core wasm) and delegate both call it; rows from before keep
       their app. Identity build changes (delegate): the release needs the upgrade gate. Note: this repo is NOT kept
       rustfmt-clean (cargo fmt --check fails on many untouched files) — never run rustfmt on whole files here.
-- [ ] P5 one audience default (audience capability), apps only compose.
+- [x] P5 one default: audience.initialFor(kind, space) — in a space as its setting reads that kind (public, else
+      members); yours as the kind is (kinds.yoursStartsAs: docs/sheets/slides/notes/files/wiki/bundles/chat private,
+      posts/media/polls/forms public). Pickers start on it; codoc.create, bundles, wiki-pages, Drive folders and the
+      publisher use it; every app's own default deleted. fx defaults 5/5 + regressions.
+REMAINING from the audit (not built): what is attached is LEFT BEHIND on a move (comments, votes, saves, Discover
+pointers, bundle members, wiki sections, ballots, captions) — the fix is an item keeping its id when its audience
+changes (ARCHITECTURE §7 one placement, point 3); circle file keys never rotate on unfriend (file-keys passes the
+account, which never rotates); a space made public is listed only by the Settings page's handler, not the act.

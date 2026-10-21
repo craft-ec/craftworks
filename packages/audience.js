@@ -9,6 +9,7 @@
 //                                                               // "movie", "note" …); initial: the choice it starts on
 //   form.append(a.el)
 //   a.value()      // "public" | "private" (yours) | "members" (a space's)
+//   await audience.initialFor(kind, space)   // the ONE default (the picker starts on it; code making an item uses it)
 //   a.isPublic()   // read by everyone (its files are put public)
 //   a.level()      // "" (anyone who sees it) | "pro" | "vip": the LEVEL who may open it (rewards §5a) — enforced in
 //                  // Craftworks' pages only until gated keys are built (said beside the choice)
@@ -29,7 +30,14 @@ export async function start(ctx) {
   const [items, space, node] = await Promise.all(["items", "space", "node"].map(n => ctx.require(n)));
   const h = (await ctx.require("theme")).h;
 
+  // THE ONE DEFAULT of who sees a new item (10-21: each app chose its own): in a SPACE, as its setting reads that kind —
+  // anyone where it reads it in public, else its members; in its maker's OWN space, as the kind is (`kinds.yoursStartsAs`).
+  async function initialFor(kind, sp = null) {
+    if (sp && sp.kind !== "account") return (await ctx.optional("audience: publicIn", items.publicIn(sp, kind), () => false)) ? "public" : "members";
+    return (await ctx.require("kinds")).yoursStartsAs(kind);
+  }
   async function picker({ space: sp = null, kind = "post", initial = null } = {}) {
+    initial ??= await initialFor(kind, sp);
     // The choices here: yours, or what the space's policy allows for this kind.
     // A space's: everyone (where it may), its members — or fewer: a role's holders, the admins, the owner (sealed to
     // them alone: its audience's group).
@@ -122,5 +130,5 @@ export async function start(ctx) {
       d.showModal();
     });
   }
-  return { picker, writeRule, withWrite };
+  return { picker, initialFor, writeRule, withWrite };
 }

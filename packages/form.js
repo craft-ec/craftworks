@@ -260,7 +260,7 @@ export async function mount(ctx, el) {
     const open = h("input", { type: "checkbox", checked: m.open !== false });
     const once = h("input", { type: "checkbox", checked: !!m.once });
     const editable = h("input", { type: "checkbox", checked: m.editable !== false });
-    const who = was ? null : await (await ctx.require("audience")).picker({ space: sp, kind: "form", initial: sp ? "members" : "public" });
+    const who = was ? null : await (await ctx.require("audience")).picker({ space: sp, kind: "form" });
     let fields = m.fields.map(f => ({ ...f }));
     const list = h("div", { style: "display:grid;gap:var(--cw-space-2)" });
     const drawFields = () =>

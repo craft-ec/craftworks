@@ -130,7 +130,7 @@ export async function mount(ctx, el) {
     return;
   }
   // WHO SEES a new note: the one picker — yours start "Only you", a space's its members.
-  who = await (await ctx.require("audience")).picker({ space: sp, kind: "note", initial: sp ? "members" : "private" });
+  who = await (await ctx.require("audience")).picker({ space: sp, kind: "note" });
   root.querySelector(".audience-slot").append(who.el);
   // Someone else's (a person's, Discover's): read only, as every app shows what is not yours (`where`).
   const others = at.others;

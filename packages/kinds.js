@@ -23,6 +23,8 @@
 //   kinds.action("ballot")   // the policy action a kind is written under when not the default ("vote"), else null
 //   kinds.policyDomain("movie") // the DOMAIN whose settings govern it in a space ("video"; a post: "text"; a subtitle:
 //                             // "subtitle") — content decides, not the app showing it (one app may show every domain)
+// The domains kept private at first in their maker's own space (`yoursStartsAs`).
+const KEPT_PRIVATE = new Set(["file", "note", "doc", "sheet", "slides", "wiki", "bundle", "chat"]);
 export async function start() {
   const CATALOG = [
     // Video
@@ -165,6 +167,9 @@ export async function start() {
     // A domain's NAME as a place (a Drive folder; its app's): Videos, Audio, Images, Documents, Files.
     domainName: d => MEDIA.find(m => m.domain === d)?.plural ?? ({ document: "Documents" })[d] ?? "Files",
     policyDomain: kind => (onTo.has(kind) ? kind : byKind.get(kind)?.domain ?? "text"),
+    // WHAT A NEW ONE STARTS AS IN ITS MAKER's OWN SPACE (`audience.initialFor`, the one default): what is made to be
+    // seen (a post, a video, a poll) public; what is kept or worked on (a document, a note, a file) private.
+    yoursStartsAs: kind => (KEPT_PRIVATE.has(byKind.get(kind)?.domain ?? kind) ? "private" : "public"),
     // What an attaching kind is CALLED on an item of `target` kind: a caption on a song is its Lyrics, on a podcast
     // or an audiobook its Transcript — one capability, named for what it is on.
     attachLabel: (kind, target) =>

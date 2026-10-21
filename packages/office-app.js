@@ -43,7 +43,7 @@ export async function open(ctx, el, spec) {
   // NEW: its title and who sees it (the one picker); made, it opens.
   async function create(box) {
     const title = h("input", { className: "field", placeholder: "Title", maxLength: 300 });
-    const who = await (await ctx.require("audience")).picker({ space: at.space, kind, initial: at.space ? "members" : "private" });
+    const who = await (await ctx.require("audience")).picker({ space: at.space, kind });
     const go = h("button", { type: "button", className: "cw-btn primary", textContent: "Create", onclick: async () => {
       go.disabled = true;
       const ref = await codoc.create({ board: at.space?.id ?? null, title: title.value, audience: who.value(), kind }).catch(e => (fail(e), null));

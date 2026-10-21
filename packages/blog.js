@@ -318,7 +318,7 @@ export async function mount(ctx, el) {
     coverSel.onfocus = covers;
     pick.onChange?.(covers);
     // WHOM IT IS FOR (`audience`, the one choice), once published — a published article keeps its own.
-    who = editRef ? null : await audience.picker({ space: sp, kind: "post", initial: b.audience ?? (sp ? null : "public") });
+    who = editRef ? null : await audience.picker({ space: sp, kind: "post", initial: b.audience ?? null });
     const when = h("input", { type: "datetime-local", name: "due" });
     if (Number.isFinite(b.due)) when.value = new Date(b.due - new Date(b.due).getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
     const review = sp && !editRef ? await press.needsReview(sp) : false;

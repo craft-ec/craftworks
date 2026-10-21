@@ -215,7 +215,7 @@ export async function mount(ctx, el) {
     if (!wiki.may.edit) return root.replaceChildren(h("a", { href: at.href(""), textContent: "← Index" }), said(wiki.owner ? "Only its owner writes pages in this wiki." : "This space's rules do not let you write pages in its wiki."));
     const t = h("input", { type: "text", className: "title", placeholder: "Title", maxLength: 200, value: W.cleanTitle(title) });
     // Who sees it: yours, the one choice (a space's: as its wiki reads).
-    const who = wiki.scope === "personal" ? await (await ctx.require("audience")).picker({ space: null, kind: "wiki", initial: "private" }) : null;
+    const who = wiki.scope === "personal" ? await (await ctx.require("audience")).picker({ space: null, kind: "wiki" }) : null;
     root.replaceChildren(
       h("div", { className: "tools" }, h("a", { href: at.href(""), textContent: "← Index" })),
       h("h2", { textContent: "📖 New page" }),

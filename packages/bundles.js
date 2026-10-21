@@ -17,8 +17,9 @@ export async function start(ctx) {
     const where = sp ? { board: sp.id } : { by: await space.me.strict() };
     return (await items.list.strict(where, "new", [KIND], { window: "all" })).map(shape);
   }
-  const make = (title, sp = null, { audience = sp ? "members" : "private" } = {}) =>
-    items.submit({ kind: KIND, title: String(title ?? "").trim(), body: "", meta: { members: [] }, board: sp?.id ?? null, audience });
+  // (Who sees it, unless chosen: the one default — `audience.initialFor`.)
+  const make = async (title, sp = null, { audience = null } = {}) =>
+    items.submit({ kind: KIND, title: String(title ?? "").trim(), body: "", meta: { members: [] }, board: sp?.id ?? null, audience: audience ?? (await (await ctx.require("audience")).initialFor(KIND, sp)) });
   async function members(bref, change) {
     const b = await items.get.strict(bref);
     if (!b || b.kind !== KIND) throw new Error("not a bundle");

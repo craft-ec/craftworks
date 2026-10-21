@@ -113,7 +113,9 @@ export async function start(ctx) {
   async function create({ board = null, title = "", audience = null, kind = "doc" } = {}) {
     if (!KINDS.has(kind)) throw new Error(`not a kind written together: ${kind}`);
     const untitled = { doc: "Untitled document", sheet: "Untitled spreadsheet", deck: "Untitled presentation" }[kind];
-    const ref = await items.submit({ board, title: String(title).trim() || untitled, body: "", kind, audience: audience ?? (board ? "members" : "private") });
+    // (Who sees it, unless chosen: the one default — `audience.initialFor`.)
+    audience ??= await (await ctx.require("audience")).initialFor(kind, board ? await items.boardOf.strict(board) : null);
+    const ref = await items.submit({ board, title: String(title).trim() || untitled, body: "", kind, audience });
     const o = await open(ref);
     // ITS MAKER's FIRST CHANGE: the text object everyone else starts from (the only one: a second would be a second text).
     if (!o.seen.size) {

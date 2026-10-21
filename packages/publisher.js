@@ -16,11 +16,13 @@
 export async function start(ctx) {
   const [kinds, items] = await Promise.all(["kinds", "items"].map(n => ctx.require(n)));
 
-  async function publish(file, { domain = null, space = null, audience = space ? "members" : "private", write = null, kind = null, title = "", body = "", meta = {}, cover = null, subtitles = [], keepOriginal = false, app = null, onProgress = () => {} } = {}) {
+  async function publish(file, { domain = null, space = null, audience = null, write = null, kind = null, title = "", body = "", meta = {}, cover = null, subtitles = [], keepOriginal = false, app = null, onProgress = () => {} } = {}) {
     // Its DOMAIN: named (an app's upload: a PDF made a book), else what its type is.
     const spec = domain ? kinds.media().find(m => m.domain === domain) : kinds.mediaOf(file.type);
     if (!spec) throw new Error(`${file.name}: not a kind that is published (an image, a video, an audio, a book)`);
     kind ??= spec.kind;
+    // (Who sees it, unless chosen: the one default — `audience.initialFor`.)
+    audience ??= await (await ctx.require("audience")).initialFor(kind, space);
     const maker = await ctx.require(spec.maker);
     // A space this person is not in (its policy lets anyone post): published public, kept in their profile (`items.submit`).
     const outside = space && !(await items.boardOf.strict(space.id)) ? space : null;

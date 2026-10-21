@@ -483,7 +483,8 @@ export async function start(ctx) {
       if (!mayEdit()) throw new Error(owner ? "only its owner writes in this wiki" : "this space's rules do not let you write pages");
       const key = normTitle(title);
       if ((await pages()).some(x => x.key === key)) throw new Error(`there is a page “${cleanTitle(title)}” here already`);
-      const aud = audience ?? (sp && !circle ? ((await items.publicIn(sp, KIND)) ? "public" : "members") : "private");
+      // (Who sees it, unless chosen: the one default — `audience.initialFor`.)
+      const aud = audience ?? (await (await ctx.require("audience")).initialFor(KIND, sp && !circle ? sp : null));
       const ref = await items.submit({ board: sp && !circle ? sp.id : (circle?.id ?? null), title: cleanTitle(title), body: "", kind: KIND, audience: circle ? "members" : aud, meta: { key, ...(lineage ? { lineage } : {}) }, write });
       const p = { ref, refs: [ref], key, title: cleanTitle(title), versions: [], sections: [] };
       await apply(p, sections ?? planWhole([], text), { suggest: false });

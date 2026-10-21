@@ -110,7 +110,7 @@ export async function mount(ctx, el) {
     const opts = h("textarea", { rows: 5, placeholder: "One option per line (two or more)" });
     const multiple = h("input", { type: "checkbox" });
     const results = h("select", {}, h("option", { value: "live", textContent: "Results shown live" }), h("option", { value: "after", textContent: "Results shown after it closes" }));
-    const who = await (await ctx.require("audience")).picker({ space: sp, kind: "poll", initial: sp ? "members" : "public" });
+    const who = await (await ctx.require("audience")).picker({ space: sp, kind: "poll" });
     const save = h("button", { type: "submit", className: "cw-btn primary", textContent: "Create poll" });
     const said = h("p", { className: "said" });
     const run = theme.action(save, () => V.createPoll({ board: sp?.id ?? null, question: q.value, options: opts.value.split("\n"), multiple: multiple.checked, results: results.value, audience: who.value(), write: who.write() }), { busy: "Saving…", done: "Saved ✓" });

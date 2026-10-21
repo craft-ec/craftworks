@@ -67,7 +67,7 @@ export async function mount(ctx, el) {
   const audience = await ctx.require("audience");
   function askWho(list) {
     return new Promise(async resolve => {
-      const who = await audience.picker({ space: sp, kind: "file", initial: sp ? "members" : "private" });
+      const who = await audience.picker({ space: sp, kind: "file" });
       const d = h("dialog", { className: "dv-who" });
       const go = h("button", { type: "submit", className: "go", textContent: "Upload" });
       const no = h("button", { type: "button", textContent: "Cancel", onclick: () => d.close() });

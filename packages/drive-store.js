@@ -150,7 +150,7 @@ export async function start(ctx) {
   // A FOLDER made — in a shared folder, in its group.
   async function mkdir(sp, path) {
     const fg = await folderGroup(sp, path);
-    return items.submit({ board: fg?.id ?? (shared(sp) ? sp.id : null), title: clean(path), body: "", kind: "folder", meta: { folder: clean(path) }, audience: fg || shared(sp) ? "members" : "private" });
+    return items.submit({ board: fg?.id ?? (shared(sp) ? sp.id : null), title: clean(path), body: "", kind: "folder", meta: { folder: clean(path) }, audience: fg ? "members" : await (await ctx.require("audience")).initialFor("folder", shared(sp) ? sp : null) });
   }
   // MOVED to a folder: within its place, its folder changed; into or out of a SHARED folder, the item moves to that
   // folder's group or back to the place (`share.moveTo`: its file adopted there).
