@@ -324,6 +324,11 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    ("ever listed" only grows — the entry rule above); one it does not take is DEFERRED, never refused. Merging nothing
    deadlocked a member one generation behind: the acts are sealed with the generation it lacked, so its list never read
    whole (live, Wren in Craftworks).
+   A PUBLIC TABLE IS READ BY ITS NAME (10-23): a space's `pub-…` tables (key operations, public acts, the public board)
+   are in the clear and judged by what they hold — every writer's read by its name, never only where its sealed catalog
+   or the open writers list names it. Found through a catalog sealed with its writer's newest generation, the operation
+   giving that generation could never be read (Craftworks: three of the owner's own operations waited for ever on a
+   predecessor in its other device's feed, which no catalog the page opened and no open-list entry named).
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.
