@@ -151,6 +151,8 @@ Callers: `const st = await t.decided(); if (st.s === "absent") create…; else i
 | **delete** (per object) | `REQUESTED → HIDDEN → GONE`, `REFUSED{fault}` | one path for items, spaces, devices and files; who may delete is the object's rule (roles), checked in `REQUESTED`; `GONE` only where the network can forget (a tail can hide, not erase — said to the person) |
 | **job** (per background task) | `IDLE → RUNNING → IDLE`, `PAUSED`, `STOPPED` | upkeep, renew, sync, usage flush, heartbeat: each declares the states it needs (e.g. upkeep needs session `OPEN` + account group `MEMBER`) and is `PAUSED` otherwise; `HIDDEN` pauses jobs that only serve the screen |
 
+A VIEW never takes away what it shows while a re-read is still arriving (10-23, owner: "if it show the first time, why it hide and show again?"): an arriving read with fewer entries, or a "not yet", leaves the drawn screen until the read answers.
+
 A person's SEND is a save they wait on: sent through the ONE action (`theme.action` — a comment, a chat message alike):
 its text kept and "Sending…" said until it is HELD, cleared only then; REFUSED, the text stays with why (10-22: Chat
 cleared the text at once and its refusal came up to 2 minutes later — the person gone, a message "lost"). The JOURNAL

@@ -380,6 +380,31 @@ export async function start(ctx) {
           await save();
         }),
       placed: () => !!g?.placed(),
+      // WHY THE TREE IS WHERE IT IS (diagnostics, 10-23): each key operation of the space — its writer, and what our
+      // check makes of it merged afresh in causal order ("applied", "refused: why", or waiting for a predecessor no feed
+      // here holds). Read-only: a fresh tree, never this page's.
+      diagnose: async () => {
+        await load();
+        const t = await feed();
+        await t.settled;
+        const c = await check();
+        const r = await (await ctx.require("roles")).of(sp);
+        const fresh = G.BeeGroup.empty(sp.idBytes, (await me()).seed);
+        const ops = await Promise.all(t.rows().filter(x => x.value).map(async x => ({ key: x.key.slice(0, 12), by: (r?.author(x) ?? "?").slice(12, 18), node: (x.id ?? "").slice(0, 8), op: await ctx.optional("members: diagnose", opOf(x), () => null) })));
+        let pending = ops.filter(o => o.op);
+        for (let round = 0; round < 64 && pending.length; round++) {
+          const before = pending.length;
+          pending = pending.filter(o => {
+            const said = fresh.merge(o.op, c.list);
+            if (said === "waiting") return true;
+            o.result = said;
+            return false;
+          });
+          if (pending.length === before) break;
+        }
+        for (const o of pending) o.result = "waiting: a predecessor no feed here holds";
+        return { whole: c.whole(), placed: fresh.placed(), gens: fresh.generations().map(([n]) => String(n)), ops: ops.map(({ op, ...o }) => ({ ...o, result: o.result ?? "not read" })) };
+      },
       // Whether the tree still HOLDS an account (K8.2): its member, as its card names it, among the tree's — a person
       // put out by the list is out of the keys once this is false.
       holds: async did => {

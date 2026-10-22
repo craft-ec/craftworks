@@ -56,6 +56,7 @@ export function install(ctx, { handled, stateOf, theme }) {
   ctx.view = (el, { read, draw, render = null, hold = () => false, empty = d => Array.isArray(d) && d.length === 0, looks = {} }) => {
     if (render) ((read = render), (draw = n => n), (empty = () => false));
     let seen = null; // what was last drawn (its JSON), so an unchanged read draws nothing
+    let drawnN = null; // how many entries the drawn list had (a list), so an arriving re-read never shows fewer
     let running = null;
     let again = false;
     let stopped = false;
@@ -79,7 +80,7 @@ export function install(ctx, { handled, stateOf, theme }) {
         data = await read();
       } catch (e) {
         clearTimeout(slow);
-        seen = null;
+        if (!(seen && (e?.kind === "not-yet" || e?.kind === "transient"))) seen = null;
         // STILL ARRIVING (`not-yet`, a transient fault): said so, and READ AGAIN by itself — 2 s, 4 s … at most 60 s —
         // until it answers (10-22: an arriving read drawn as a failure with "Try again" and never read again: a list
         // stayed empty beside the same list, drawn again, full).
@@ -87,6 +88,9 @@ export function install(ctx, { handled, stateOf, theme }) {
           retryIn = Math.min(60000, retryIn ? retryIn * 2 : 2000);
           clearTimeout(retryT);
           retryT = setTimeout(() => el.isConnected && !stopped && refresh(), retryIn);
+          // WHAT IS SHOWN STAYS (10-23, owner: "if it show the first time, why it hide and show again?"): a re-read
+          // still arriving never takes away what was drawn; it is drawn again once it answers.
+          if (seen) return;
           return el.replaceChildren(await look("notRead", "Still arriving…"));
         }
         const b = Object.assign(document.createElement("button"), { type: "button", className: "cw-btn", textContent: "Try again", onclick: () => refresh() });
@@ -101,6 +105,8 @@ export function install(ctx, { handled, stateOf, theme }) {
         retryT = setTimeout(() => el.isConnected && !stopped && refresh(), retryIn);
       } else retryIn = 0;
       if (stopped || !el.isConnected) return;
+      // (Still arriving and holding FEWER entries than the list on screen: what is shown stays until it answers.)
+      if (data?.arriving && seen && Array.isArray(data) && drawnN != null && data.length < drawnN) return;
       const st = data?.state?.s;
       const key = (() => {
         try {
@@ -116,6 +122,7 @@ export function install(ctx, { handled, stateOf, theme }) {
       if ((st === "unknown" || data?.arriving) && empty(data)) return el.replaceChildren(await look("notRead", "Still arriving…"));
       if (st === "failed") return el.replaceChildren(await look("failed", data.state.why ?? "Could not be read"));
       if (empty(data)) return el.replaceChildren(await look("empty", "Nothing here yet."));
+      drawnN = Array.isArray(data) ? data.length : null;
       const out = await draw(data);
       if (out instanceof Node && out !== el) el.replaceChildren(out);
     };
