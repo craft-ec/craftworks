@@ -176,13 +176,24 @@ export async function start(ctx) {
       // account not listed"); merged without an operation it could not read, everyone that one adds is missing. The tree
       // stays as last merged from a whole read.
       const short = why => (life().then(l => l.transition("group", sp.id, "keys-short", { why: `${why}: the keys not changed (R4)` })), { short: why, refused: [], waiting: 0, misses: [] });
-      if (!c.whole()) return short("the list not read whole");
+      // A SHORT LIST still MERGES what our check takes (K4 fix, 10-23): an operation taken on a short read is taken on
+      // the whole one too ("ever listed" only grows — the MLS entry rule, `rules::guards::entry_outcome`); one it does
+      // not take waits for the whole list (DEFERRED, never refused). Merging nothing deadlocked a member one generation
+      // behind: the acts were sealed with the generation it lacked, so its list never read whole (live, Wren in
+      // Craftworks: "keys-short" every pass, the space unreadable).
+      const whole = c.whole();
       const UNREAD = {};
       const read = await Promise.all(t.rows().filter(x => x.value).map(x => ctx.optional("members: an operation", opOf(x), () => UNREAD)));
       if (read.includes(UNREAD)) return short(`${read.filter(x => x === UNREAD).length} operation(s) not read`);
       // (`Group::merge_all`: the one loop, the node's too.)
       const said = g.merge_all(read.filter(Boolean), c.list);
       said.refused = said.refused.map(w => w.slice(0, 71));
+      if (!whole) {
+        said.deferred = said.refused.length;
+        said.refused = [];
+        said.short = "the list not read whole";
+        life().then(l => l.transition("group", sp.id, "keys-short", { why: `the list not read whole: what the check takes merged, ${said.deferred} deferred (R4)` }));
+      }
       said.generations = await keepGenerations();
       said.misses = said.misses.slice(-3);
       await save();
@@ -369,6 +380,12 @@ export async function start(ctx) {
           await save();
         }),
       placed: () => !!g?.placed(),
+      // Whether the tree still HOLDS an account (K8.2): its member, as its card names it, among the tree's — a person
+      // put out by the list is out of the keys once this is false.
+      holds: async did => {
+        const m = await memberOf(did);
+        return !m.why && !!g && [...g.members()].some(id => id === m.id || hexOf(id) === hexOf(m.id));
+      },
       members: () => (g ? [...g.members()] : []),
       // The generation NUMBERS this tree reaches (no secret): what `keepGenerations` hands the identity.
       generationNumbers: () => (g ? g.generations().map(([n]) => String(n)) : []),

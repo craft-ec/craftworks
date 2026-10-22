@@ -318,6 +318,10 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    reading only carded accounts), widened as the acts name more — never the MLS group. While migrating (until K8.6)
    whoever the MLS group still holds and no act lists yet is read too, so a space made before the list acts loses
    no one's items.
+   A SHORT LIST STILL MERGES what the check takes (10-23): an operation taken on a short read is taken on the whole one
+   ("ever listed" only grows — the entry rule above); one it does not take is DEFERRED, never refused. Merging nothing
+   deadlocked a member one generation behind: the acts are sealed with the generation it lacked, so its list never read
+   whole (live, Wren in Craftworks).
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.
