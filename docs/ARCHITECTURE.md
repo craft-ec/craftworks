@@ -326,6 +326,10 @@ feeds silent, and every app drew it as no posts until the next redraw — the pu
 items by `roomItems` (Home, the space's feed, `get`, a place's list, outsiders), any other container's — a channel, a
 conversation — by `items.room` (Chat, Activity). Apps differ only in the view they compose over it (Chat and Mail
 keep their own views); reopening a place draws what its room holds at once.
+A room is ANSWERED only once every writer's feed was TRIED (a feed still opening is not yet in it: 10-22, a space's
+page read its room as answered and empty, its post seconds away). THE PUBLIC SPACES are one held list a page
+(`items.publicSpaces`, `where.spacesFor`): given at once once decided, read again behind it — never a second read
+for Discover beside the side panel's.
 
 **Video — the pipeline (built).** At upload, in the uploader's browser (no server encodes here): Mediabunny (WebCodecs)
 reads any common file and writes each RENDITION as a FRAGMENTED MP4 (CMAF: ~4 s fragments, a key frame every 2 s),

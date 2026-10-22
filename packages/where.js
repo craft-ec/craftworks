@@ -169,13 +169,24 @@ export async function start(ctx) {
   }
   // THE PUBLIC SPACES AN APP OPENS IN (the one list — Discover's page and any panel listing them draw it: 10-22, Board's
   // panel and Discover each kept a list of their own): `[{ d, pr }]`.
+  // (Held per app as the list it is drawn from is: given at once once decided, read again behind it.)
+  const spacesHeld = new Map(); // app → { at, list }
   async function spacesFor(app) {
+    const had = spacesHeld.get(app);
+    if (had && !had.list.arriving) {
+      if (Date.now() - had.at > 60e3) ctx.background("where: spaces again", spacesNow(app));
+      return had.list;
+    }
+    return spacesNow(app);
+  }
+  async function spacesNow(app) {
     const all = await items.publicSpaces();
     const ok = await Promise.all(all.map(d => ctx.optional("where: opens from outside", opensFromOutside(d, app), () => false)));
     const prs = await Promise.all(all.map((d, i) => (ok[i] ? roles.ofPublic.strict(d) : null)));
     const out = all.map((d, i) => ok[i] && { d, pr: prs[i] }).filter(Boolean);
     // (Still arriving as the list it is drawn from is: some spaces not decided yet.)
     if (all.arriving) Object.defineProperty(out, "arriving", { value: true });
+    spacesHeld.set(app, { at: Date.now(), list: out });
     return out;
   }
   // AN APP's DISCOVER PAGE (`#/discover/<app>/spaces`): the public spaces that have this app on — each opened, joined

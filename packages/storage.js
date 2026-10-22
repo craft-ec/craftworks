@@ -1475,7 +1475,10 @@ export async function start(ctx) {
         // ANSWERED: every feed it is built on had the node's answer (rows, or "not there") — not silence — and none
         // failed to open. Until then what it holds is NOT "empty": it is still arriving (R4; 10-22, live: a space's
         // board read empty for 15 s, its feeds silent, and every app drew "no posts").
-        answered: () => failedOwners.size === 0 && all.every(f => (typeof f.answered === "function" ? f.answered() : true)),
+        // (And every listed writer TRIED — `gathered`, as `state` asks: a writer's feed still opening is not in `all`
+        // yet, so "every feed answered" was true with this node's own alone — 10-22, live: a space's page read its room
+        // as answered and empty, its post arriving seconds later, and drew "no posts".)
+        answered: () => gathered && failedOwners.size === 0 && all.every(f => (typeof f.answered === "function" ? f.answered() : true)),
         retryFailed: () => {
           for (const o of [...failedOwners]) {
             failedOwners.delete(o);

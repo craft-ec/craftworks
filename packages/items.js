@@ -632,7 +632,21 @@ export async function start(ctx) {
     return pr.isPublic();
   };
   let leftoverSaid = false;
-  async function publicSpaces() {
+  // THE PUBLIC SPACES, ONE READ a page (10-22, owner: Discover read the public spaces again while the side panel's list
+  // was already loaded): the list as last decided given AT ONCE, read again behind it (at most once a minute) — as a
+  // space's room is. Still arriving, it is read again on each ask until it is decided.
+  let pubHeld = null;
+  let pubAt = 0;
+  let pubReading = null;
+  function publicSpaces() {
+    const fresh = () => (pubReading ??= publicSpacesNow().then(l => ((pubHeld = l), (pubAt = Date.now()), l)).finally(() => (pubReading = null)));
+    if (pubHeld && !pubHeld.arriving) {
+      if (Date.now() - pubAt > 60e3) ctx.background("items: public spaces again", fresh());
+      return Promise.resolve(pubHeld);
+    }
+    return fresh();
+  }
+  async function publicSpacesNow() {
     const seen = new Map();
     const lists = await ctx.optional("items: lists", (await ctx.require("moderation")).lists(), () => null);
     const candidates = [];
