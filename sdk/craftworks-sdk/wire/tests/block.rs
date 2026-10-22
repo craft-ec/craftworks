@@ -152,3 +152,20 @@ fn a_not_found_answer_is_a_get_failed_naming_the_contract() {
     id.copy_from_slice(&key.id().as_bytes()[..32]);
     assert_eq!(unframe(&mut Reassembler::new(), &bytes), Incoming::GetFailed { id, why: wire::GetFail::NotFound });
 }
+
+/// A GET answered with an EMPTY state (live 10-22: the owner's node, a tail it was told of and never given a state)
+/// names its contract and is read as absent (`Empty`) — before, unusable, it named nothing and the read waited for
+/// ever. Control: the same answer with a key of zeros (a run of zeroes decodes as it) still names nothing.
+#[test]
+fn an_empty_get_answer_is_a_get_failed_naming_the_contract() {
+    use freenet_stdlib::prelude::WrappedState;
+    let key = block_contract(CODE, &cid(11)).key();
+    let reply: Result<HostResponse, wire::_test::Err> =
+        Ok(HostResponse::ContractResponse(ContractResponse::GetResponse { key, contract: None, state: WrappedState::new(vec![]) }));
+    let bytes = bincode::serialize(&reply).expect("encodes");
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&key.id().as_bytes()[..32]);
+    assert_eq!(unframe(&mut Reassembler::new(), &bytes), Incoming::GetFailed { id, why: wire::GetFail::Empty });
+    let zeros = vec![0u8; bytes.len()];
+    assert!(matches!(unframe(&mut Reassembler::new(), &zeros), Incoming::Unusable(_)), "a run of zeroes names nothing");
+}

@@ -94,7 +94,8 @@ One type on every tail and merged table:
 ```ts
 type ReadState =
   | { s: "unknown" }                                   // not asked, silent, or shown before its answer
-  | { s: "absent" }                                    // the node ANSWERED not-found, or a readable record says never made
+  | { s: "absent" }                                    // the node ANSWERED not-found (or held it with NO state — wire
+                                                       // `GetFail::Empty`, 10-22), or a readable record says never made
   | { s: "present" }
   | { s: "unreadable"; need: { epochs?: number[]; tableKey?: true; grant?: true }; why: string };
 
@@ -103,6 +104,10 @@ t.decided(): Promise<ReadState>   // waits up to WAIT.answer; "unknown" is never
 t.onState(fn)
 ```
 
+- **AN ANSWER NAMES ITS CONTRACT** (10-22): the node holding a contract with an EMPTY state is an answer — nothing
+  written there — never an unusable message naming nothing (the owner's node answered so for its own catalog in two
+  conversations it had never written in: each read waited for ever, every write there refused "not answered yet", a
+  message lost and a member never put back on a list).
 - **R1 — No create or overwrite on unknown.** `write()` awaits `decided()`; `unknown`/`unreadable` throw a retryable
   `not-yet`/`sealed` fault (§4). `beforeCreate` and a PUT run only on `absent`. Enforced in `tailAt`, once.
 - **R2 — "Not listed" is only an answer when the list was read.** `placeOf` returns `unknown` unless its catalog is

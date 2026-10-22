@@ -137,6 +137,10 @@ pub enum GetFail {
     /// The node ANSWERED -- with a message of `bytes`, bigger than this page reads (rule 8: an answer, never a
     /// silence re-asked for ever). The GET it answers is read from the message's HEAD ([`get_key_prefix`]).
     TooLarge { bytes: usize },
+    /// The node holds the contract with NO STATE (freenet 0.2.146: "Returning locally cached contract state" with an
+    /// empty one, for a tail this device listed and never wrote — live 10-22, the owner's catalog in an old
+    /// conversation). Nothing was written there: read as absent, as [`GetFail::NotFound`] is; the first write puts it.
+    Empty,
 }
 
 /// What arrived, once it has been understood.
@@ -731,14 +735,19 @@ fn classify(r: HostResponse) -> Incoming {
                 Incoming::EngineBytes(out)
             }
         }
-        // A GET answered with NO state is not a block (no kind byte) and not a
-        // head record: unusable, as every GET answer was before the page read
-        // blocks itself — a run of zeroes decodes as exactly this. ASSUMPTION
-        // (the live run tells): a node that cannot find a contract answers
-        // with an error, not with an empty state; to a cold read an empty one
-        // is a GET that did not answer, and is re-fetched.
-        HostResponse::ContractResponse(ContractResponse::GetResponse { state, .. }) if state.as_ref().is_empty() => {
-            Incoming::Unusable(Unusable::UnknownKind("ContractResponse::GetResponse (no state)"))
+        // A GET answered with NO state: the node holds the contract and nothing in it (the live run told, 10-22: the
+        // owner's node answers so for a tail it was told of and never given a state). An ANSWER naming its contract —
+        // nothing written there, read as absent (`GetFail::Empty`); never unusable, which named no contract and left
+        // its read waiting for ever (every write there refused "not answered yet"). A run of zeroes still decodes as
+        // this with a key of zeros: that names nothing, unusable as before.
+        HostResponse::ContractResponse(ContractResponse::GetResponse { key, state, .. }) if state.as_ref().is_empty() => {
+            let mut id = [0u8; 32];
+            id.copy_from_slice(&key.id().as_bytes()[..32]);
+            if id == [0u8; 32] {
+                Incoming::Unusable(Unusable::UnknownKind("ContractResponse::GetResponse (no state)"))
+            } else {
+                Incoming::GetFailed { id, why: GetFail::Empty }
+            }
         }
         HostResponse::ContractResponse(ContractResponse::GetResponse { key, state, .. }) => {
             let mut id = [0u8; 32];

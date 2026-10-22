@@ -1236,7 +1236,8 @@ impl PageIo {
                     self.say(page::unusable::Site::of("page-io::said::get-unasked"), "a GET answer for a contract this page never asked".into());
                 }
             }
-            Incoming::GetFailed { id, why: wire::GetFail::NotFound } => {
+            // (An EMPTY answer — the contract held with no state — is the same fact: nothing written there.)
+            Incoming::GetFailed { id, why: wire::GetFail::NotFound | wire::GetFail::Empty } => {
                 if let Some(app) = self.site_by_id(&id) {
                     // No site at this address: the genesis (only a NotFound says so).
                     self.server.node(Answer::Head { label: Label::Site(app), read: None }, now);
