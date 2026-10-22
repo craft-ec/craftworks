@@ -177,9 +177,15 @@ export async function start(ctx) {
   // WRITES MOVE ONTO THE NEWEST EPOCH: an open tail seals with the epoch current when it opened; when the group has
   // moved since (a node removed: it holds the older epochs), what is written from now on is sealed with the newest.
   let resealing = null;
-  const sealNewest = () =>
-    (resealing ??= (async () => {
-      for (const [idHex, t] of live) {
+  // `only`: one table's (a write checks the table it writes — 10-22, measured: a chat send waited ~20 s while every
+  // table open on the page asked the identity for its newest key, one after another; the walk over all of them is
+  // the keys' event's, below).
+  const sealNewest = (only = null) =>
+    only ? sealTables([[only, live.get(only)]]) : (resealing ??= sealTables(live).finally(() => (resealing = null)));
+  const sealTables = tables =>
+    (async () => {
+      for (const [idHex, t] of tables) {
+        if (!t) continue;
         const w = t.sealing;
         if (!w) continue;
         const e = await ctx.optional("storage: access.keyAt", access.keyAt(w.app, -1, { catalog: w.catalog, space: w.space }), () => ({}));
@@ -192,7 +198,7 @@ export async function start(ctx) {
         w.key = e.key;
         ctx.log("table sealing", { what: `${w.app}: writes now with epoch ${e.epoch}${healed ? " (its winning key: a fork healed)" : ""}` });
       }
-    })().finally(() => (resealing = null)));
+    })();
   addEventListener("craftworks:keys", () => sealNewest());
   let rekeying = null;
   addEventListener("craftworks:keys", () => {
@@ -1399,7 +1405,7 @@ export async function start(ctx) {
       const write = async (key, value, user = !!navigator.userActivation?.isActive) => {
         await current();
         // A newer epoch just learned: the open tails move onto it before this is sealed.
-        if (sp.kind !== "account") await ctx.background("storage: sealNewest", sealNewest());
+        if (sp.kind !== "account") await ctx.background("storage: sealNewest", sealNewest(hexOf(me.id)));
         return versioned(me, key, value, await currentId(key), user);
       };
       const t = {

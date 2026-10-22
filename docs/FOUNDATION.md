@@ -155,7 +155,9 @@ A person's SEND is a save they wait on: sent through the ONE action (`theme.acti
 its text kept and "Sending…" said until it is HELD, cleared only then; REFUSED, the text stays with why (10-22: Chat
 cleared the text at once and its refusal came up to 2 minutes later — the person gone, a message "lost"). The JOURNAL
 keeps each change ONCE across pages: a step (nothing moved) the same as the last one recorded for its key is not written
-again, by any page or load (10-22: one refused key tree recorded dozens of times an hour).
+again, by any page or load (10-22: one refused key tree recorded dozens of times an hour). A WRITE checks the newest key
+of the table it writes only — the walk over every open table is the keys' event's (10-22, measured live: a chat send
+waited ~20 s while each table open on the page asked the identity for its key, one after another).
 
 
 ### The node's rounds: one table each (10-20)
