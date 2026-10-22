@@ -234,10 +234,21 @@ fn leaves(g: &craftworks_mls::Account, gov: Option<&craftworks_gov::Gov>, now_ms
 /// A space's READERS: the epochs held here and whose devices are read (`account::reading_dids`, the page's too: the
 /// group's members and the owner). None: its group does not load here.
 pub(crate) fn readers<H: Host>(h: &H, member: &[u8; 32], m: &Mandate) -> Option<(std::collections::BTreeMap<u64, [u8; 32]>, Vec<[u8; 32]>)> {
-    let (_, epochs) = crate::rekey_round::space_of(h, member, m)?;
-    let g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state).ok()?;
-    let group: Vec<String> = leaves(&g, None, 0).into_iter().map(|l| l.did).collect();
-    let dids = craftworks_account::reading_dids(&group, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
+    let epochs = identity::epochs_below(h, member, m.space, u64::MAX).into_iter().collect();
+    // THE LIST (K8.1), as last read whole here; and — MIGRATING (K8.4, removed at K8.6) — whoever the MLS group still
+    // holds that no act lists yet (a space made before the list acts), so their acts and items are read meanwhile.
+    // (Only accounts whose card names their member — `keys_round::known`: one never carded, or gone, is never read
+    // round after round; fx 10-18, the per-round cap.)
+    let known: Vec<String> = keys_round::known(h, member, &m.space).into_iter().map(|k| k.0).collect();
+    let mut listed: Vec<String> = roster_kept(h, member, &m.space).into_iter().filter(|d| known.contains(d)).collect();
+    if let Ok(g) = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state) {
+        for l in leaves(&g, None, 0) {
+            if !listed.contains(&l.did) {
+                listed.push(l.did);
+            }
+        }
+    }
+    let dids = craftworks_account::reading_dids(&listed, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
     Some((epochs, dids))
 }
 
@@ -271,10 +282,25 @@ pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, mut r: Round) -> Vec<Io> 
     begin(h, c, r.member, r.me, r.rest)
 }
 
-/// The space's list as its acts say (`gov`'s replay, the page's too).
-pub(crate) fn governance<H: Host>(h: &H, r: &Round, now_ms: u64) -> Option<craftworks_gov::Gov> {
+/// The space's list as its acts say (`gov`'s replay, the page's too). Read WHOLE, it is KEPT (`roster_kept`): whose
+/// devices the next round reads (K8.1 — the list, not the MLS group, is who is in a space).
+pub(crate) fn governance<H: Host>(h: &mut H, r: &Round, now_ms: u64) -> Option<craftworks_gov::Gov> {
     let m = mandate(h, r)?;
-    Some(crate::rekey::governance(&r.reading, &r.reading.writer_dids, &m.owner, now_ms))
+    let gov = crate::rekey::governance(&r.reading, &r.reading.writer_dids, &m.owner, now_ms);
+    if whole(r, &gov).is_ok() {
+        let list: Vec<&String> = gov.roster.iter().collect();
+        let _ = h.set_secret(&roster_key(&r.member, &r.space), &serde_json::to_vec(&list).unwrap_or_default());
+    }
+    Some(gov)
+}
+/// A space's LIST as this node last read it whole (none yet: empty — its owner is read, and the list widens round by
+/// round as its acts name more).
+const ROSTER: &[u8] = b"identity_upkeep/roster/";
+fn roster_key(member: &[u8; 32], space: &[u8; 32]) -> Vec<u8> {
+    [ROSTER, &member[..], &space[..]].concat()
+}
+pub(crate) fn roster_kept<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<String> {
+    h.get_secret(&roster_key(member, space)).and_then(|v| serde_json::from_slice(&v).ok()).unwrap_or_default()
 }
 
 /// The list read WHOLE (the guard): no feed silent, no act named and not held.

@@ -313,6 +313,11 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    soon as it is written; and each space is reconciled again soon after its list, its key operations or a listed
    account's card changes (`members` follow). Measured on fx: placed 16–17 s after the invite, a generation-sealed
    message read 15 s after it was written (before: never in 15 min — the card's member waited for the 10-minute pass).
+   WHO IS IN IS THE LIST (K8.1, retiring MLS): a space's members and writers are its acts' list — each listed account's
+   devices (`storage.setRoster` from each replay; the node keeps the list it last read whole, `upkeep::roster_kept`,
+   reading only carded accounts), widened as the acts name more — never the MLS group. While migrating (until K8.6)
+   whoever the MLS group still holds and no act lists yet is read too, so a space made before the list acts loses
+   no one's items.
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.

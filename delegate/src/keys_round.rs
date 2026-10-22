@@ -43,8 +43,8 @@ pub(super) fn asking<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], di
 }
 
 /// A member learned: its DID, member id, leaf, and when its card was read.
-pub(super) type Known = (String, [u8; 32], [u8; 32], u64);
-pub(super) fn known<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<Known> {
+pub(crate) type Known = (String, [u8; 32], [u8; 32], u64);
+pub(crate) fn known<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<Known> {
     if let Some(k) = h.get_secret(&[KNOWN, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()) {
         return k;
     }

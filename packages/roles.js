@@ -159,23 +159,7 @@ export async function start(ctx) {
     let groupRead = false;
     // MEMBERS and WRITERS: the one map (`storage.writersOf` — members whose credential is really theirs, their devices,
     // and the space's DEPARTED writers, a dropped device's rows its author's up to where it stood; owner 10-16).
-    const learn = async st => {
-      if (st) groupRead = true;
-      left = !!st?.removed;
-      const w = await storage.writersOf(sp);
-      const all = (st?.members ?? []).filter(m => m.cred);
-      group = w.members;
-      told([...w.byNode].map(([n, x]) => learnWriter(n, x.did)).some(Boolean));
-      // Members whose DEVICES did not read (`account::devices_step`'s why): their acts not looked for — the list short.
-      devicesUnread = [...new Set(group.map(m => m.did))].map(d => [d, directory.devicesWhy(d)]).filter(([, why]) => why).map(([d, why]) => `${d}: ${why}`);
-      // SAID when it changes (owner 10-07: a member's space showed 0 members): what the group gave, and what was kept.
-      const said = `${st ? `${st.members?.length ?? 0} member(s) at epoch ${st.epoch ?? "?"}${st.removed ? " (this node removed)" : ""}` : "not ready"}, ${all.length} with a credential, ${group.length} kept`;
-      (await ctx.require("lifecycle")).logOnce("roles", sp.id, `${sp.name ?? sp.id.slice(0, 8)}: its group — ${said}`);
-    };
-    if (!out) await learn(await g.ready());
-    const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
-
-    // THE REPLAY: the acts in order, each kept only if its signer could (the core's `Governance`).
+    // THE REPLAY's state (below): the list as its acts say it — read by `learn` too.
     let gv = null;
     let counted = [];
     let owner = first;
@@ -184,6 +168,33 @@ export async function start(ctx) {
     let gone = new Set();
     // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
     let listWhole = false;
+    // MLS (until K8.2/K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`) — and
+    // whether this node was removed from it (`left`). WHO IS IN is the LIST (K8.1): `group` below.
+    let mlsMembers = [];
+    const glue_did = cred => {
+      try {
+        return node.glue.credential_did(node.bytes(cred)) ?? null;
+      } catch {
+        return null;
+      }
+    };
+    const learn = async st => {
+      if (st) left = !!st.removed;
+      mlsMembers = (st?.members ?? []).filter(m => m.cred).map(m => ({ ...m, did: glue_did(m.cred) })).filter(m => m.did);
+      // THE LIST tells the storage whose devices write (`storage.setRoster`): their feeds gathered, the list widened.
+      storage.setRoster(sp.id, [...roster]);
+      const w = await storage.writersOf(sp);
+      group = [...roster].map(did => ({ did }));
+      groupRead = t.state?.s === "present" || t.state?.s === "absent";
+      told([...w.byNode].map(([n, x]) => learnWriter(n, x.did)).some(Boolean));
+      // Members whose DEVICES did not read (`account::devices_step`'s why): their acts not looked for — the list short.
+      devicesUnread = [...new Set(group.map(m => m.did))].map(d => [d, directory.devicesWhy(d)]).filter(([, why]) => why).map(([d, why]) => `${d}: ${why}`);
+      (await ctx.require("lifecycle")).logOnce("roles", sp.id, `${sp.name ?? sp.id.slice(0, 8)}: its list — ${group.length} listed, ${w.byNode.size} writer device(s)${left ? " (this node removed)" : ""}`);
+    };
+    if (!out) await learn(await g.ready());
+    const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
+
+    // THE REPLAY: the acts in order, each kept only if its signer could (the core's `Governance`).
     function replay() {
       const rows = t.rows().map(r => [r.key, r.value, r.id ? r.id.slice(0, 64) : null]);
       const next = G.replay(JSON.stringify(rows), JSON.stringify(Object.fromEntries(writers)), first ?? undefined, Date.now());
@@ -268,7 +279,7 @@ export async function start(ctx) {
     // members, no apps, no channels, until a reload, and a reload raced the same way): on every change of its acts and
     // every key handed over, and — while it still has no members — every few seconds (3 s, doubling, to a minute, for
     // ten minutes). A changed group: the acts replayed (their writers known now) and everyone told.
-    const sig = () => group.map(m => m.key).sort().join(",");
+    const sig = () => `${group.map(m => m.did).sort().join(",")}|${[...writers.keys()].sort().join(",")}`;
     let relearning = null;
     const relearn = () =>
       (relearning ??= (async () => {
@@ -434,7 +445,7 @@ export async function start(ctx) {
       // The people of the space now: its group's accounts, with their roles.
       members: () => [...new Set(group.map(m => m.did))].map(did => ({ did, role: role(did) })).filter(m => m.role),
       // A person's member in the group (to remove them): one per DID.
-      nodesOf: did => group.filter(m => m.did === did),
+      nodesOf: did => mlsMembers.filter(m => m.did === did),
       // Brought current with the group (a member added or removed).
       // THE LIST READ WHOLE (I6): what reconciling the space's keys waits for (`members`).
       whole: () => listWhole,

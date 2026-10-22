@@ -2943,3 +2943,25 @@ Next (owner to choose): K8 groundwork — new spaces still seal with MLS epochs 
 
 ## 10-22: v415 RELEASED (siteV a117e034b3b0, main 1e8d67d): reads answered or arriving (storage→room→feed; shared view re-reads), readsAnyone/isPublic reads at the frame bridge (Board panel 3→0), one room per space (Home and the space view share it), Board panel = where.spacesFor.
 K4 measured (fx 10-22): the tree has NO generations (g.generations() empty) — no key change is ever made, so storage keeps sealing with MLS; and A keeps a stale cached "no member yet" for B (card has it 40 s later) so B is never added. identity.epochKeep now rejects a refusal (was counted as kept).
+
+## K8 — RETIRE MLS (owner 10-22: "new process should ditch mls totally"; BeeKEM replaces it, no fallback)
+Inventory (10-22, 40+ sites): MLS still provides (1) a space's WRITERS (storage.currentWriters ← MLS group creds) — which
+feeds every table and BeeKEM's own pub-keyops read; (2) roles members/left/whole/nodesOf; (3) removal (node follow-out,
+file-keys gate, moderation count, rekey_round space_of); (4) space create/enter/mandate (no MLS snapshot → no node
+upkeep); (5) writes awaiting keys.group(sp).ready; (6) the ACCOUNT group (devices: account epochs, escrow/words, devices
+contract, writable gate); (7) lost-branch keys kept in keys.js (the bridge reads them).
+Phases (each: build → fx tests → commit → gate 3/3 → release):
+- [x] K8.1 (10-22, fx 19/19: placement 5, chat 3, removal 3, unfriend 3, relist 4; delegate 37/37 — storage.setRoster/currentWriters from the list ∪ MLS-while-migrating; roles group = list; node
+      readers = kept list ∩ carded ∪ MLS-while-migrating ∪ owner; delegate 37/37) A space's writers and members from its LIST (acts roster → each DID's devices), not the MLS group: storage
+      currentWriters/writersOf, roles members/whole/nodesOf/membersText, node readers() + rekey_round space_of.
+- [ ] K8.2 Removal through BeeKEM only: tree placed→false = left (space.forget, roles.left); file-keys gate on the tree;
+      moderation's "still in" count from the tree; node follow-out's MLS commit dropped.
+- [ ] K8.3 Spaces without MLS: create/join make no MLS group; writes do not wait on it; the node mandate carries every
+      space (no MLS snapshot); upkeep group_state machine on the tree.
+      ALSO: a self-joiner lists itself by its own `join` act in its own feed — read today only because it enters MLS.
+      Without MLS the writers bag must carry each device's DID so self-judged tables (acts, pub-acts, pub-keyops) are
+      read from every bagged device (gov/our check judge them) before the writer is listed.
+- [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
+      live spaces listed migrated / not (members never back named).
+- [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
+- [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.

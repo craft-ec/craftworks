@@ -1054,20 +1054,32 @@ export async function start(ctx) {
   // THE SPACE's MEMBERS and their CURRENT devices: the group's members whose credential is really their DID's (signed
   // by the data key its key log names — a credential names any DID it likes), each DID's devices (`directory.devices`:
   // the one resolution). → { members: [{ did, key, index }], devices: [[did, nodes]], nodes }.
+  // A SPACE's LIST as its acts say it (`roles.setRoster`, each replay): the accounts whose devices write there (K8.1,
+  // 10-22 — the list, not the MLS group, is who is in a space). Each change tells the space's scope (`craftworks:roster`):
+  // a new member's feeds gathered, their acts replayed, the list widened until nobody new is named.
+  const rosters = new Map(); // space id → [did], sorted
+  function setRoster(id, dids) {
+    const next = [...new Set(dids)].sort();
+    if (rosters.get(id)?.join(",") === next.join(",")) return;
+    rosters.set(id, next);
+    dispatchEvent(new CustomEvent("craftworks:roster", { detail: { space: id } }));
+  }
   async function currentWriters(sp) {
-    const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
-    const st = await keys.group(sp).ready.strict();
-    const byte = bytes;
-    // (Each credential read by the one reader — `identity::read_credential`, its signature checked.)
-    const all = (st?.members ?? []).filter(m => m.cred).map(m => ({ m, c: JSON.parse(glue.credential_parts(byte(m.cred)) ?? "null") })).filter(x => x.c).map(({ m, c }) => ({ key: m.key, index: m.index, did: c.did, signer: c.owner }));
-    const real = await Promise.all(all.map(async m => (await directory.dataKey(m.did)) === m.signer));
-    for (const [i, m] of all.entries()) if (!real[i]) ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: a member claims ${m.did.slice(12, 20)}… with a key that is not its: left out` });
-    const members = all.filter((_, i) => real[i]);
-    // WHOSE DEVICES are read (`account::reading_dids`, the node's too): the group's members and the space's owner.
-    const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify(members.map(m => m.did)), sp.governance?.owner ?? undefined));
+    const directory = await ctx.require("directory");
+    const listed = rosters.get(sp.id) ?? [];
+    // MIGRATING (K8.4, removed at K8.6): a member the MLS group holds and no act lists yet (a space made before the list
+    // acts, its creator not yet back to list them) — still read, so their items do not vanish meanwhile.
+    const mls = await ctx.optional("storage: MLS members while migrating", (async () => {
+      const st = await (await ctx.require("keys")).group(sp).ready();
+      const all = (st?.members ?? []).filter(m => m.cred).map(m => JSON.parse(glue.credential_parts(bytes(m.cred)) ?? "null")).filter(Boolean);
+      const real = await Promise.all(all.map(async c => (await directory.dataKey(c.did)) === c.owner));
+      return all.filter((_, i) => real[i]).map(c => c.did).filter(d => !listed.includes(d));
+    })(), () => []);
+    // WHOSE DEVICES are read (`account::reading_dids`, the node's too): the listed, the owner.
+    const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify([...listed, ...mls]), sp.governance?.owner ?? undefined));
     const sets = await Promise.all(dids.map(d => directory.devices.strict(d)));
     const devices = dids.map((d, i) => [d, sets[i]]);
-    return { st, members, devices, nodes: [...new Set(sets.flat())] };
+    return { members: dids.map(did => ({ did })), devices, nodes: [...new Set(sets.flat())] };
   }
   // WHO WROTE A SPACE's ROWS — THE ONE MAP (owner 10-16: "any question about access should be centralized"): its
   // members' current devices and its DEPARTED writers (a member put out, or a device dropped from its account — the
@@ -1112,25 +1124,19 @@ export async function start(ctx) {
       // Its WRITERS NOW: every current device of every member (`writersOf`'s current part) — this device's siblings too.
       writers: async () => (await currentWriters(sp)).nodes.filter(k => k !== sp.self),
       // New writers: a member's devices changed (their card), or the members did (the group moved).
+      // New writers: the LIST changed (`craftworks:roster`), a listed account's devices did (their card), or — while
+      // migrating — the MLS group moved.
       watch: fn => {
         const mine = e => !e.detail?.space || e.detail.space === sp.id;
         addEventListener("craftworks:keys", e => mine(e) && fn());
         ctx.background("storage: async", (async () => {
-          const [keys, directory] = await Promise.all(["keys", "directory"].map(n => ctx.require(n)));
-          const members = (await keys.group(sp).ready.strict())?.members ?? [];
+          const directory = await ctx.require("directory");
           const watched = new Set();
-          const each = () => {
-            for (const m of members.filter(m => m.cred)) {
-              const d = glue.credential_did(bytes(m.cred));
-              if (!watched.has(d)) watched.add(d), directory.onDevices(d, fn);
-            }
+          const each = async () => {
+            for (const d of (await currentWriters(sp)).members.map(m => m.did)) if (!watched.has(d)) watched.add(d), directory.onDevices(d, fn);
           };
-          each();
-          addEventListener("craftworks:keys", async e => {
-            if (!mine(e)) return;
-            members.splice(0, members.length, ...((await keys.group(sp).ready())?.members ?? []));
-            each();
-          });
+          await each();
+          addEventListener("craftworks:roster", e => e.detail?.space === sp.id && (fn(), ctx.background("storage: watch", each())));
         })());
       },
       // This device's catalog listed in the space's writers bag BEFORE it is made: nobody asks for it before then.
@@ -1817,5 +1823,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { decided, writersOf, currentWriters, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }
