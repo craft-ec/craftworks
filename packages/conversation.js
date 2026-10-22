@@ -67,6 +67,10 @@ export async function start(ctx) {
     const st = await g.ready();
     if (!st || st.removed) await g.enter(why, proof);
     await space.record(d.id, v);
+    // ITS BEEKEM GROUP at once (K4, 10-22): this account's member on its card (`members.me`, what any member adds) and
+    // the space reconciled — the add of this device merged as soon as it is written (measured: a newcomer's card had no
+    // member until the 10-minute pass, so nobody could add it and it read nothing).
+    ctx.background("conversation: members", ctx.require("members").then(m => m.group(sp).reconcile()));
     (await ctx.require("lifecycle")).transition("join", d.id, "joined", { s: d.id.slice(0, 6), why });
     return sp;
   }

@@ -126,6 +126,7 @@ export async function start(ctx) {
       // WHOSE CARDS (`gov::check_dids`, the node's too): the listed, the owner, everyone an act moved.
       const found = await Promise.all(JSON.parse(glue.check_dids(JSON.stringify(roster), owner ?? "", JSON.stringify(r.acts()))).map(async d => [d, await memberOf(d)]));
       const unmapped = found.filter(([, m]) => m.why);
+      for (const [d] of unmapped) watchCard(d);
       // (Said once per change: the lifecycle records a repeated step once.)
       const um = unmapped.map(([d, m]) => `${d.slice(12, 20)}: ${m.why}`).join("; ");
       if (um) life().then(l => l.transition("group", sp.id, "keys-unmapped", { why: um.slice(0, 300), n: unmapped.length }));
@@ -260,6 +261,7 @@ export async function start(ctx) {
     // account listed: it places itself, naming its act), then the one plan (`BeeGroup.reconcile`) from a WHOLE read of the
     // list, its operations sent; the bridge written when this device holds MLS epochs, and crossed.
     async function reconcileNow() {
+      await ctx.optional("members: follow", follow(), () => null);
       const said = await syncNow();
       // (A SHORT read changes nothing — above all it never makes a tree: an operation not merged is not proof there is none.)
       if (said.short) return said;
@@ -292,6 +294,12 @@ export async function start(ctx) {
         said.added = r.added;
         said.removed = r.removed;
         if (r.not.length) said.not = r.not;
+        // K4 — THE GENERATION TO WRITE WITH (`BeeGroup.current`: a key change made first when the tree has none current
+        // here — one root never updated, members just added, concurrent heads): its operation sent, the generation kept
+        // with the others, so the storage seals with it (10-22, measured: nothing ever asked — no generation existed and
+        // every write stayed on MLS).
+        const [, , op] = g.current();
+        if (op) (await send(op), await save());
         said.generations = await keepGenerations();
         said.bridged = await ctx.optional("members: bridge", bridge(), () => 0);
       }
@@ -305,6 +313,27 @@ export async function start(ctx) {
       if (said.crossed) l.transition("group", sp.id, "keys-crossed", { why: `${said.crossed} MLS epoch(s) of its history kept from the bridge`, n: said.crossed });
       return said;
     }
+
+    // FOLLOWED (K4, 10-22): reconciled SOON after what it decides on changes — its list (an act: someone added or put
+    // out), its key operations (another's add of this device, a key change), and a listed account's card (a newcomer's
+    // member written) — not only on the 10-minute pass (measured: a newcomer placed 10–20 minutes after joining, unable
+    // to read meanwhile). One reconcile per burst (`soon`), in the group's queue.
+    let due = null;
+    const soon = () => (due ??= setTimeout(() => ((due = null), ctx.background("members: followed", once(reconcileNow))), 3000));
+    let following = false;
+    const watchedCards = new Set();
+    async function follow() {
+      if (following) return;
+      following = true;
+      (await feed()).onChange(soon);
+      (await (await ctx.require("roles")).of.strict(sp)).onChange(soon);
+    }
+    // A listed account with no member yet: its card followed — its member written, it is read fresh and placed.
+    const watchCard = did => {
+      if (watchedCards.has(did)) return;
+      watchedCards.add(did);
+      directory.onDevices(did, () => (memberRead.delete(did), soon()));
+    };
 
     const handle = {
       reconcile: () => once(reconcileNow),
@@ -354,6 +383,8 @@ export async function start(ctx) {
   // carried. (With every page closed, the node does it: K5.)
   async function reconcileAll() {
     if (!(await space.account())) return 0;
+    // This account's member on its card first — in no space yet, a space that lists it can still add it.
+    await ctx.optional("members: me", me(), () => null);
     let n = 0;
     for (const sp of (await space.mine.strict()).filter(s => s.kind !== "account")) {
       const r = await ctx.optional(`members: reconcile ${sp.id.slice(0, 8)}`, group(sp).reconcile(), () => null);

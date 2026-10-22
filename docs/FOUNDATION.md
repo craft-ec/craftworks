@@ -305,6 +305,12 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    alone, every other member a stray (Ivvor taken out of the owner's direct conversation). One who may list puts on it
    (an `added` act) whoever is in its group and a direct conversation's other, never listed and never put out, once
    the list reads whole; one not in the group is told again and enters by itself (`conversation.relist`, upkeep).
+   BEEKEM ADMITS AT ONCE (K4, 10-22): a space's content is sealed with its BeeKEM generations (`BeeGroup.current`: a
+   key change made when none is current). A newcomer is in within seconds, nothing called: entering a space (every way
+   in, `conversation.enterSpace`) reconciles it — this account's member written on its card, the add of it merged as
+   soon as it is written; and each space is reconciled again soon after its list, its key operations or a listed
+   account's card changes (`members` follow). Measured on fx: placed 16–17 s after the invite, a generation-sealed
+   message read 15 s after it was written (before: never in 15 min — the card's member waited for the 10-minute pass).
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.
