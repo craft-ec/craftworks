@@ -230,7 +230,24 @@ export async function start(ctx) {
         if (room < these.length && capSaid !== day) (capSaid = day), ctx.log("lifecycle", { what: `the journal of ${day} is full (${DAY_CAP} moves): later moves not kept` });
         // (A BACKGROUND write, never the person's save — said so: a click while it ran made it look like theirs, and its
         // refusal was shown as "Not saved", 10-20.)
-        for (const e of these.slice(0, Math.max(0, room))) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }), false);
+        // ONCE PER CHANGE ACROSS PAGES: a STEP (nothing moved) the same as the last one recorded for its key — by any page
+        // of this account, any load — is not written again (10-22: a refused key tree re-recorded by every page load,
+        // dozens an hour, identical).
+        const last = new Map();
+        for (const r of [...t.rows()].filter(r => r.value).sort((a, b) => (a.key < b.key ? -1 : 1))) {
+          try {
+            const x = JSON.parse(r.value);
+            last.set(`${x.m}|${x.key}`, x.from === x.to ? `${x.event}|${x.why ?? ""}` : null);
+          } catch {}
+        }
+        const fresh = these.filter(e => {
+          const k = `${e.m}|${e.key}`;
+          const sig = e.from === e.to ? `${e.event}|${e.why ?? ""}` : null;
+          if (sig && last.get(k) === sig) return false;
+          last.set(k, sig);
+          return true;
+        });
+        for (const e of fresh.slice(0, Math.max(0, room))) await t.put(`${e.at.toString(36)}-${Math.random().toString(36).slice(2, 8)}`, JSON.stringify({ ...e, device }), false);
       }
     } catch (e) {
       ctx.log("lifecycle", { what: `${batch.length} move(s) not kept in the journal: ${e?.message ?? e}` });

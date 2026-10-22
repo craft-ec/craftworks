@@ -95,7 +95,11 @@ export async function start(ctx) {
     const suggestPeople = async q => (await ctx.require("person")).mentionable(q, { extra: (await candidates()).map(p => p.did) });
     const ed = mdEditor.create({ compact: true, pick, placeholder: `Message ${title}`, label: `Message ${title}`, onSubmit: () => form.requestSubmit(), suggest: suggestPeople });
     ed.disable(true, `Message ${title}`);
-    const line = el("div", { className: "line" }, ed.el);
+    // SEND, a button too (touch has no Enter): the one way a write is sent (`theme.action`, as a comment is) — the text
+    // kept and "Sending…" said until it is saved, cleared only then; refused, it stays with why (10-22: the text was
+    // cleared at once and a refusal came up to 2 minutes later, after the person had left — a message "lost").
+    const sendBtn = el("button", { type: "submit", className: "cw-btn primary send", textContent: "Send" });
+    const line = el("div", { className: "line" }, ed.el, sendBtn);
     form.append(replying, line);
     box.append(titleEl ? el("h2", {}, titleEl) : el("h2", { textContent: title }), msgs, said, form);
     host.replaceChildren(box);
@@ -264,20 +268,25 @@ export async function start(ctx) {
       if (pick.busy()) return say("Still sending the files: a moment…");
       const withFiles = pick.files();
       if (!text && !withFiles.length) return;
-      const re = replyTo?.id ?? null;
-      ed.clear();
-      replyTo = null;
-      drawReplying();
       say(null);
-      await room.post("message", text, { re, files: withFiles }).catch(err => {
-        ed.set(text);
-        fail("Not sent")(err);
-      });
+      await send(text, withFiles).catch(fail("Not sent"));
     };
+    const send = theme.action(
+      sendBtn,
+      async (text, withFiles) => {
+        await room.post("message", text, { re: replyTo?.id ?? null, files: withFiles });
+        // (Cleared only if nothing new was typed meanwhile.)
+        if (ed.value() === text) ed.clear();
+        replyTo = null;
+        drawReplying();
+      },
+      { busy: "Sending…", done: "Sent ✓" },
+    );
     // Who may post here (the app's setting in the space): the composer says so when this person may not.
     let mayPostNow = false;
     const gate = () => {
       const ok = room.mayPost();
+      sendBtn.hidden = !ok;
       ed.disable(!ok, ok ? `Message ${title}` : ({ admins: "Only admins post here", owner: "Only the owner posts here", nobody: "Nobody posts here" }[room.postingRule()] ?? "You may not post here"));
       mayPostNow = ok;
     };
