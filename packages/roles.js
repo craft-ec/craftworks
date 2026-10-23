@@ -182,7 +182,8 @@ export async function start(ctx) {
       mlsMembers = (st?.members ?? []).filter(m => m.cred).map(m => ({ ...m, did: glue_did(m.cred) })).filter(m => m.did);
       // THE LIST tells the storage whose devices write (`storage.setRoster`): their feeds gathered, the list widened.
       storage.setRoster(sp.id, [...roster]);
-      const w = await storage.writersOf(sp);
+      // (Who wrote each act — the acts' writers: a self-joiner's device, named in the writers bag, authors its own `join`.)
+      const w = await storage.writersOf(sp, { name: space.tableOf(sp, "acts") });
       group = [...roster].map(did => ({ did }));
       groupRead = t.state?.s === "present" || t.state?.s === "absent";
       told([...w.byNode].map(([n, x]) => learnWriter(n, x.did)).some(Boolean));

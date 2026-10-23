@@ -63,9 +63,8 @@ export async function start(ctx) {
     if (!d?.id || !d.owner || !d.nonce || (await space.idOf(d.owner, d.nonce)) !== d.id) throw new Error("that space's description does not match its id");
     const v = rowOf(d, extra);
     const sp = await space.describe(d.id, v);
-    const g = keys.group(sp);
-    const st = await g.ready();
-    if (!st || st.removed) await g.enter(why, proof);
+    // (No MLS entry — K8.3: this account's BeeKEM member on its card and the space reconciled, below; listed by an
+    // `added` act or its own `join` act.)
     await space.record(d.id, v);
     // ITS BEEKEM GROUP at once (K4, 10-22): this account's member on its card (`members.me`, what any member adds) and
     // the space reconciled — the add of this device merged as soon as it is written (measured: a newcomer's card had no
@@ -342,7 +341,8 @@ export async function start(ctx) {
     const state = String(to).toLowerCase().replace(/_/g, "-");
     if (to === from || !glue.group_cannot_read(state)) return;
     const sp = (await space.mine.strict()).find(s => s.id === key);
-    if (sp) await keys.group(sp).enter(state).catch(e => ctx.log("conversation", { what: `${sp.name ?? "a space"}: entering by itself (${state}): ${e?.message ?? e}` }));
+    // (Only a space with an MLS group — migrating, K8.3.)
+    if (sp && (await ctx.optional("conversation: keys.group", keys.group(sp).snapshot(), () => null))) await keys.group(sp).enter(state).catch(e => ctx.log("conversation", { what: `${sp.name ?? "a space"}: entering by itself (${state}): ${e?.message ?? e}` }));
   });
 
   // TOLD and HANDED OVER, from this account's inbox — ONE AT A TIME (the chat page and upkeep both ask): each space it
@@ -376,8 +376,9 @@ export async function start(ctx) {
         if (done(k)) continue;
         const had = mine.find(s => s.id === it.desc.id);
         // (Held and still in it: done. One TAKEN OUT — never listed, then listed again — enters again.)
-        const st = had ? await keys.group(had).ready() : null;
-        if (st && !st.removed) {
+        // (Held and still listed: done. One the list put out and listed again enters again.)
+        const st = had ? await ctx.optional("conversation: roles", (await ctx.require("roles")).of(had).then(async r => (await r?.settled, r)), () => null) : null;
+        if (st && !st.left) {
           await ctx.background("conversation: once.put", once.put(k, String(Date.now())));
           continue;
         }

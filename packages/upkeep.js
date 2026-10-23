@@ -64,7 +64,9 @@ export async function start(ctx) {
         if (ev !== "unknown") life.become("group", sp.id, ev, { e: self.e, oe: self.oe, u: self.u });
         // STILL CANNOT READ (no state change, so no reaction — its entry not published yet, or not taken): entered again,
         // at most every ENTER_AGAIN.
-        if (glue.group_cannot_read(ev) && life.state("group", sp.id).s !== "UNKNOWN" && Date.now() - (enteredAt.get(sp.id) ?? 0) >= ENTER_AGAIN) {
+        // (Only a space that has an MLS group — migrating, K8.3: one made since has none to enter.)
+        const hasMls = !!(await ctx.optional("upkeep: keys.group", keys.group(sp).snapshot(), () => null));
+        if (hasMls && glue.group_cannot_read(ev) && life.state("group", sp.id).s !== "UNKNOWN" && Date.now() - (enteredAt.get(sp.id) ?? 0) >= ENTER_AGAIN) {
           enteredAt.set(sp.id, Date.now());
           await keys.group(sp).enter(ev).catch(e => ctx.log("upkeep", { what: `${sp.name}: entering by itself: ${e.message}` }));
         }

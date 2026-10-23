@@ -1068,9 +1068,19 @@ export async function start(ctx) {
     rosters.set(id, next);
     dispatchEvent(new CustomEvent("craftworks:roster", { detail: { space: id } }));
   }
-  async function currentWriters(sp) {
+  // THE TABLES JUDGED ROW BY ROW (the acts by the replay, key operations by our check): read from every device the
+  // writers bag names with its account, its devices confirming it — a self-joiner's `join` act is read before the list
+  // names it (K8.3: no MLS entry brings their feeds in any more). Every other table: the list's.
+  const SELF_JUDGED = /-(acts|pub-acts|pub-keyops)$/;
+  async function currentWriters(sp, name = "") {
     const directory = await ctx.require("directory");
-    const listed = rosters.get(sp.id) ?? [];
+    let listed = rosters.get(sp.id) ?? [];
+    if (SELF_JUDGED.test(name)) {
+      const b = await ctx.optional("storage: writersBag", writersBag(sp), () => null);
+      const named = [...new Set(b?.dids?.values() ?? [])].filter(d => !listed.includes(d));
+      const ok = await Promise.all(named.map(async d => (await directory.devices(d)).some(w => b.dids.get(w) === d)));
+      listed = [...listed, ...named.filter((_, i) => ok[i])];
+    }
     // MIGRATING (K8.4, removed at K8.6): a member the MLS group holds and no act lists yet (a space made before the list
     // acts, its creator not yet back to list them) — still read, so their items do not vanish meanwhile.
     const mls = await ctx.optional("storage: MLS members while migrating", (async () => {
@@ -1090,9 +1100,10 @@ export async function start(ctx) {
   // space's `departed` table), combined by the core (`space_writers` = `craftworks_account::writers`, the node's too):
   // `{ members, byNode: Map(node → { did, caps }) }` (`caps`: a departed writer's — counted up to there).
   // From OUTSIDE (`roster`: the DIDs its public acts name; `departedRows`: its `pub-departed`): the same rule.
-  async function writersOf(sp, { roster = null, departedRows = null } = {}) {
+  // `name`: a table's — a self-judged one (the acts) maps the writers bag's named devices too (K8.3).
+  async function writersOf(sp, { roster = null, departedRows = null, name = "" } = {}) {
     const directory = await ctx.require("directory");
-    const cur = roster ? { members: [], devices: await Promise.all(roster.map(async d => [d, await directory.devices(d)])) } : await currentWriters(sp);
+    const cur = roster ? { members: [], devices: await Promise.all(roster.map(async d => [d, await directory.devices(d)])) } : await currentWriters(sp, name);
     const rows = departedRows ?? (await (async () => {
       const t = await merged(space.tableOf(sp, "departed"), sp);
       await t.settled;
@@ -1126,7 +1137,7 @@ export async function start(ctx) {
       bag: fresh => writersBag(sp, fresh),
       list: ws => listWriters(sp, ws),
       // Its WRITERS NOW: every current device of every member (`writersOf`'s current part) — this device's siblings too.
-      writers: async () => (await currentWriters(sp)).nodes.filter(k => k !== sp.self),
+      writers: async name => (await currentWriters(sp, name)).nodes.filter(k => k !== sp.self),
       // New writers: a member's devices changed (their card), or the members did (the group moved).
       // New writers: the LIST changed (`craftworks:roster`), a listed account's devices did (their card), or — while
       // migrating — the MLS group moved.
@@ -1189,7 +1200,7 @@ export async function start(ctx) {
           const items = await index.spacePointers.strict(sp, "writers");
           // `blind`: entries no key here opens — who they name is unknown, so every member's device is read (a
           // missing catalog only costs a lookup, asked less and less often).
-          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), blind: (items.unread ?? 0) > 0, pub: new Set(items.filter(i => typeof i?.w === "string" && typeof i?.pub === "string").map(i => `${i.w}|${i.pub}`)) };
+          const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), blind: (items.unread ?? 0) > 0, pub: new Set(items.filter(i => typeof i?.w === "string" && typeof i?.pub === "string").map(i => `${i.w}|${i.pub}`)), dids: new Map(items.filter(i => typeof i?.w === "string" && typeof i?.did === "string").map(i => [i.w, i.did])) };
           ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)`, ms: Math.round(performance.now() - t0) });
           // A writer listed only under an EPOCH (before the list was sealed with the space's own key): listed again as
           // every member reads it, by whoever reads it now — once per page and writer.
@@ -1216,7 +1227,9 @@ export async function start(ctx) {
     const b = await ctx.optional("storage: writersBag", writersBag(sp), () => ({ set: new Set() }));
     for (const w of ws)
       if (!b.set.has(w)) {
-        await index.spacePoint(sp, "writers", { w });
+        // (THIS device's listing names its account too — K8.3: a self-joiner's acts are read before the list names it.)
+        const acc = w === sp.self ? await space.account() : null;
+        await index.spacePoint(sp, "writers", acc?.id ? { w, did: acc.id } : { w });
         b.set.add(w);
       }
   }
@@ -1242,7 +1255,7 @@ export async function start(ctx) {
     if (tables.has(at)) return lazy ? tables.get(at) : tables.get(at).then(t => (t.lazy ? t.whole().then(() => t) : t));
     const ready = (async () => {
       if (sp.kind === "account" && !sp.shared) throw new Error("this node does not hold the account's data key: log in once with the recovery words");
-      const [mine, nowWriters] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers()]);
+      const [mine, nowWriters] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers(name)]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
       const bag = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(), () => null) : null;
       // THE WRITERS (`account::table_writers`, the node's too): the members' devices the bag lists (all, a blind bag) and,
@@ -1355,14 +1368,17 @@ export async function start(ctx) {
           // first looked, a newcomer read it only when the writer's catalog happened to change — or never).
           for (const [o, open] of notOpened) if (opened.has(o)) notOpened.delete(o);
           else ctx.background("storage: open public", open());
+          ctx.background("storage: rewatch", rewatch());
         });
       if (scope.departed?.(name)) ctx.background("storage: scope.departedTable", scope.departedTable().then(d => d.onChange(() => ctx.background("storage: gatherDeparted", gatherDeparted()))));
       // A WRITER NEW since the table opened (a member's new device, a new member): gathered when the scope says so.
       const seen = new Set(others.filter(listed));
       // The bag AS HELD answers; read again only for a writer it does not list (10-15, owner's trace: every directory
       // change — each card read — read every space's bag again, one every ~5 s for as long as the page was open).
-      scope.watch?.(async () => {
-        const fresh = (await ctx.optional("storage: scope.writers", scope.writers(), () => [])).filter(o => !seen.has(o));
+      // (Also when the WRITERS BAG changes — K8.3: a self-joiner's device names its account there, and its acts must be
+      // read before the list names it; before, a bag change only gathered writers known when the table opened.)
+      const rewatch = async () => {
+        const fresh = (await ctx.optional("storage: scope.writers", scope.writers(name), () => [])).filter(o => !seen.has(o));
         if (!fresh.length) return;
         let b = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(false), () => bag) : null;
         if (b && !b.blind && fresh.some(o => !b.set.has(o))) b = await ctx.optional("storage: scope.bag", scope.bag(true), () => b);
@@ -1373,11 +1389,11 @@ export async function start(ctx) {
         // (Read: routine, journaled. One WAITING — not in the writers bag yet — REPORTED: what a user would otherwise only
         // see as a member's writing that never shows.)
         if (sp?.id && sp.kind !== "account") (await ctx.require("lifecycle")).transition("group", sp.id, fresh.length > now.length ? "writers-waiting" : "writers-found", { table: name.slice(-12), fresh: fresh.length, read: now.length, waiting: fresh.length - now.length, why: fresh.length > now.length ? `${fresh.length - now.length} new writer(s) not in the writers bag yet` : undefined });
-      });
+      };
+      scope.watch?.(rewatch);
       ctx.log("table open", { what: `${name}: ${rows.length} row(s) from ${all.filter(f => !f.absent).length} feed(s)` });
       // A write in a space: its group brought current first, so what is written is sealed with the newest epoch's key
       // (never one a member removed since still holds).
-      const current = sp.kind === "account" ? async () => {} : async () => ctx.optional("storage: group", (await ctx.require("keys")).group(sp).ready({ fresh: true }), () => null);
       // A PAGE across the writers (phase 3, Reads): each feed's page, their versions merged, the newest `limit` rows
       // kept — each feed has at most `limit` keys at or past the page's last, so none is skipped — and where to go on.
       // `{ lo, hi, before, limit }` (keys as text; `before`: continue below that key).
@@ -1416,7 +1432,7 @@ export async function start(ctx) {
         return (await page({ lo: key, hi: `${key}\u0000`, limit: 1 })).rows.find(r => r.key === key)?.id;
       };
       const write = async (key, value, user = !!navigator.userActivation?.isActive) => {
-        await current();
+        // (K8.3: no fresh MLS group read before a write — the table's newest key is checked below, its own only.)
         // A newer epoch just learned: the open tails move onto it before this is sealed.
         if (sp.kind !== "account") await ctx.background("storage: sealNewest", sealNewest(hexOf(me.id)));
         return versioned(me, key, value, await currentId(key), user);

@@ -179,7 +179,7 @@ export async function start(ctx) {
     const nonce = hex(crypto.getRandomValues(new Uint8Array(16)));
     const v = { kind, name, owner: acc.id, nonce, at: Date.now(), ...extra };
     const sp = made(await idOf(acc.id, nonce), v, acc);
-    await (await ctx.require("keys")).group(sp).create();
+    // (No MLS group — K8.3: its keys are its BeeKEM tree, made just below.)
     await (await (await ctx.require("storage")).table(SPACES)).put(sp.id, JSON.stringify(v));
     // ITS BEEKEM TREE (K7): made with it — the maker placed; members added as the list names them.
     ctx.background("space: members tree", ctx.require("members").then(m => m.group(sp).reconcile()));
