@@ -153,9 +153,9 @@ export async function start(ctx) {
     // handed to the identity as the space's epochs (`epochKeep`), so the storage seals and reads this space's tables with
     // them — writing with the newest. Each once; then the tables are told (`craftworks:keys`).
     const kept = new Set();
-    async function keepGenerations() {
+    async function keepGenerations(tree = g) {
       let n = 0;
-      for (const [num, secret] of g.generations()) {
+      for (const [num, secret] of tree.generations()) {
         if (kept.has(num)) continue;
         await auth.identity.epochKeep(Number(num), secret, sp.idBytes);
         kept.add(num);
@@ -204,6 +204,10 @@ export async function start(ctx) {
         const fresh = G.BeeGroup.empty(sp.idBytes, (await me()).seed);
         fresh.merge_all(read.filter(Boolean), c.list);
         const reach = new Set(fresh.generations().map(([n]) => String(n)));
+        // Every generation the fresh merge reaches kept too (10-23): a concurrent key change — another member's, made
+        // beside this page's newer one — reaches a generation this page's own tree does not list, which a writer sealed
+        // with (Craftworks: Ivvor's change, 104120349, a table unreadable to the owner's page).
+        await keepGenerations(fresh);
         const extra = g.generations().map(([n]) => String(n)).filter(n => !reach.has(n));
         if (extra.length && fresh.placed()) {
           // (Kept first: the identity holds them, the bridge carries them.)
