@@ -466,6 +466,21 @@ mod page {
         }
     }
 
+    /// AN OPERATION described (diagnostics, 10-23): its hash, its kind and the hashes of the operations it builds on —
+    /// `[hash hex, kind, [predecessor hex…]]`, or null for bytes that are not one.
+    #[wasm_bindgen]
+    pub fn beekem_op_info(op: &[u8]) -> JsValue {
+        let Ok(op) = bincode::deserialize::<Signed<CgkaOperation>>(op) else { return JsValue::NULL };
+        let h = keyhive_crypto::digest::Digest::hash(&op);
+        let kind = match &op.payload {
+            CgkaOperation::Add { .. } => "add",
+            CgkaOperation::Remove { .. } => "remove",
+            CgkaOperation::Update { .. } => "update",
+        };
+        let preds: js_sys::Array = op.payload.predecessors().iter().map(|d| JsValue::from(hex(d.as_slice()))).collect();
+        [JsValue::from(hex(h.as_slice())), JsValue::from(kind), preds.into()].into_iter().collect::<js_sys::Array>().into()
+    }
+
     /// An account's member id (hex) and first leaf key, from its space member seed.
     #[wasm_bindgen]
     pub fn beekem_member(member_seed: &[u8]) -> Result<js_sys::Array, JsValue> {

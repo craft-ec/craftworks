@@ -403,7 +403,11 @@ export async function start(ctx) {
           if (pending.length === before) break;
         }
         for (const o of pending) o.result = "waiting: a predecessor no feed here holds";
-        return { whole: c.whole(), placed: fresh.placed(), gens: fresh.generations().map(([n]) => String(n)), ops: ops.map(({ op, ...o }) => ({ ...o, result: o.result ?? "not read" })) };
+        // Each operation's hash, kind and predecessors (`beekem_op_info`): a waiting one names what it waits for.
+        for (const o of ops) if (o.op) [o.hash, o.kind, o.preds] = (() => { const x = G.beekem_op_info(o.op); return x ? [x[0], x[1], [...x[2]]] : [null, null, []]; })();
+        const held = new Set(ops.map(o => o.hash).filter(Boolean));
+        for (const o of pending) o.missing = o.preds.filter(h => !held.has(h)).map(h => h.slice(0, 12));
+        return { whole: c.whole(), placed: fresh.placed(), gens: fresh.generations().map(([n]) => String(n)), ops: ops.map(({ op, preds, ...o }) => ({ ...o, hash: o.hash?.slice(0, 12), preds: (preds ?? []).map(h => h.slice(0, 12)), result: o.result ?? "not read" })) };
       },
       // Whether the tree still HOLDS an account (K8.2): its member, as its card names it, among the tree's — a person
       // put out by the list is out of the keys once this is false.
