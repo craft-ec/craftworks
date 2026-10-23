@@ -2956,7 +2956,7 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       currentWriters/writersOf, roles members/whole/nodesOf/membersText, node readers() + rekey_round space_of.
 - [x] K8.2 (10-23, fx: remove-control 3/3, unfriend 3/3 — salt rotated in 15 s, relist 4/4, placement 5/5, chat 3/3) Removal through BeeKEM only: tree placed→false = left (space.forget, roles.left); file-keys gate on the tree;
       moderation's "still in" count from the tree; node follow-out's MLS commit dropped.
-- [~] K8.3 (page part done 10-24, fx 9/9 incl. joincode, v432; node part built 10-24: mandate names every space, node short-list merge — identity change, owner PIN once) Spaces without MLS: create/join make no MLS group; writes do not wait on it; the node mandate carries every
+- [x] K8.3 (page part v432; node part v433 10-24: mandate names every space, node short-list merge — identity 2911734 B, owner PIN once. fx joincode 6/7: run 1 right after publish never placed B, cause unmeasured — no diagnosis armed then; 6 later runs with it armed all passed) Spaces without MLS: create/join make no MLS group; writes do not wait on it; the node mandate carries every
       space (no MLS snapshot); upkeep group_state machine on the tree.
       ALSO: a self-joiner lists itself by its own `join` act in its own feed — read today only because it enters MLS.
       Without MLS the writers bag must carry each device's DID so self-judged tables (acts, pub-acts, pub-keyops) are
