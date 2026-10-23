@@ -1311,7 +1311,10 @@ export async function start(ctx) {
         // (A PUBLIC table not opened yet: tried again when the open writers list changes — it may name it later.)
         if (opts.public) notOpened.set(o, open);
         if (c.absent) {
-          // Listed, not there yet (being made as it was listed): asked again until it is.
+          // Listed, not there yet (being made as it was listed): asked again until it is. (A PUBLIC table is read by its
+          // name all the same — its writer's catalog missing or evicted, 10-23: Ivvor's key operations in Craftworks, on
+          // every node, were opened by no page.)
+          if (opts.public && sp.kind !== "account") await open();
           absentCatalog(c);
           return;
         }
