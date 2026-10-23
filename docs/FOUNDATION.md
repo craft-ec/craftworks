@@ -329,6 +329,11 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    or the open writers list names it. Found through a catalog sealed with its writer's newest generation, the operation
    giving that generation could never be read (Craftworks: three of the owner's own operations waited for ever on a
    predecessor in its other device's feed, which no catalog the page opened and no open-list entry named).
+   THE TREE IS WHAT THE CHECK MAKES OF THE OPERATIONS (10-23): from a whole list every page merges every operation
+   afresh — one tree on every device. A saved tree that reaches generations the fresh merge does not (a branch on an
+   operation the check now refuses — a member's stray root taken before the creator rule) is dropped; the bridge carries
+   what was sealed with its generations as lost alternates, so every member reads it (Craftworks: the owner's other
+   device's catalog sealed with such a branch's generation, 104120349).
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.

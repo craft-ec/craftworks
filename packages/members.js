@@ -194,6 +194,25 @@ export async function start(ctx) {
         said.short = "the list not read whole";
         life().then(l => l.transition("group", sp.id, "keys-short", { why: `the list not read whole: what the check takes merged, ${said.deferred} deferred (R4)` }));
       }
+      // THE TREE IS WHAT THE CHECK MAKES OF THE OPERATIONS (10-23): from a whole list, every operation merged afresh — the
+      // same tree on every device. A saved tree reaching generations the fresh merge does not (a branch on an operation
+      // the check now refuses: a page that took a member's stray root before the creator rule, 10-19) is DROPPED for
+      // it; what was sealed with the dropped generations is carried by the bridge as lost alternates (`a<n>~`), so every
+      // member reads it. (Craftworks, live: the owner's other device sealed its catalog with such a branch's generation
+      // 104120349, unreadable to everyone else.)
+      if (whole) {
+        const fresh = G.BeeGroup.empty(sp.idBytes, (await me()).seed);
+        fresh.merge_all(read.filter(Boolean), c.list);
+        const reach = new Set(fresh.generations().map(([n]) => String(n)));
+        const extra = g.generations().map(([n]) => String(n)).filter(n => !reach.has(n));
+        if (extra.length && fresh.placed()) {
+          // (Kept first: the identity holds them, the bridge carries them.)
+          await keepGenerations();
+          g = fresh;
+          said.rebuilt = extra;
+          life().then(l => l.transition("group", sp.id, "keys-reconciled", { why: `rebuilt: a branch the check refuses dropped: generation(s) ${extra.join(", ")} carried as lost` }));
+        }
+      }
       said.generations = await keepGenerations();
       said.misses = said.misses.slice(-3);
       await save();
