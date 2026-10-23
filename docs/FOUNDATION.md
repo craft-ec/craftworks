@@ -320,6 +320,11 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    reading only carded accounts), widened as the acts name more — never the MLS group. While migrating (until K8.6)
    whoever the MLS group still holds and no act lists yet is read too, so a space made before the list acts loses
    no one's items.
+   REMOVED IS THE LIST's WORD, THE KEYS FOLLOW IT (K8.2): this node is out of a space when the list's out-acts name its
+   account and it is not listed again (`roles.left`; upkeep forgets the space) — never the MLS group's; a person put out
+   is out of the keys once the BeeKEM tree no longer holds them (`members.holds`): the file re-key waits for that and
+   for its table to seal with the newest generation; where their feeds stood is recorded while the tree (or, migrating,
+   MLS) still holds them.
    A SHORT LIST STILL MERGES what the check takes (10-23): an operation taken on a short read is taken on the whole one
    ("ever listed" only grows — the entry rule above); one it does not take is DEFERRED, never refused. Merging nothing
    deadlocked a member one generation behind: the acts are sealed with the generation it lacked, so its list never read

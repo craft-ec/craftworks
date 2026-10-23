@@ -168,8 +168,8 @@ export async function start(ctx) {
     let gone = new Set();
     // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
     let listWhole = false;
-    // MLS (until K8.2/K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`) — and
-    // whether this node was removed from it (`left`). WHO IS IN is the LIST (K8.1): `group` below.
+    // MLS (until K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`). WHO IS IN is
+    // the LIST (K8.1): `group` below; REMOVED is the list's word too (K8.2, the replay).
     let mlsMembers = [];
     const glue_did = cred => {
       try {
@@ -179,7 +179,6 @@ export async function start(ctx) {
       }
     };
     const learn = async st => {
-      if (st) left = !!st.removed;
       mlsMembers = (st?.members ?? []).filter(m => m.cred).map(m => ({ ...m, did: glue_did(m.cred) })).filter(m => m.did);
       // THE LIST tells the storage whose devices write (`storage.setRoster`): their feeds gathered, the list widened.
       storage.setRoster(sp.id, [...roster]);
@@ -205,6 +204,9 @@ export async function start(ctx) {
       counted = JSON.parse(gv.counted());
       owner = gv.owner() ?? null;
       roster = new Set(gv.roster());
+      // REMOVED (K8.2): the list's out-acts name this account and it is not listed again — the list decides, the keys
+      // follow it (never the MLS group's word).
+      left = !!(me && !roster.has(me.id) && JSON.parse(gv.out_acts()).some(a => (a.did ?? a.by) === me.id));
       bans = new Set(gv.bans());
       gone = new Set(gv.gone());
       // SHORT: an act names one this reader has not got (a feed not read yet, or lost) — said when it changes. From

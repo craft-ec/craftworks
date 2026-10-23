@@ -59,6 +59,8 @@ export async function start(ctx) {
 
   async function of(sp) {
     const r = await roles.of.strict(sp);
+    // STILL IN THE KEYS (K8.2): the BeeKEM tree holds them — or, migrating (until K8.6), the MLS group.
+    const holdsKeys = async did => (await (await ctx.require("members")).group(r.space).holds(did)) || r.nodesOf(did).length > 0;
     // OUT: the act — naming their devices, so what they wrote stays theirs after they leave — and where their feeds
     // stand recorded; the KEYS FOLLOW the list (FOUNDATION "Members and keys": the node's follower takes their entries
     // out — asked to run now). A ban of someone already out is the act alone.
@@ -67,7 +69,7 @@ export async function start(ctx) {
       // ON THE LIST (the replay's roster) — whether or not they hold keys yet.
       if (!r.roster().includes(did) && act !== "ban") throw new Error("they are not in this space");
       await r.act({ act, did, nodes: await directory.devices.strict(did) });
-      if (r.nodesOf(did).length) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
+      if (await holdsKeys(did)) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));
       await ctx.background("moderation: followNow", (await ctx.require("auth")).identity.followNow());
       await r.refresh();
     }
@@ -81,7 +83,9 @@ export async function start(ctx) {
       // wrote stays theirs); their entries are the node's follower's to take out. How many.
       enforce: async () => {
         await r.refresh();
-        const out = [...new Set([...r.bannedList(), ...r.goneList()])].filter(did => r.nodesOf(did).length);
+        const all = [...new Set([...r.bannedList(), ...r.goneList()])];
+        const held = await Promise.all(all.map(holdsKeys));
+        const out = all.filter((_, i) => held[i]);
         // ONCE per member (where their feeds stood when they went out — a later pass would move it on, counting what
         // they wrote after as theirs).
         for (const did of out) if (!(await recorded(r.space, did))) await departed(r.space, did).catch(e => ctx.failed("moderation", e, `where their feeds stand: ${e.message}`));

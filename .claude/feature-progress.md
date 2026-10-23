@@ -2954,7 +2954,7 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
 - [x] K8.1 (10-22, fx 19/19: placement 5, chat 3, removal 3, unfriend 3, relist 4; delegate 37/37 — storage.setRoster/currentWriters from the list ∪ MLS-while-migrating; roles group = list; node
       readers = kept list ∩ carded ∪ MLS-while-migrating ∪ owner; delegate 37/37) A space's writers and members from its LIST (acts roster → each DID's devices), not the MLS group: storage
       currentWriters/writersOf, roles members/whole/nodesOf/membersText, node readers() + rekey_round space_of.
-- [ ] K8.2 Removal through BeeKEM only: tree placed→false = left (space.forget, roles.left); file-keys gate on the tree;
+- [x] K8.2 (10-23, fx: remove-control 3/3, unfriend 3/3 — salt rotated in 15 s, relist 4/4, placement 5/5, chat 3/3) Removal through BeeKEM only: tree placed→false = left (space.forget, roles.left); file-keys gate on the tree;
       moderation's "still in" count from the tree; node follow-out's MLS commit dropped.
 - [ ] K8.3 Spaces without MLS: create/join make no MLS group; writes do not wait on it; the node mandate carries every
       space (no MLS snapshot); upkeep group_state machine on the tree.
@@ -2965,3 +2965,16 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       live spaces listed migrated / not (members never back named).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
+
+## 10-23: releases v422–v427 (K8.1 + BeeKEM repairs, all gate 3/3)
+- v422 K8.1 members/writers from the list (identity build change: owner re-entered PIN).
+- v423 BeeKEM short list merges what the check takes (deferred, never refused).
+- v424 view keeps what it shows while a re-read arrives; members.diagnose().
+- v425 a space's public tables read by NAME (Craftworks: member view 0 posts → 1; list whole).
+- v426 diagnose names a waiting op's predecessors (beekem_op_info).
+- v427 from a whole list the tree is the fresh merge; a refused branch dropped, its generations carried as lost.
+  Craftworks root cause: the owner's page took HLt27K's stray root before the creator rule; ops b5351265→909f888a→
+  f5552791 built on it; generation 104120349 seals the owner's OTHER device (22b6aa9b) catalog. Proven only when
+  that device opens v427 (owner asked).
+- Open: K8.2 stashed ("K8.2 removal through BeeKEM (untested)"); navigation re-fetch ("read once, held" standard);
+  node keys_round has no short-list/rebuild rule yet (page only).

@@ -32,11 +32,14 @@ export async function start(ctx) {
   async function rotate(sp, removals) {
     const r = await roles.of.strict(sp);
     await r.settled;
-    if ([...r.goneList(), ...r.bannedList()].some(did => r.nodesOf(did).length)) return false;
-    const g = await keys.group(sp).ready();
+    // (K8.2: the BeeKEM tree — the keys the content is sealed with — no longer holds anyone put out, and this table
+    // seals with its newest generation.)
+    const tree = (await ctx.require("members")).group(sp);
+    for (const did of [...r.goneList(), ...r.bannedList()]) if (await tree.holds(did)) return false;
     await storage.sealNewest();
     const t = await storage.table(space.tableOf(sp, "files"), sp);
-    if (!g || (t.sealing && t.sealing.epoch < g.epoch)) return false;
+    const newest = Math.max(0, ...tree.generationNumbers().map(Number));
+    if (!newest || (t.sealing && t.sealing.epoch < newest)) return false;
     await files.rotate(sp, removals);
     ctx.log("file keys", { what: `${label(sp)}: a member removed — a new salt; its files re-key` });
     return true;

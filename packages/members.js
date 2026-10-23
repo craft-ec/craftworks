@@ -436,7 +436,9 @@ export async function start(ctx) {
       // put out by the list is out of the keys once this is false.
       holds: async did => {
         const m = await memberOf(did);
-        return !m.why && !!g && [...g.members()].some(id => id === m.id || hexOf(id) === hexOf(m.id));
+        // (Ids as hex text, whatever form each comes in — a string through `hexOf` compared every id equal.)
+        const norm = x => (typeof x === "string" ? x.toLowerCase() : hexOf(x));
+        return !m.why && !!g && [...g.members()].some(id => norm(id) === norm(m.id));
       },
       members: () => (g ? [...g.members()] : []),
       // The generation NUMBERS this tree reaches (no secret): what `keepGenerations` hands the identity.
