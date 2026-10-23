@@ -325,15 +325,17 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    is out of the keys once the BeeKEM tree no longer holds them (`members.holds`): the file re-key waits for that and
    for its table to seal with the newest generation; where their feeds stood is recorded while the tree (or, migrating,
    MLS) still holds them.
-   SPACES WITHOUT MLS (K8.3, page): a space made or joined makes no MLS group and no MLS entry; a write waits on no MLS
-   read. A SELF-JOINER (code, open door) has no key yet: its `join` act is public (a membership move), its device names
+   SPACES WITHOUT MLS (K8.3): a space made or joined makes no MLS group and no MLS entry; a write waits on no MLS
+   read; the node upkeeps it too (its mandate names every space — one with no MLS group as an empty group, epoch 0,
+   never loaded: its list and BeeKEM keys followed, no MLS catch-up). A SELF-JOINER (code, open door) has no key yet: its `join` act is public (a membership move), its device names
    its account in the writers bag, and the tables judged row by row (acts, public acts, key operations) read every bagged
    device its account's devices confirm — the replay then counts the join by its proof, the list names it, the tree
    places it. (fx: listed 21 s after a join by code, placed 66 s, the space's post read 81 s.)
    A SHORT LIST STILL MERGES what the check takes (10-23): an operation taken on a short read is taken on the whole one
    ("ever listed" only grows — the entry rule above); one it does not take is DEFERRED, never refused. Merging nothing
    deadlocked a member one generation behind: the acts are sealed with the generation it lacked, so its list never read
-   whole (live, Wren in Craftworks).
+   whole (live, Wren in Craftworks). The node merges a short list the same way (`keys_round::reconcile`): its
+   generations kept, nothing reconciled until the list reads whole.
    A PUBLIC TABLE IS READ BY ITS NAME (10-23): a space's `pub-…` tables (key operations, public acts, the public board)
    are in the clear and judged by what they hold — every writer's read by its name, never only where its sealed catalog
    or the open writers list names it. Found through a catalog sealed with its writer's newest generation, the operation

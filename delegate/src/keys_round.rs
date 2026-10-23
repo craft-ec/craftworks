@@ -117,14 +117,20 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     if !to_read.is_empty() {
         return read_file(h, c, r, m, to_read);
     }
-    // NOTHING FROM A SHORT READ (R4, the page's too): judged against a list read short, the adds of every account it
-    // missed are refused (10-20, the owner's page). The tree stays as last merged from a whole read.
-    if let Err(why) = whole(&r, &gov) {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — the keys are not changed this round", m.name));
-        return next_space(h, c, r);
-    }
     // (`Group::merge_all`: the one loop, the page's too.)
     let merged = g.merge_all(&ops, &list);
+    // A SHORT LIST still MERGES what our check takes (K4 fix, the page's too): an operation taken on a short read is taken
+    // on the whole one too; one it does not take waits for the whole list (DEFERRED, never refused). Its generations
+    // kept; nothing reconciled — judged against a list read short, the adds of every account it missed would be
+    // refused (R4). (Merging nothing deadlocked a member one generation behind: the acts sealed with the generation it
+    // lacked, its list never read whole.)
+    if let Err(why) = whole(&r, &gov) {
+        for (n, k) in g.generations() {
+            identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
+        }
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — what the check takes merged, {} deferred; nothing reconciled this round", m.name, merged.refused.len()));
+        return next_space(h, c, r);
+    }
     let (refused, waiting) = (merged.refused.len(), merged.waiting);
     let why: Vec<String> = merged.refused.iter().take(2).map(|w| w.chars().take(80).collect()).collect();
     // 3. THE GENERATIONS: the space's epochs on this node.

@@ -152,9 +152,10 @@ export async function start(ctx) {
     const spaces = [];
     // EVERY KIND (a server, a conversation, a level group, an audience, a circle): one follower for all.
     for (const sp of await space.mine.strict()) {
+      // (A space with no MLS group — made or joined since K8.3 — upkept too: its list and BeeKEM keys followed; an empty
+      // group, epoch 0, which the node never loads.)
       const g = await ctx.optional("upkeep: keys.group", keys.group(sp).snapshot(), () => null);
-      if (!g) continue;
-      spaces.push({ space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel, epoch: g.epoch, state: g.state });
+      spaces.push({ space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel, epoch: g?.epoch ?? 0, state: g?.state ?? "" });
     }
     const r = await auth.identity.upkeepMandate(me.id, spaces);
     const said = spaces.map(x => x.name).join(", ");
