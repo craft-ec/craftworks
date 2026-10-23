@@ -68,6 +68,12 @@ export function install(ctx, { handled, stateOf, theme }) {
       if (k === "loading") return (await require("theme")).loading(text);
       return Object.assign(document.createElement("p"), { className: k === "failed" ? "said" : "none", textContent: text });
     };
+    const attached = () =>
+      new Promise(done => {
+        const t0 = performance.now();
+        const tick = () => (stopped ? done(false) : el.isConnected ? done(true) : performance.now() - t0 > 15000 ? done(false) : setTimeout(tick, 30));
+        tick();
+      });
     const typing = () => {
       if (hold()) return true;
       const a = document.activeElement;
@@ -104,6 +110,10 @@ export function install(ctx, { handled, stateOf, theme }) {
         clearTimeout(retryT);
         retryT = setTimeout(() => el.isConnected && !stopped && refresh(), retryIn);
       } else retryIn = 0;
+      // NOT ON THE PAGE YET (10-23): a screen built before it is put in place — its read answered first (held data: 0 ms)
+      // — waits to be put there, then draws. Before, the answer was dropped as if the screen had closed, and nothing
+      // drew it until some later data change (measured on fx: a space's Board shown 11–41 s after coming back to it).
+      if (!stopped && !el.isConnected && !(await attached())) return;
       if (stopped || !el.isConnected) return;
       // (Still arriving and holding FEWER entries than the list on screen: what is shown stays until it answers.)
       if (data?.arriving && seen && Array.isArray(data) && drawnN != null && data.length < drawnN) return;
