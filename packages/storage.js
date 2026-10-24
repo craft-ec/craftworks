@@ -103,8 +103,6 @@ export async function start(ctx) {
   // arrives (`craftworks:keys`: the identity kept an epoch — this node caught up, or joined, or another device of the
   // account moved the group), they are given it and read again: a device added while this page is open is read.
   const unkeyed = new Map();
-  // How long rows under a key not held yet keep a read ARRIVING (a newcomer's keys come with its placement: ~1 min).
-  const KEY_WAIT = 120e3;
   // A space table's ALTERNATE keys: each epoch secret of a group branch this node left (`keys.group(sp).lost()`),
   // as this table's key in that epoch.
   async function alternates(id, app, sp) {
@@ -161,7 +159,7 @@ export async function start(ctx) {
     for (const e of epochs) {
       const k = await access.keyAt(app, e, { catalog: app === CATALOG, space: spaceId });
       core.tail_epoch_key(bytes(idHex), e, k.key ? bytes(k.key) : new Uint8Array(0), false);
-      const u = unkeyed.get(idHex) ?? { app, epochs: new Set(), since: Date.now() };
+      const u = unkeyed.get(idHex) ?? { app, epochs: new Set() };
       if (k.key) (u.epochs.delete(e), solved(spaceId, `${app}: no key for epoch ${e}`));
       else {
         u.epochs.add(e);
@@ -485,13 +483,7 @@ export async function start(ctx) {
       // its answer), `{ s: "absent" }` (the node ANSWERED not found, or the catalog that would list it says none),
       // `{ s: "present" }`, `{ s: "unreadable", why }`. `absent` above is what a page SHOWS; this is what a DECISION
       // reads.
-      // (Read, its rows under a key this device is still to be given: UNKNOWN for at most KEY_WAIT — 10-24, fx: a
-      // newcomer's first read of a space, before its tree placed it, drew "no posts", the post read 30 s later. A key
-      // never given — another's history, a removed member's — leaves those rows unread and said (`problem`), never
-      // unknown for ever.)
       get state() {
-        const u = unkeyed.get(idHex);
-        if (st.s === "present" && u?.epochs.size && Date.now() - u.since < KEY_WAIT) return { s: "unknown", why: "rows under a key still to come" };
         return st;
       },
       // DECIDED: the first read's end; still unknown (the node silent), asked once more with the long wait
@@ -1090,14 +1082,12 @@ export async function start(ctx) {
   // writers bag names with its account, its devices confirming it — a self-joiner's `join` act is read before the list
   // names it (K8.3: no MLS entry brings their feeds in any more). Every other table: the list's.
   const SELF_JUDGED = /-(acts|pub-acts|pub-keyops)$/;
-  // WHETHER A SPACE's LIST READ WHOLE (`roles`, each replay; unset: not known here — a guest's). A space's table read
-  // while its list is NOT whole may be missing a writer the list has yet to name: its state UNKNOWN, never an answered
-  // "none" (10-24, fx: a newcomer's first read, its acts sealed with a key it was about to be given, read only its own
-  // empty feed and drew "no posts"). At most KEY_WAIT from the table's opening; the list's own tables never wait on it.
+  // WHETHER A SPACE's LIST READ WHOLE (`roles`, each replay; unset: not known here — a guest's): a space's table read
+  // while its list is NOT whole may lack a writer the list has yet to name — `unknown`, never an answered "none", for
+  // as long as the list is not whole: what it names is listed, so it arrives (10-24, fx: a newcomer's first read drew
+  // "no posts"). No clock: the list decides. The list's own tables never wait on it.
   const listsWhole = new Map();
   const setListWhole = (id, whole) => listsWhole.set(id, !!whole);
-  // (And a listed account whose devices are not found yet — its writers not all known: the same unknown, `currentWriters`.)
-  const devicesUnfound = new Map(); // space id → how many listed accounts have no device found yet
   async function currentWriters(sp, name = "") {
     const directory = await ctx.require("directory");
     let listed = rosters.get(sp.id) ?? [];
@@ -1119,8 +1109,6 @@ export async function start(ctx) {
     const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify([...listed, ...mls]), sp.governance?.owner ?? undefined));
     const sets = await Promise.all(dids.map(d => directory.devices.strict(d)));
     const devices = dids.map((d, i) => [d, sets[i]]);
-    // (Who is listed with NO device found yet — their card not read here yet: the space's writers not all known.)
-    devicesUnfound.set(sp.id, devices.filter(([, s]) => !s.length).length);
     return { members: dids.map(did => ({ did })), devices, nodes: [...new Set(sets.flat())] };
   }
   // WHO WROTE A SPACE's ROWS — THE ONE MAP (owner 10-16: "any question about access should be centralized"): its
@@ -1277,7 +1265,6 @@ export async function start(ctx) {
 
   const tables = new Map(); // scope + name -> Promise<table>
   function merged(name, sp, { lazy = false } = {}) {
-    const openedAt = Date.now();
     const scope = scopeOf(sp);
     const at = `${scope.key}/${name}`;
     // Opened already: as it is — or, opened LAZY and now wanted whole, every feed read whole.
@@ -1538,9 +1525,7 @@ export async function start(ctx) {
           const own = me.state ?? { s: "unknown" };
           if (own.s !== "present" && own.s !== "absent") return own;
           if (!gathered || writersOpening) return { s: "unknown", why: "writers' feeds still being read" };
-          // (Its space's WRITERS NOT ALL KNOWN yet — the list not whole, or a listed account's devices not found: unknown,
-          // for at most KEY_WAIT; the list's own tables never wait on it.)
-          if (sp && (listsWhole.get(sp.id) === false || devicesUnfound.get(sp.id) > 0) && !SELF_JUDGED.test(name) && Date.now() - openedAt < KEY_WAIT) return { s: "unknown", why: "the space's writers not all known yet" };
+          if (sp && listsWhole.get(sp.id) === false && !SELF_JUDGED.test(name)) return { s: "unknown", why: "the space's list not read whole yet" };
           // (Every other writer's feed ANSWERED too — not merely opened, shown after WAIT.hint: audit 10-13.)
           if (all.some(f => f !== me && f.state?.s === "unknown")) return { s: "unknown", why: "a writer's feed not answered yet" };
           // (A writer's feed there but SEALED here — a recovery before its keys arrived: never an empty "present", R5.)
@@ -1794,11 +1779,8 @@ export async function start(ctx) {
     // (A writer's feed STILL OPENING — taken in, not here yet: the reader is not decided meanwhile — as a merged
     // table's `writersOpening`; 10-24, live: Discover read every public space from outside before its writers' feeds
     // arrived, took "members only" as decided, and showed none.)
-    // (At most KEY_WAIT per writer, from when it was taken in: a feed that never answers — not on the network, its
-    // node silent — is set aside then, and the reader decided from the feeds that did; 10-24, live: Discover stayed
-    // "still arriving" for good over a space with one silent writer.)
+    // (A LISTED writer's feed still opening — it is there, so it answers: the reader is not decided meanwhile.)
     const opening = new Map(); // writer → when taken in, while its feed is opening
-    const addedAt = new Map(); // writer → when taken in
     const add = (list, caps = null) =>
       soon(
         Promise.all(
@@ -1806,7 +1788,6 @@ export async function start(ctx) {
             .filter(o => !seen.has(o) && seen.add(o))
             .map(o => {
               opening.set(o, Date.now());
-              addedAt.set(o, Date.now());
               return ctx.background("storage: tail", tail(o, name, { public: true, follow: false }).then(t => {
                   const cap = caps?.get?.(o);
                   all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, get state() { return t.state; }, raw: () => (t.raw() ?? []).filter(([, v]) => withinCap(v, cap)) } : t);
@@ -1820,17 +1801,14 @@ export async function start(ctx) {
     const settled = add(owners);
     // (Its read state: the least decided of the feeds it is built on — `ctx.least`, the one combination — and unknown
     // while a writer's feed is still opening.)
-    const young = o => Date.now() - (addedAt.get(o) ?? 0) < KEY_WAIT;
     return {
       rows: () => rows,
       onChange: f => changed.push(f),
       settled,
       add,
       get state() {
-        if ([...opening.keys()].some(young)) return { s: "unknown", why: "writers' feeds still being read" };
-        // (A feed still silent past its KEY_WAIT: set aside — decided from the ones that answered.)
-        const st = all.map(f => ({ s: f.state?.s ?? "unknown", owner: f.owner })).filter(x => x.s !== "unknown" || young(x.owner));
-        return ctx.least(st.length ? st : [{ s: "absent" }]);
+        if (opening.size) return { s: "unknown", why: "writers' feeds still being read" };
+        return ctx.least(all.length ? all.map(f => f.state ?? { s: "unknown" }) : [{ s: "absent" }]);
       },
     };
   }

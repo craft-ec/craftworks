@@ -633,7 +633,10 @@ export async function start(ctx) {
     if (!pr.isPublic()) return false;
     // MIGRATED (owner 10-24: a space not moved onto BeeKEM is "hidden totally … won't even appear as open"): its key
     // operations hold a tree — a space with none (an MLS-era one nobody carried over) is not listed and does not open.
-    const ko = (await ctx.require("storage")).readOnly(space.tableOf(d, "pub-keyops"), pr.writerKeys());
+    // (Read from the writers its ACTS BAG lists — its creator, who writes the tree's root, is one; its writers bag is
+    // a member's to read. Nothing unlisted is looked up.)
+    const listed = await index.pointers(`acts ${d.id}`);
+    const ko = (await ctx.require("storage")).readOnly(space.tableOf(d, "pub-keyops"), [...new Set(listed.map(p => p?.w).filter(w => typeof w === "string"))]);
     await ko.settled;
     if (ko.state?.s === "unknown") throw new Error(`${d.id.slice(0, 8)}: its key operations not read yet`);
     return ko.rows().some(r => r.value);

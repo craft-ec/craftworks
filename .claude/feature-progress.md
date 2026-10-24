@@ -3006,6 +3006,14 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       Ivvor's Space stayed listed (a counted rejection named Wren). v439: readOnly sets a silent writer aside after
       KEY_WAIT; `unlisted` by `gov::entry_move` (moved in/out), never by any act naming one. fx tokens-off: joincode,
       joincode-first, space-first2, remove-control-bk, quick PASS.
+      v439 LIVE; owner 10-25: "it should not wait 2 min. it either is there or not and should be traversable" — v440:
+      every clock-based read state REMOVED (KEY_WAIT on unkeyed rows, list-whole, unfound devices, readOnly writers);
+      the list-not-whole rule kept with NO clock (the list decides); OUTSIDE reads traverse what the index LISTS — public
+      acts, departed record and key operations from the `acts <space>` bag's writers, never every member device. fx
+      (tokens off): space-first2, joincode-first, quick, remove-control-bk, behind PASS; joincode-door2 1 fail / 6 pass.
+      OPEN (pre-existing, seen 10-24 morning too): join by code ~1 in 4 — B's `join` act IS in its pub-acts, B's own
+      replay does not count it (myJoin 0) and A never lists B. Instrumented (`pw/joincode-aside.mjs`: A's acts door
+      states, B-side rows/saves); not reproduced in 4 runs since. Unmeasured cause.
       OPEN (tokens, not live): `statement.js` audit reads (~594 key logs/records a page on fx) follow through the door
       and spend the budget — its `node.read(...)` should pass `{ follow: false }` (file holds others' uncommitted token
       work: not staged here). fx with tokens ON fails joins until then.

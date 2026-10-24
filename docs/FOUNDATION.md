@@ -121,11 +121,11 @@ t.onState(fn)
   `known:false` one. A view that cannot yet tell "none" from "not read" (roles' public acts, R5) says `unknown`, and is
   never remembered as "none".
 - **R5 — A merged table is decided when its own feed and every listed writer's feed are**; a sealed or unread writer
-  list makes it `unreadable`, never an empty `present`. Its WRITERS must be known too: while the space's list is not
-  read whole, a listed account's devices are not found yet, or a writer named since it opened is still opening, it is
-  `unknown`; so is a feed whose rows wait on a key this device is still to be given. Each for at most `KEY_WAIT`
-  (2 min) — a key never given or a list never whole is said (`problem`), never `unknown` for ever. (10-24, fx: a
-  newcomer's first read of a space, before its tree placed it, drew "no posts".)
+  list makes it `unreadable`, never an empty `present`. A writer named since it opened, its feed still opening, keeps
+  it `unknown` until that feed answers; so does its space's list not read whole yet (it may lack a writer the list
+  will name — `roles` tells the storage; 10-24, fx: a newcomer's first read drew "no posts"). A read TRAVERSES WHAT IS LISTED — a catalog, the writers bag, the index — so
+  every feed it waits on is there and answers; nothing is decided by a clock (owner 10-25: "it either is there or not
+  and should be traversable. that is our design" — a read that needs a deadline is looking up something unlisted).
 - **ONE READ STATE, one mark (10-24).** What a read gives carries this state — `ctx.stated(value, state)` — and a read
   made of parts takes the LEAST decided of theirs (`ctx.least`: any `unknown` → `unknown`). Rooms, items, Discover's
   lists and an app's frame (across the host) pass it on; a failed part keeps its state (`ctx.total`), never a plain empty
@@ -349,11 +349,12 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    `gov::entry_move`; an MLS-era member nobody listed) is
    taken out of this person's list as a removal is (`roles.unlisted`, `upkeep`); a public space whose key operations
    hold no tree is not listed in Discover and does not open from outside (`items.opens`). A newcomer is named by its own
-   join or its invite, so never hidden. From outside, a public space's acts are not decided while a writer's feed is
-   still opening (`storage.readOnly`, as a merged table's): Discover took "members only" from the owner's feeds alone
-   and showed no public space (10-24, live). Each writer for at most `KEY_WAIT` from when it was taken in: a feed that
-   never answers is set aside then, and the reader decided from the feeds that did (v438, live: one silent writer kept
-   Discover "still arriving" for good).
+   join or its invite, so never hidden. From OUTSIDE, a public space is read from what its index LISTS: its public acts
+   (and departed record, and key operations — its creator, who writes the tree's root, writes its acts) from the
+   writers its acts bag names (`acts <space>`; its writers bag is a member's to read) — never from every device of
+   every member, most of which never wrote one (10-24/25, live: those
+   lookups were silent, and Discover showed no public space, then stayed "still arriving"). Not decided while a listed
+   writer's feed is still opening (`storage.readOnly`, as a merged table's).
    SPACES WITHOUT MLS (K8.3): a space made or joined makes no MLS group and no MLS entry; a write waits on no MLS
    read; the node upkeeps it too (its mandate names every space — one with no MLS group as an empty group, epoch 0,
    never loaded: its list and BeeKEM keys followed, no MLS catch-up). A SELF-JOINER (code, open door) has no key yet: its `join` act is public (a membership move), its device names

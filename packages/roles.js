@@ -167,8 +167,7 @@ export async function start(ctx) {
     let bans = new Set();
     let gone = new Set();
     // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6). A MEMBER's
-    // space: told to the storage from the start — not whole until a replay says so, so its tables read as still arriving
-    // meanwhile (FOUNDATION §2 R5; from outside, the space's public reads never wait on it).
+    // space: told to the storage from the start — not whole until a replay says so (FOUNDATION §2 R5).
     let listWhole = false;
     if (!out) storage.setListWhole(sp.id, false);
     // MLS (until K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`). WHO IS IN is
@@ -260,8 +259,9 @@ export async function start(ctx) {
         const fresh = [...roster].filter(d => !known.has(d));
         if (!fresh.length) return;
         fresh.forEach(d => known.add(d));
-        const devs = (await Promise.all(fresh.map(d => directory.devices(d)))).flat();
-        await pubDeparted.add([...devs, ...writers.keys(), ...actWriters]);
+        // (LISTED writers only — the space's public acts bag: who wrote a public act. A member's device that never
+        // wrote one has no such feed, and is never looked up: 10-25, owner — "it either is there or not".)
+        await pubDeparted.add(actWriters);
         await authors();
       }
     }
@@ -272,7 +272,7 @@ export async function start(ctx) {
       const w = await storage.writersOf(sp, { roster: [...known], departedRows: pubDeparted.rows() });
       told([...w.byNode].map(([n, x]) => learnWriter(n, x.did)).some(Boolean));
       const caps = new Map([...w.byNode].filter(([, x]) => x.caps).map(([n, x]) => [n, x.caps[pubName]]).filter(([, c]) => typeof c === "number"));
-      await pubActs.add([...w.byNode.keys()], caps);
+      await pubActs.add([...w.byNode.keys()].filter(n => actWriters.includes(n)), caps);
       replay();
     }
     if (out) pubDeparted.onChange(() => ctx.background("roles: authors", authors()));
