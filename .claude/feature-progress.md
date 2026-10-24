@@ -2989,7 +2989,7 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       fx: joincode-first 2/2, space-first2, joincode, lostroot, quick PASS. CONTROL on v436: the first-read case PASSES
       there too (its not-yet fault already reached the view as `unknown`) — the "no posts" runs chased today were the
       TESTS reading the old mark; this is the structural cleanup, plus the outside room's frozen state and unfound
-      devices counted. Released as v437.
+      devices counted. v437 LIVE 10-24 (gates 3/3, manifest 1a475c63556e).
 - [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
       live spaces listed migrated / not (members never back named).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
