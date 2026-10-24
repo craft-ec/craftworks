@@ -240,6 +240,21 @@ impl Group {
         out
     }
 
+    /// The operations this tree HOLDS that `published` lacks and our check admits (10-24, live: the Ivvor DM's root was on
+    /// no feed — the owner's own operations waited on it everywhere, Ivvor never placed — while the owner's saved tree
+    /// held it). Written again by a device that holds them, their authors' signatures as they were.
+    pub fn unpublished(&self, published: &[Vec<u8>], check: &impl Check) -> Vec<Vec<u8>> {
+        use keyhive_crypto::digest::Digest;
+        let have: std::collections::BTreeSet<Vec<u8>> = published.iter().filter_map(|o| bincode::deserialize::<Signed<CgkaOperation>>(o).ok()).map(|o| Digest::hash(&o).as_slice().to_vec()).collect();
+        let Ok(batches) = self.cgka.ops() else { return Vec::new() };
+        batches
+            .into_iter()
+            .flat_map(|b| b.into_iter())
+            .filter(|op| !have.contains(Digest::hash(op.as_ref()).as_slice()) && admitted(op, check).is_ok())
+            .filter_map(|op| bincode::serialize(op.as_ref()).ok())
+            .collect()
+    }
+
     /// ADD a member (its id, its first leaf key), authorized by the act `act`: the operation's bytes, or `None` if the
     /// tree places it already.
     pub fn add_member(&mut self, member: &[u8; 32], leaf: &ShareKey, act: &[u8; 32]) -> Result<Option<Vec<u8>>, String> {
@@ -527,6 +542,11 @@ mod page {
             js_sys::Reflect::set(&out, &"refused".into(), &r.refused.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
             js_sys::Reflect::set(&out, &"misses".into(), &list.0.misses.borrow().iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
             Ok(out.into())
+        }
+        /// The operations this tree holds that `ops` (the network's) lacks and our check admits (`Group::unpublished`).
+        pub fn unpublished(&self, ops: js_sys::Array, list: &BeeList) -> js_sys::Array {
+            let ops: Vec<Vec<u8>> = ops.iter().map(|o| js_sys::Uint8Array::new(&o).to_vec()).collect();
+            self.0.unpublished(&ops, &list.0).iter().map(|o| JsValue::from(js_sys::Uint8Array::from(o.as_slice()))).collect()
         }
         /// MERGE an operation through our check (`BeeList`): "applied", "waiting", or "refused: why".
         pub fn merge(&mut self, op: &[u8], list: &BeeList) -> String {

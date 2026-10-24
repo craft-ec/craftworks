@@ -371,3 +371,26 @@ fn list_check_allows_by_the_act_and_keeps_what_a_refusal_saw() {
     assert_eq!(l.creator().as_deref(), Some("did:o"));
     assert_eq!(ListCheck { listed: vec!["did:z".into(), "did:c".into()], ..ListCheck::default() }.creator().as_deref(), Some("did:c"));
 }
+
+#[test]
+fn a_held_operation_no_feed_holds_is_handed_back_and_places_the_member() {
+    let (a, b) = (account(1), account(2));
+    let mut l = list(&[(&a, "did:a"), (&b, "did:b")]);
+    l.acts.insert([7; 32], (true, id(&b)));
+    let (mut ga, root) = Group::create(&SPACE, a.clone()).unwrap();
+    let add = ga.add_member(&id(&b), &b.leaf_key(), &[7; 32]).unwrap().unwrap();
+    // THE NETWORK lost the root: only the add is published — B waits on it forever.
+    let mut gb = Group::empty(&SPACE, b.clone());
+    assert_eq!(gb.merge_all(&[add.clone()], &l).waiting, 1);
+    // The maker's tree holds it: handed back (control — published whole, nothing is).
+    let back = ga.unpublished(&[add.clone()], &l);
+    assert_eq!(back, vec![root.clone()]);
+    assert!(ga.unpublished(&[root.clone(), add.clone()], &l).is_empty());
+    let all: Vec<Vec<u8>> = back.into_iter().chain([add]).collect();
+    assert_eq!(gb.merge_all(&all, &l).waiting, 0);
+    assert!(gb.placed());
+    // An operation our check refuses is never handed back: the root's maker taken off the list.
+    let mut off = list(&[(&b, "did:b")]);
+    off.accounts.insert(id(&a), "did:a".into());
+    assert!(ga.unpublished(&[], &off).is_empty());
+}

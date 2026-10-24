@@ -98,6 +98,7 @@ pub const ALL: &[(&str, bool)] = &[
     ("keys-unmapped", false),
     ("keys-bridged", false),
     ("keys-crossed", false),
+    ("keys-republished", false),
     (KEYS_NO_MEMBER, false),
     (KEYS_WAIT, false),
     (KEYS_WRITE, false),

@@ -201,6 +201,15 @@ export async function start(ctx) {
       // member reads it. (Craftworks, live: the owner's other device sealed its catalog with such a branch's generation
       // 104120349, unreadable to everyone else.)
       if (whole) {
+        // AN OPERATION NO FEED HOLDS that this device's tree holds (and our check admits) is written again, its author's
+        // signature as it was (`Group::unpublished`, 10-24, live: the Ivvor DM's root on no feed — the owner's own
+        // operations waited on it everywhere, Ivvor never placed, while the owner's saved tree held it).
+        const lost = g.unpublished(read.filter(Boolean), c.list);
+        if (lost.length) {
+          for (const op of lost) await send(op);
+          said.republished = lost.length;
+          life().then(l => l.transition("group", sp.id, "keys-republished", { why: `${lost.length} operation(s) no feed held, written again from this device's tree` }));
+        }
         const fresh = G.BeeGroup.empty(sp.idBytes, (await me()).seed);
         fresh.merge_all(read.filter(Boolean), c.list);
         const reach = new Set(fresh.generations().map(([n]) => String(n)));

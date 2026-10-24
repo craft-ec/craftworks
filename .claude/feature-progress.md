@@ -2961,6 +2961,13 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       ALSO: a self-joiner lists itself by its own `join` act in its own feed — read today only because it enters MLS.
       Without MLS the writers bag must carry each device's DID so self-judged tables (acts, pub-acts, pub-keyops) are
       read from every bagged device (gov/our check judge them) before the writer is listed.
+- [x] 10-24 IVVOR's DM (health reports + owner-node read): Ivvor last online 10-22 12:07–14:17 UTC (build d67a1b2),
+      DM sealed 38816386, Ivvor held [3]. Cause: the DM tree's root (13328d36e1f4) on NO feed (checked 7388a5ca's,
+      22b6aa9b's, Mac cc84a536's and Ivvor's b262cd31's feeds on 7509/7510) — the owner's add/update wait on it everywhere;
+      the owner's saved tree holds it. Fix: `Group::unpublished` — a held operation no feed holds, admitted by the check,
+      written again (page, whole list). fx lostroot: root back in 15 s, B placed 36 s, reads 51 s; CONTROL (fix off):
+      root never back, B never placed ("26064094: no key here") — Ivvor's failure reproduced. No identity change.
+      Live: the owner opens once on their usual browser (holds the root) → Ivvor placed on next visit.
 - [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
       live spaces listed migrated / not (members never back named).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
