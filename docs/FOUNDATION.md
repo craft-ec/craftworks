@@ -338,7 +338,9 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    generations kept, nothing reconciled until the list reads whole.
    AN OPERATION NO FEED HOLDS IS WRITTEN AGAIN (10-24): a device whose saved tree holds an operation the network's rows
    lack, and our check admits, writes it to its own key-operation feed, its author's signature as it was
-   (`Group::unpublished`; from a whole list). A refused branch is never written again. (Live: the Ivvor DM's root was on
+   (`Group::unpublished`; from a whole list), from EVERY version of the account's saved tree (each device saves its
+   own; the saved tree is read only once the account table has settled — a row not arrived yet was taken for no tree,
+   and an empty one saved over another device's). A refused branch is never written again. (Live: the Ivvor DM's root was on
    no feed — the owner's own operations waited on it everywhere and Ivvor was never placed — while the owner's saved
    tree held it. fx: a root row emptied is written again in 15 s; B then placed and reading.)
    A PUBLIC TABLE IS READ BY ITS NAME (10-23): a space's `pub-…` tables (key operations, public acts, the public board)

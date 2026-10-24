@@ -2968,6 +2968,9 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       written again (page, whole list). fx lostroot: root back in 15 s, B placed 36 s, reads 51 s; CONTROL (fix off):
       root never back, B never placed ("26064094: no key here") — Ivvor's failure reproduced. No identity change.
       Live: the owner opens once on their usual browser (holds the root) → Ivvor placed on next visit.
+      v434 live, but the owner's page loaded the merged saved row — 7388a5ca's EMPTY tree; device 22b6aa9b's version
+      (placed, 38816386) holds the root. Fix (v435): load after the account table settles; republish from every saved
+      version (`t.versions`). fx lostroot PASS again.
 - [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
       live spaces listed migrated / not (members never back named).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.

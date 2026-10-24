@@ -77,7 +77,11 @@ export async function start(ctx) {
     async function load() {
       if (g) return g;
       const m = await me();
-      const row = (await state()).rows().find(r => r.key === at)?.value;
+      // (The account table read WHOLE first: a row not arrived yet read as no tree — an empty one made, then SAVED over
+      // the tree another device saved, 10-24: the Ivvor DM's tree, its root on no feed, lost so on one device.)
+      const t = await state();
+      await t.settled;
+      const row = t.rows().find(r => r.key === at)?.value;
       g = row ? G.BeeGroup.load(bytes(row), m.seed) : G.BeeGroup.empty(sp.idBytes, m.seed);
       savedHex = row ?? null;
       return g;
@@ -204,7 +208,11 @@ export async function start(ctx) {
         // AN OPERATION NO FEED HOLDS that this device's tree holds (and our check admits) is written again, its author's
         // signature as it was (`Group::unpublished`, 10-24, live: the Ivvor DM's root on no feed — the owner's own
         // operations waited on it everywhere, Ivvor never placed, while the owner's saved tree held it).
-        const lost = g.unpublished(read.filter(Boolean), c.list);
+        // (From EVERY version of this account's saved tree — each device saves its own: one device's may hold what
+        // another's lost, 10-24, live: device 22b6aa9b's held the DM's root, the merged row was 7388a5ca's empty one.)
+        const m = await me();
+        const saved = (await state()).versions(at).filter(v => v.value).map(v => { try { return G.BeeGroup.load(bytes(v.value), m.seed); } catch { return null; } }).filter(Boolean);
+        const lost = [...new Map([g, ...saved].flatMap(x => [...x.unpublished(read.filter(Boolean), c.list)]).map(op => [hexOf(op), op])).values()];
         if (lost.length) {
           for (const op of lost) await send(op);
           said.republished = lost.length;
