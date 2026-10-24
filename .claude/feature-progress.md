@@ -2990,8 +2990,21 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       there too (its not-yet fault already reached the view as `unknown`) — the "no posts" runs chased today were the
       TESTS reading the old mark; this is the structural cleanup, plus the outside room's frozen state and unfound
       devices counted. v437 LIVE 10-24 (gates 3/3, manifest 1a475c63556e).
-- [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
-      live spaces listed migrated / not (members never back named).
+- [-] K8.4 DROPPED (owner 10-24: "we can just drop support. any lost messages during this time is benign … as long
+      future won't happen again"). Measured first (owner's node / Wren): Craftworks, Ivvor DM, Wren DM carried whole;
+      RedFox DM (owner MLS-only, unlisted; history missing epoch 5) and Ivvor's New Space (495 + 1 lost) not — accepted.
+      Ivvor's Space ABANDONED (owner 10-24). No carry-over code: the bridge and every "while migrating" path go at K8.6.
+- [x] 10-24/25 v438: (1) FOLLOW BUDGET BY INTENT — the node allows 500 follows a connection, no unsubscribe; fx
+      measured 150–635 refused/min (v437) vs 0 (budget). Member reads followed ≤ 400; outside reads (readOnly) never
+      follow, re-read after 60 s; an outside-then-member tail is followed from the member's open. (2) NOT MIGRATED, NOT
+      SHOWN (owner): `roles.unlisted` → upkeep forgets the space; Discover/outside opens need a key-operation tree.
+      (3) Discover LIVE BUG (6Ef7qZ 10-23, reproduced as Wren on v437: 0 of 7 public spaces): readOnly decided before its
+      writers' feeds arrived → "members only"; now unknown while opening (capped feeds keep their state too). (4) the
+      held public-space lists given at once, re-read behind. fx (tokens off, as live): joincode ×2, joincode-first,
+      lostroot, behind, remove-control-bk, space-first2 ×2, quick PASS; 0 refusals.
+      OPEN (tokens, not live): `statement.js` audit reads (~594 key logs/records a page on fx) follow through the door
+      and spend the budget — its `node.read(...)` should pass `{ follow: false }` (file holds others' uncommitted token
+      work: not staged here). fx with tokens ON fails joins until then.
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 

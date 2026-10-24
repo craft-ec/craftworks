@@ -204,26 +204,46 @@ export async function start(ctx) {
   //   contract(hexId, what, { frames, match, ms }) → `{ held: true }` | the node's answer (`get-failed`: absent)
   //   onContract(hexId, fn)   fn(said) on each push, and when an absent one appears
   //   changed(hexId)          this page wrote it: read again on the next ask (its own write's answer is not a push)
-  const reads = new Map(); // hexId → { s, p, said, n, at, fns, timer, frames, match, what }
+  // A GET that does not follow (an immutable contract's; a changing one read past the follow budget): its frames.
+  const plainGet = idHex => core.frames_get(bytes(idHex))[1];
+  const reads = new Map(); // hexId → { s, p, said, n, at, fns, timer, frames, match, what, followed }
   const AGAIN = n => Math.min(5000 * 2 ** n, 300000);
+  // THE FOLLOW BUDGET (10-24): the node lets one connection follow at most 500 contracts, and has no unsubscribe — past
+  // it every subscription is refused, the page's own included (fx, measured: 150–635 refused a minute). Followed BY
+  // INTENT: what a member reads (its account's, its spaces') is followed; what is read from OUTSIDE (Discover, a public
+  // space one is not in) is READ — fetched without following, kept, read again on the next ask after FRESH — and never
+  // spends the budget (fx: a Discover over hundreds of public spaces had spent it, and a newcomer's join was never
+  // pushed to the space's owner). Past FOLLOW_BUDGET even a member's read is READ. A new connection, a new budget.
+  const FOLLOW_BUDGET = 400;
+  const FRESH = 60e3;
+  let following = 0;
   const isAbsent = said => said.kind === "get-failed";
-  function contract(hexId, what, { frames, match, ms = WAIT.ask }) {
+  function contract(hexId, what, { frames, match, ms = WAIT.ask, follow: wanted = true }) {
     let r = reads.get(hexId);
     if (!r) reads.set(hexId, (r = { s: "UNKNOWN", n: 0, fns: new Set() }));
     Object.assign(r, { frames, match, what });
     if (r.s === "HELD") return Promise.resolve({ held: true });
+    // (READ, not followed: fresh enough answers from the copy — unless a reader now wants it FOLLOWED and the budget
+    // allows: then read again, following.)
+    const upgrade = r.s === "READ" && wanted && following < FOLLOW_BUDGET;
+    if (r.s === "READ" && !upgrade && Date.now() - r.at < FRESH) return Promise.resolve({ held: true });
     if (r.s === "ASKED") return r.p;
     if (r.s === "ABSENT" && Date.now() - r.at < AGAIN(r.n)) return Promise.resolve(r.said);
-    const why = r.s === "UNKNOWN" ? "first" : r.s === "STALE" ? "stale" : "absent again";
+    const why = r.s === "UNKNOWN" ? "first" : r.s === "STALE" ? "stale" : upgrade ? "followed now" : r.s === "READ" ? "not followed, read again" : "absent again";
     r.n = r.s === "ABSENT" ? r.n + 1 : 0;
     r.s = "ASKED";
     r.gets = (r.gets ?? 0) + 1;
+    // (Followed while the budget lasts — a subscription asked is spent, answered or not.)
+    // (FOLLOWED BY INTENT: a reader from OUTSIDE — Discover, a public space one is not in — never asks it; a member's
+    // read does, while the budget lasts.)
+    const follow = r.followed || (wanted && following < FOLLOW_BUDGET);
+    if (follow && !r.followed) (r.followed = true), (following += 1);
     if (why !== "first") ctx.log("read", { what: `${what} (${why})` });
-    r.p = ask(frames(), match, what, ms).then(
+    r.p = ask(follow ? frames() : plainGet(hexId), match, what, ms).then(
       said => {
         r.said = said;
         r.at = Date.now();
-        r.s = isAbsent(said) ? "ABSENT" : "HELD";
+        r.s = isAbsent(said) ? "ABSENT" : follow ? "HELD" : "READ";
         if (r.s === "ABSENT" && r.fns.size) again(hexId);
         return said;
       },
@@ -273,6 +293,9 @@ export async function start(ctx) {
   // HELD contract read again ONCE (followed again), its answer handed on as a push is (its tables, bags, followers
   // take it). No page reload (10-15).
   addEventListener("craftworks:node-back", () => {
+    // (A new connection: a new follow budget — what was followed is followed again first.)
+    following = 0;
+    for (const [, r] of reads) r.followed = false;
     const back = [...reads].filter(([, r]) => r.s === "HELD");
     for (const [, r] of back) r.s = "STALE";
     if (back.length) ctx.log("read", { what: `the node is back: ${back.length} followed contract(s) read again once` });
@@ -295,7 +318,7 @@ export async function start(ctx) {
     const no = notThere.get(idHex);
     if (no && Date.now() - no < forget) return Promise.resolve({ kind: "get-failed", id: idHex });
     if (!oneGets.has(idHex)) {
-      const [, frames] = core.frames_get(bytes(idHex));
+      const frames = plainGet(idHex);
       const p = ctx
         .optional("node: get", slot(() => ask(frames, match ?? (x => (x.kind === "got" || x.kind === "get-failed") && x.id === idHex), what, WAIT.ask), { urgent }), () => ({ kind: "get-failed", id: idHex, waited: true }))
         .then(a => (a.kind === "get-failed" && !a.waited && notThere.set(idHex, Date.now()), a))

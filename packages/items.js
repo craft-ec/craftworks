@@ -630,7 +630,13 @@ export async function start(ctx) {
     // PUBLIC NOW (its acts, as `gov::is_public` reads them: anyone may read, join or ask) — never "it had public acts
     // once": a space made private again leaves the list (10-22).
     await pr.settled;
-    return pr.isPublic();
+    if (!pr.isPublic()) return false;
+    // MIGRATED (owner 10-24: a space not moved onto BeeKEM is "hidden totally … won't even appear as open"): its key
+    // operations hold a tree — a space with none (an MLS-era one nobody carried over) is not listed and does not open.
+    const ko = (await ctx.require("storage")).readOnly(space.tableOf(d, "pub-keyops"), pr.writerKeys());
+    await ko.settled;
+    if (ko.state?.s === "unknown") throw new Error(`${d.id.slice(0, 8)}: its key operations not read yet`);
+    return ko.rows().some(r => r.value);
   };
   let leftoverSaid = false;
   // THE PUBLIC SPACES, ONE READ a page (10-22, owner: Discover read the public spaces again while the side panel's list
@@ -641,8 +647,10 @@ export async function start(ctx) {
   let pubReading = null;
   function publicSpaces() {
     const fresh = () => (pubReading ??= publicSpacesNow().then(l => ((pubHeld = l), (pubAt = Date.now()), l)).finally(() => (pubReading = null)));
-    if (pubHeld && pubHeld.state?.s !== "unknown") {
-      if (Date.now() - pubAt > 60e3) ctx.background("items: public spaces again", fresh());
+    // (Held: given AT ONCE — decided, read again behind it at most once a minute; still arriving, read again behind it
+    // now — as a space's room is: a second ask never waits on a whole re-read, 10-24.)
+    if (pubHeld) {
+      if (pubHeld.state?.s === "unknown" || Date.now() - pubAt > 60e3) ctx.background("items: public spaces again", fresh());
       return Promise.resolve(pubHeld);
     }
     return fresh();

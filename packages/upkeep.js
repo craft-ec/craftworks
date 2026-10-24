@@ -44,8 +44,9 @@ export async function start(ctx) {
       // The space open first.
       for (const sp of [...servers.filter(s => s.id === ctx.space), ...servers.filter(s => s.id !== ctx.space)]) {
         await node.idle();
-        // REMOVED from it (the list says so — K8.2): no longer in this person's list — never left shown as theirs.
-        if (await ctx.optional("upkeep: removed", roles.of(sp).then(async r => (await r?.settled, !!r?.left)), () => false)) {
+        // REMOVED from it (the list says so — K8.2), or NOT MIGRATED (the list never named this account — `unlisted`):
+        // no longer in this person's list — never left shown as theirs.
+        if (await ctx.optional("upkeep: removed", roles.of(sp).then(async r => (await r?.settled, !!(r?.left || r?.unlisted))), () => false)) {
           (await ctx.require("lifecycle")).become("group", sp.id, "removed", {});
           await space.forget(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: ${e.message}`));
           continue;

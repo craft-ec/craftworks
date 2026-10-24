@@ -309,7 +309,12 @@ export async function start(ctx) {
     return p;
   };
   const whenListed = (cat, app, p) => whenListedIn(cat, () => !["unlisted", "none"].includes(placeOf(cat, app)), p);
+  // (Each opener's INTENT: a member's open — every one but an outside reader's, `follow: false` — has the shared tail
+  // followed.)
   function tail(owner, app, opts = {}) {
+    return Promise.resolve(tailOf(owner, app, opts)).then(t => (opts.follow !== false && t?.follow?.(), t));
+  }
+  function tailOf(owner, app, opts = {}) {
     const inSpace = opts.space ?? null;
     const byName = byNameTable(app, opts);
     // A table found by its NAME: only whether its catalog lists it (not listed or never made: not looked for).
@@ -378,7 +383,10 @@ export async function start(ctx) {
     return opts.lazy ? p : p.then(t => (t.lazy ? t.whole().then(() => t) : t));
   }
 
-  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false, wait = WAIT.ask } = {}) {
+  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false, wait = WAIT.ask, follow = true } = {}) {
+    // FOLLOWED (the door's budget, R6): unless every opener so far reads it from OUTSIDE (`follow: false`); a member's
+    // open turns it on (`t.follow()`), never off.
+    let follows = follow;
     // The space: an object (a table of a space: its group keeps it current) or its id's bytes (an epoch log).
     const spaceId = inSpace?.idBytes ?? inSpace;
     // Its label: its name, or its blinded name (then its writes are signed by the name, which the identity checks).
@@ -469,6 +477,10 @@ export async function start(ctx) {
       },
       // The first read to its end (the node's answer, or its silence past the read's wait): what a DECISION waits for.
       answer: () => ctx.background("storage: answer", answer ?? Promise.resolve()),
+      // A MEMBER opened it too: followed from its next read (the door's budget allowing).
+      follow: () => {
+        follows = true;
+      },
       // ITS READ STATE (FOUNDATION.md §2, the read machine): `{ s: "unknown" }` (not asked, silent, or shown before
       // its answer), `{ s: "absent" }` (the node ANSWERED not found, or the catalog that would list it says none),
       // `{ s: "present" }`, `{ s: "unreadable", why }`. `absent` above is what a page SHOWS; this is what a DECISION
@@ -590,7 +602,7 @@ export async function start(ctx) {
       if (again) wrote(idHex);
       let said;
       try {
-        said = await contract(idHex, `reading ${app}`, { frames: () => core.tail_get(id)[1], match: x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, ms });
+        said = await contract(idHex, `reading ${app}`, { follow: follows, frames: () => core.tail_get(id)[1], match: x => (x.kind === "tail" || x.kind === "tail-need" || x.kind === "tail-keys" || x.kind === "tail-unreadable" || x.kind === "get-failed") && x.id === idHex, ms });
         if (said.held) said = JSON.parse(core.tail_view(id));
         answered = true;
       } catch (e) {
@@ -1779,25 +1791,31 @@ export async function start(ctx) {
     };
     // More writers taken in: ready as `settled` is (5 s at most; later ones merged as they come). `caps`: a DEPARTED
     // writer's (node → seq: `writersOf`), its rows counted up to there — as a member's merged table counts them.
+    // (A writer's feed STILL OPENING — taken in, not here yet: the reader is not decided meanwhile — as a merged
+    // table's `writersOpening`; 10-24, live: Discover read every public space from outside before its writers' feeds
+    // arrived, took "members only" as decided, and showed none.)
+    let opening = 0;
     const add = (list, caps = null) =>
       soon(
         Promise.all(
           list
             .filter(o => !seen.has(o) && seen.add(o))
-            .map(o =>
-              ctx.background("storage: tail", tail(o, name, { public: true }).then(t => {
+            .map(o => {
+              opening += 1;
+              return ctx.background("storage: tail", tail(o, name, { public: true, follow: false }).then(t => {
                   const cap = caps?.get?.(o);
-                  all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, raw: () => (t.raw() ?? []).filter(([, v]) => withinCap(v, cap)) } : t);
+                  all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, get state() { return t.state; }, raw: () => (t.raw() ?? []).filter(([, v]) => withinCap(v, cap)) } : t);
                   t.onChange(remerge);
                   remerge();
-                })),
-            ),
+                }).finally(() => (opening -= 1)));
+            }),
         ),
         name,
       );
     const settled = add(owners);
-    // (Its read state: the least decided of the feeds it is built on — `ctx.least`, the one combination.)
-    return { rows: () => rows, onChange: f => changed.push(f), settled, add, get state() { return ctx.least(all.map(f => f.state ?? { s: "unknown" })); } };
+    // (Its read state: the least decided of the feeds it is built on — `ctx.least`, the one combination — and unknown
+    // while a writer's feed is still opening.)
+    return { rows: () => rows, onChange: f => changed.push(f), settled, add, get state() { return opening ? { s: "unknown", why: "writers' feeds still being read" } : ctx.least(all.map(f => f.state ?? { s: "unknown" })); } };
   }
 
   // THIS NODE's tables opened on this page (the account's, and its own feeds in spaces): what keeping keeps.

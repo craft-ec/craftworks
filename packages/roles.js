@@ -439,6 +439,13 @@ export async function start(ctx) {
       get left() {
         return left;
       },
+      // NOT MIGRATED here (owner 10-24: "hidden totally … won't even appear as open"): the list, read whole, never names
+      // this account — not listed, not the owner, no counted act about it or by it (an MLS-era member the list never
+      // carried over). A newcomer is named by its own join or its invite, so never this. Taken out of its list as a
+      // removal is (`upkeep`).
+      get unlisted() {
+        return !!(me && !out && listWhole && !roster.has(me.id) && owner !== me.id && !counted.some(a => a.did === me.id || a.by === me.id));
+      },
       // Whether its members are KNOWN yet (its group read once — or, from outside, its roster).
       get membersKnown() {
         return groupRead || !!out;

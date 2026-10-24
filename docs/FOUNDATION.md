@@ -143,6 +143,14 @@ t.onState(fn)
   once, subscribed again. Work done once per device (the key-history walk) is never re-derived on load. Content-addressed
   reads (tree blocks, file pieces, the site) never change: read once per page, held. `tools/read-check.mjs` fails the
   build on a GET, a consuming `take_got`, a `backoff` or a fresh flag anywhere else.
+  THE FOLLOW BUDGET (10-24): the node lets one connection follow at most 500 contracts and has no unsubscribe — past it
+  every subscription is refused, the page's own included (fx, measured: a fresh account could not register; a Discover
+  over hundreds of public spaces had spent them). FOLLOWED BY INTENT: what a member reads (its account's tables, its
+  spaces') is followed, up to 400 a connection; what is read from OUTSIDE (Discover, a public space one is not in —
+  `storage.readOnly`) is `READ` — fetched without following, kept, read again on the next ask after 60 s — and never
+  spends the budget (fx: Discover had spent it, and a newcomer's join was never pushed to the space's owner). A tail
+  opened from outside and then by a member is followed from the member's open on. A new connection starts a new
+  budget, what was followed followed again first.
 
 Callers: `const st = await t.decided(); if (st.s === "absent") create…; else if (st.s !== "present") wait`.
 `ordering.tail.from()` returns `undefined` on unknown; `commitFrom` passes it through.
@@ -335,6 +343,14 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    is out of the keys once the BeeKEM tree no longer holds them (`members.holds`): the file re-key waits for that and
    for its table to seal with the newest generation; where their feeds stood is recorded while the tree (or, migrating,
    MLS) still holds them.
+   NOT MIGRATED, NOT SHOWN (owner 10-24: "drop support … any lost messages during this time is benign"; "hidden
+   totally … won't even appear as open"): no MLS-era history is carried over. A space whose list, read whole, never
+   names this account (not listed, not its owner, no counted act about or by it — an MLS-era member nobody listed) is
+   taken out of this person's list as a removal is (`roles.unlisted`, `upkeep`); a public space whose key operations
+   hold no tree is not listed in Discover and does not open from outside (`items.opens`). A newcomer is named by its own
+   join or its invite, so never hidden. From outside, a public space's acts are not decided while a writer's feed is
+   still opening (`storage.readOnly`, as a merged table's): Discover took "members only" from the owner's feeds alone
+   and showed no public space (10-24, live).
    SPACES WITHOUT MLS (K8.3): a space made or joined makes no MLS group and no MLS entry; a write waits on no MLS
    read; the node upkeeps it too (its mandate names every space — one with no MLS group as an empty group, epoch 0,
    never loaded: its list and BeeKEM keys followed, no MLS catch-up). A SELF-JOINER (code, open door) has no key yet: its `join` act is public (a membership move), its device names

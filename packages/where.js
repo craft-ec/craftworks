@@ -173,8 +173,10 @@ export async function start(ctx) {
   const spacesHeld = new Map(); // app → { at, list }
   async function spacesFor(app) {
     const had = spacesHeld.get(app);
-    if (had && had.list.state?.s !== "unknown") {
-      if (Date.now() - had.at > 60e3) ctx.background("where: spaces again", spacesNow(app));
+    // (Held: given at once — still arriving, read again behind it now; decided, at most once a minute — as
+    // `items.publicSpaces` is.)
+    if (had) {
+      if (had.list.state?.s === "unknown" || Date.now() - had.at > 60e3) ctx.background("where: spaces again", spacesNow(app));
       return had.list;
     }
     return spacesNow(app);
