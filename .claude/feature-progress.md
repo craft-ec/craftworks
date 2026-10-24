@@ -2977,6 +2977,9 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       (501 B) yet Wren's page read 0 feeds: `gather` awaited the writer's sealed catalog before the public by-name open.
       Fix (v436): public tables opened by name first. Ivvor's Space 0abe9f (owner CxdiuHjP): no pub-keyops feed from any
       of 7 known writers — whether a tree was ever made there is UNMEASURED.
+      v436 LIVE (gates 3/3): Wren reads Ivvor's 7 key operations, all applied; placed, generations 43825365, 75007387,
+      114351403; Ivvor held. Left: MLS epochs 494/169 (Wren never given — Ivvor's page bridges them on its next visit);
+      Ivvor's Space has no tree — only its creator CxdiuHjP makes it, on its next visit.
       fx: joincode 6/6, lostroot 7/7, space-first2 1 fail then 3 passes. OPEN (separate): a read before this device
       holds the key answers "none" not "arriving" (space-first2 run 1: B not placed yet, board sealed 26089150).
 - [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
