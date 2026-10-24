@@ -345,12 +345,15 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    MLS) still holds them.
    NOT MIGRATED, NOT SHOWN (owner 10-24: "drop support … any lost messages during this time is benign"; "hidden
    totally … won't even appear as open"): no MLS-era history is carried over. A space whose list, read whole, never
-   names this account (not listed, not its owner, no counted act about or by it — an MLS-era member nobody listed) is
+   moved this account in or out (not listed, not its owner, no counted act letting it in or putting it out —
+   `gov::entry_move`; an MLS-era member nobody listed) is
    taken out of this person's list as a removal is (`roles.unlisted`, `upkeep`); a public space whose key operations
    hold no tree is not listed in Discover and does not open from outside (`items.opens`). A newcomer is named by its own
    join or its invite, so never hidden. From outside, a public space's acts are not decided while a writer's feed is
    still opening (`storage.readOnly`, as a merged table's): Discover took "members only" from the owner's feeds alone
-   and showed no public space (10-24, live).
+   and showed no public space (10-24, live). Each writer for at most `KEY_WAIT` from when it was taken in: a feed that
+   never answers is set aside then, and the reader decided from the feeds that did (v438, live: one silent writer kept
+   Discover "still arriving" for good).
    SPACES WITHOUT MLS (K8.3): a space made or joined makes no MLS group and no MLS entry; a write waits on no MLS
    read; the node upkeeps it too (its mandate names every space — one with no MLS group as an empty group, epoch 0,
    never loaded: its list and BeeKEM keys followed, no MLS catch-up). A SELF-JOINER (code, open door) has no key yet: its `join` act is public (a membership move), its device names

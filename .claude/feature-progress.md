@@ -3002,6 +3002,10 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       writers' feeds arrived → "members only"; now unknown while opening (capped feeds keep their state too). (4) the
       held public-space lists given at once, re-read behind. fx (tokens off, as live): joincode ×2, joincode-first,
       lostroot, behind, remove-control-bk, space-first2 ×2, quick PASS; 0 refusals.
+      v438 LIVE but measured as Wren: Discover stayed "unknown" for good (one silent writer's feed held readOnly) and
+      Ivvor's Space stayed listed (a counted rejection named Wren). v439: readOnly sets a silent writer aside after
+      KEY_WAIT; `unlisted` by `gov::entry_move` (moved in/out), never by any act naming one. fx tokens-off: joincode,
+      joincode-first, space-first2, remove-control-bk, quick PASS.
       OPEN (tokens, not live): `statement.js` audit reads (~594 key logs/records a page on fx) follow through the door
       and spend the budget — its `node.read(...)` should pass `{ follow: false }` (file holds others' uncommitted token
       work: not staged here). fx with tokens ON fails joins until then.

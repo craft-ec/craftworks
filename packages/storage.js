@@ -1794,20 +1794,25 @@ export async function start(ctx) {
     // (A writer's feed STILL OPENING — taken in, not here yet: the reader is not decided meanwhile — as a merged
     // table's `writersOpening`; 10-24, live: Discover read every public space from outside before its writers' feeds
     // arrived, took "members only" as decided, and showed none.)
-    let opening = 0;
+    // (At most KEY_WAIT per writer, from when it was taken in: a feed that never answers — not on the network, its
+    // node silent — is set aside then, and the reader decided from the feeds that did; 10-24, live: Discover stayed
+    // "still arriving" for good over a space with one silent writer.)
+    const opening = new Map(); // writer → when taken in, while its feed is opening
+    const addedAt = new Map(); // writer → when taken in
     const add = (list, caps = null) =>
       soon(
         Promise.all(
           list
             .filter(o => !seen.has(o) && seen.add(o))
             .map(o => {
-              opening += 1;
+              opening.set(o, Date.now());
+              addedAt.set(o, Date.now());
               return ctx.background("storage: tail", tail(o, name, { public: true, follow: false }).then(t => {
                   const cap = caps?.get?.(o);
                   all.push(typeof cap === "number" ? { owner: t.owner, get absent() { return t.absent; }, get state() { return t.state; }, raw: () => (t.raw() ?? []).filter(([, v]) => withinCap(v, cap)) } : t);
                   t.onChange(remerge);
                   remerge();
-                }).finally(() => (opening -= 1)));
+                }).finally(() => opening.delete(o)));
             }),
         ),
         name,
@@ -1815,7 +1820,19 @@ export async function start(ctx) {
     const settled = add(owners);
     // (Its read state: the least decided of the feeds it is built on — `ctx.least`, the one combination — and unknown
     // while a writer's feed is still opening.)
-    return { rows: () => rows, onChange: f => changed.push(f), settled, add, get state() { return opening ? { s: "unknown", why: "writers' feeds still being read" } : ctx.least(all.map(f => f.state ?? { s: "unknown" })); } };
+    const young = o => Date.now() - (addedAt.get(o) ?? 0) < KEY_WAIT;
+    return {
+      rows: () => rows,
+      onChange: f => changed.push(f),
+      settled,
+      add,
+      get state() {
+        if ([...opening.keys()].some(young)) return { s: "unknown", why: "writers' feeds still being read" };
+        // (A feed still silent past its KEY_WAIT: set aside — decided from the ones that answered.)
+        const st = all.map(f => ({ s: f.state?.s ?? "unknown", owner: f.owner })).filter(x => x.s !== "unknown" || young(x.owner));
+        return ctx.least(st.length ? st : [{ s: "absent" }]);
+      },
+    };
   }
 
   // THIS NODE's tables opened on this page (the account's, and its own feeds in spaces): what keeping keeps.

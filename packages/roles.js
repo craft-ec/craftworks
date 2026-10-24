@@ -439,12 +439,14 @@ export async function start(ctx) {
       get left() {
         return left;
       },
-      // NOT MIGRATED here (owner 10-24: "hidden totally … won't even appear as open"): the list, read whole, never names
-      // this account — not listed, not the owner, no counted act about it or by it (an MLS-era member the list never
-      // carried over). A newcomer is named by its own join or its invite, so never this. Taken out of its list as a
-      // removal is (`upkeep`).
+      // NOT MIGRATED here (owner 10-24: "hidden totally … won't even appear as open"): the list, read whole, never moved
+      // this account in or out — not listed, not the owner, no counted act letting it in or putting it out
+      // (`gov::entry_move`, the node's too; an MLS-era member the list never carried over — another act naming it, a
+      // rejection, moves nothing). A newcomer is moved in by its own join or its admission, so never this. Taken out of
+      // its list as a removal is (`upkeep`).
       get unlisted() {
-        return !!(me && !out && listWhole && !roster.has(me.id) && owner !== me.id && !counted.some(a => a.did === me.id || a.by === me.id));
+        const moved = a => JSON.parse(node.glue.entry_move(JSON.stringify(a)) ?? "null")?.[1] === me?.id;
+        return !!(me && !out && listWhole && !roster.has(me.id) && owner !== me.id && !counted.some(moved));
       },
       // Whether its members are KNOWN yet (its group read once — or, from outside, its roster).
       get membersKnown() {
