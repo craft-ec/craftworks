@@ -2971,6 +2971,14 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       v434 live, but the owner's page loaded the merged saved row — 7388a5ca's EMPTY tree; device 22b6aa9b's version
       (placed, 38816386) holds the root. Fix (v435): load after the account table settles; republish from every saved
       version (`t.versions`). fx lostroot PASS again.
+      v435 LIVE; verified on the owner's node: DM sync republished 1 (the root), rows 2→3; a fresh read places the
+      owner, generation 38816386, Ivvor held. Ivvor placed on their next visit.
+- [~] 10-24 IVVOR's SPACES (as Wren, unlocked after v433): Ivvor's New Space f5697a — Ivvor's pub-keyops feed ON B
+      (501 B) yet Wren's page read 0 feeds: `gather` awaited the writer's sealed catalog before the public by-name open.
+      Fix (v436): public tables opened by name first. Ivvor's Space 0abe9f (owner CxdiuHjP): no pub-keyops feed from any
+      of 7 known writers — whether a tree was ever made there is UNMEASURED.
+      fx: joincode 6/6, lostroot 7/7, space-first2 1 fail then 3 passes. OPEN (separate): a read before this device
+      holds the key answers "none" not "arriving" (space-first2 run 1: B not placed yet, board sealed 26089150).
 - [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
       live spaces listed migrated / not (members never back named).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.

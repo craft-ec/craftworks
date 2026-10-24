@@ -1309,9 +1309,12 @@ export async function start(ctx) {
       const opened = new Set();
       const notOpened = new Map(); // writer → its open (a public table): asked again as the open writers list changes
       const gather = async o => {
+        // A PUBLIC table is read by its NAME first — never only after the writer's catalog answers (10-24, live: Wren's
+        // page waited on Ivvor's catalog, sealed with a key it lacks, and never opened Ivvor's key operations in Ivvor's
+        // New Space — a feed on the network; no tree read, the space unreadable).
+        if (opts.public && sp.kind !== "account" && !opened.has(o)) return void (opened.add(o), take(await theirs(o, null)));
         const c = await ctx.optional("storage: scope.catalogOf", scope.catalogOf(o), () => null);
-        // (A public table: read by its name even where the writer's catalog does not open here.)
-        if (!c) return void (opts.public && sp.kind !== "account" && !opened.has(o) && (opened.add(o), take(await theirs(o, null))));
+        if (!c) return;
         await c.answer();
         const open = async () => {
           // Listed in its catalog — or, a PUBLIC table, named in the space's open writers list (`listPublic`: what a

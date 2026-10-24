@@ -347,7 +347,9 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    are in the clear and judged by what they hold — every writer's read by its name, never only where its sealed catalog
    or the open writers list names it. Found through a catalog sealed with its writer's newest generation, the operation
    giving that generation could never be read (Craftworks: three of the owner's own operations waited for ever on a
-   predecessor in its other device's feed, which no catalog the page opened and no open-list entry named).
+   predecessor in its other device's feed, which no catalog the page opened and no open-list entry named). Read by
+   name FIRST, never after the writer's catalog answers (10-24: Wren's page waited on Ivvor's catalog, sealed with a key
+   it lacked, and never opened Ivvor's key operations in Ivvor's New Space — a feed on the network).
    THE TREE IS WHAT THE CHECK MAKES OF THE OPERATIONS (10-23): from a whole list every page merges every operation
    afresh — one tree on every device. A saved tree that reaches generations the fresh merge does not (a branch on an
    operation the check now refuses — a member's stray root taken before the creator rule) is dropped; the bridge carries
