@@ -121,7 +121,17 @@ t.onState(fn)
   `known:false` one. A view that cannot yet tell "none" from "not read" (roles' public acts, R5) says `unknown`, and is
   never remembered as "none".
 - **R5 — A merged table is decided when its own feed and every listed writer's feed are**; a sealed or unread writer
-  list makes it `unreadable`, never an empty `present`.
+  list makes it `unreadable`, never an empty `present`. Its WRITERS must be known too: while the space's list is not
+  read whole, a listed account's devices are not found yet, or a writer named since it opened is still opening, it is
+  `unknown`; so is a feed whose rows wait on a key this device is still to be given. Each for at most `KEY_WAIT`
+  (2 min) — a key never given or a list never whole is said (`problem`), never `unknown` for ever. (10-24, fx: a
+  newcomer's first read of a space, before its tree placed it, drew "no posts".)
+- **ONE READ STATE, one mark (10-24).** What a read gives carries this state — `ctx.stated(value, state)` — and a read
+  made of parts takes the LEAST decided of theirs (`ctx.least`: any `unknown` → `unknown`). Rooms, items, Discover's
+  lists and an app's frame (across the host) pass it on; a failed part keeps its state (`ctx.total`), never a plain empty
+  list. The view draws "Still arriving…" for `unknown` and reads again. No second mark beside it (an `arriving` flag, an
+  `answered()` check): computed again at each layer and dropped by one, it drew "no posts" for a list still arriving
+  (`tools/read-check.mjs` fails one).
 - **Defaults deny.** A policy, card or role not read is `unknown` and treated as the narrowest choice, never "anyone".
 - **R6 — Read once, then followed (owner 10-15: "we should not be making unnecessary calls … not using the same data
   already available").** Every contract that can change (a tail, a bag, a key log, a register) is read through ONE door,

@@ -173,7 +173,7 @@ export async function start(ctx) {
   const spacesHeld = new Map(); // app → { at, list }
   async function spacesFor(app) {
     const had = spacesHeld.get(app);
-    if (had && !had.list.arriving) {
+    if (had && had.list.state?.s !== "unknown") {
       if (Date.now() - had.at > 60e3) ctx.background("where: spaces again", spacesNow(app));
       return had.list;
     }
@@ -184,8 +184,8 @@ export async function start(ctx) {
     const ok = await Promise.all(all.map(d => ctx.optional("where: opens from outside", opensFromOutside(d, app), () => false)));
     const prs = await Promise.all(all.map((d, i) => (ok[i] ? roles.ofPublic.strict(d) : null)));
     const out = all.map((d, i) => ok[i] && { d, pr: prs[i] }).filter(Boolean);
-    // (Still arriving as the list it is drawn from is: some spaces not decided yet.)
-    if (all.arriving) Object.defineProperty(out, "arriving", { value: true });
+    // (Its read state as the list it is drawn from is: unknown while some spaces are not decided yet.)
+    ctx.stated(out, all.state);
     spacesHeld.set(app, { at: Date.now(), list: out });
     return out;
   }

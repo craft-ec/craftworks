@@ -36,7 +36,7 @@ export const SOURCE = `
       if (m.event === "cb") return cbs.get(m.id)?.(...back(m.args ?? []));
       if (m.event === "route") return Object.assign(ctx, m.where), dispatchEvent(new CustomEvent("craftworks:route"));
       const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id);
-      m.ok ? w.resolve(m.arriving && m.value && typeof m.value === "object" ? Object.defineProperty(m.value, "arriving", { value: true }) : m.value) : w.reject(Object.assign(new Error(m.error), { kind: m.kind }));
+      m.ok ? w.resolve(ctx.stated(m.value, m.state)) : w.reject(Object.assign(new Error(m.error), { kind: m.kind }));
     });
     const fromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
     const importB64 = b => import("data:text/javascript;base64," + b);

@@ -224,9 +224,9 @@ export async function start(ctx) {
       const reply = r => frame.contentWindow?.postMessage({ id, ...r }, "*");
       if (!Object.hasOwn(ops, op)) return reply({ ok: false, error: `no such call: ${op}`, kind: "refused" });
       try {
-        // (A result STILL ARRIVING keeps its mark across: a copy drops an array's own properties.)
+        // (A result's READ STATE goes across: a copy drops an object's own properties.)
         const value = await ops[op](...args);
-        reply({ ok: true, value, ...(value?.arriving ? { arriving: true } : {}) });
+        reply({ ok: true, value, ...(value?.state ? { state: value.state } : {}) });
       } catch (err) {
         reply({ ok: false, error: String(err?.message ?? err), kind: err?.kind ?? "refused" });
       }
@@ -516,9 +516,9 @@ export async function start(ctx) {
       await turn();
       if (!Object.hasOwn(ops, op)) return reply({ ok: false, error: `no such call: ${op}`, kind: "refused" });
       try {
-        // (A result STILL ARRIVING keeps its mark across: a copy drops an array's own properties.)
+        // (A result's READ STATE goes across: a copy drops an object's own properties.)
         const value = await ops[op](...args);
-        reply({ ok: true, value, ...(value?.arriving ? { arriving: true } : {}) });
+        reply({ ok: true, value, ...(value?.state ? { state: value.state } : {}) });
       } catch (err) {
         reply({ ok: false, error: String(err?.message ?? err), kind: err?.kind ?? "refused" });
       }

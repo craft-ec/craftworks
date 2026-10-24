@@ -29,6 +29,10 @@ const BANNED = [
   // R4: a per-page cache of a READ kept by hand keeps its failure (or a fallback in its place) for the page's life —
   // `ctx.cache(map, key, make, fallback?)` forgets a failure.
   [/if \(!(\w+)\.has\([^)]*\)\)\s*\1\.set\([^\n]*(\.then\(|ctx\.optional\(|ctx\.require\()/g, "a cache of a read kept by hand: `ctx.cache` (a failure is forgotten, FOUNDATION §2 R4)"],
+  // ONE READ STATE (FOUNDATION §2; 10-24): what a read gives carries its state by `ctx.stated` and combines by
+  // `ctx.least` — a second mark beside it (an `arriving` flag, an `answered()` check) is computed again at each layer
+  // and dropped by one, and a list drew "no posts" while it was still arriving.
+  [/defineProperty\([^,]+,\s*["'](arriving|answered)["']|\banswered:\s*\(\)\s*=>|\.answered\(\)/g, "a second read-state mark: the read's `state` (`ctx.stated`, `ctx.least`)"],
 ];
 const code = src => src.replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
 for (const f of readdirSync(pkgs).filter(f => f.endsWith(".js"))) {

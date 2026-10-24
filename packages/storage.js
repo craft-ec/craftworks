@@ -103,6 +103,8 @@ export async function start(ctx) {
   // arrives (`craftworks:keys`: the identity kept an epoch — this node caught up, or joined, or another device of the
   // account moved the group), they are given it and read again: a device added while this page is open is read.
   const unkeyed = new Map();
+  // How long rows under a key not held yet keep a read ARRIVING (a newcomer's keys come with its placement: ~1 min).
+  const KEY_WAIT = 120e3;
   // A space table's ALTERNATE keys: each epoch secret of a group branch this node left (`keys.group(sp).lost()`),
   // as this table's key in that epoch.
   async function alternates(id, app, sp) {
@@ -159,7 +161,7 @@ export async function start(ctx) {
     for (const e of epochs) {
       const k = await access.keyAt(app, e, { catalog: app === CATALOG, space: spaceId });
       core.tail_epoch_key(bytes(idHex), e, k.key ? bytes(k.key) : new Uint8Array(0), false);
-      const u = unkeyed.get(idHex) ?? { app, epochs: new Set() };
+      const u = unkeyed.get(idHex) ?? { app, epochs: new Set(), since: Date.now() };
       if (k.key) (u.epochs.delete(e), solved(spaceId, `${app}: no key for epoch ${e}`));
       else {
         u.epochs.add(e);
@@ -465,16 +467,20 @@ export async function start(ctx) {
         }
         return out;
       },
-      // Whether the node ANSWERED the last read (the tail, or "not found"), not silence.
-      answered: () => answered,
       // The first read to its end (the node's answer, or its silence past the read's wait): what a DECISION waits for.
       answer: () => ctx.background("storage: answer", answer ?? Promise.resolve()),
       // ITS READ STATE (FOUNDATION.md §2, the read machine): `{ s: "unknown" }` (not asked, silent, or shown before
       // its answer), `{ s: "absent" }` (the node ANSWERED not found, or the catalog that would list it says none),
       // `{ s: "present" }`, `{ s: "unreadable", why }`. `absent` above is what a page SHOWS; this is what a DECISION
       // reads.
+      // (Read, its rows under a key this device is still to be given: UNKNOWN for at most KEY_WAIT — 10-24, fx: a
+      // newcomer's first read of a space, before its tree placed it, drew "no posts", the post read 30 s later. A key
+      // never given — another's history, a removed member's — leaves those rows unread and said (`problem`), never
+      // unknown for ever.)
       get state() {
-      return st;
+        const u = unkeyed.get(idHex);
+        if (st.s === "present" && u?.epochs.size && Date.now() - u.since < KEY_WAIT) return { s: "unknown", why: "rows under a key still to come" };
+        return st;
       },
       // DECIDED: the first read's end; still unknown (the node silent), asked once more with the long wait
       // (WAIT.answer). Never reports unknown as anything else.
@@ -1072,6 +1078,14 @@ export async function start(ctx) {
   // writers bag names with its account, its devices confirming it — a self-joiner's `join` act is read before the list
   // names it (K8.3: no MLS entry brings their feeds in any more). Every other table: the list's.
   const SELF_JUDGED = /-(acts|pub-acts|pub-keyops)$/;
+  // WHETHER A SPACE's LIST READ WHOLE (`roles`, each replay; unset: not known here — a guest's). A space's table read
+  // while its list is NOT whole may be missing a writer the list has yet to name: its state UNKNOWN, never an answered
+  // "none" (10-24, fx: a newcomer's first read, its acts sealed with a key it was about to be given, read only its own
+  // empty feed and drew "no posts"). At most KEY_WAIT from the table's opening; the list's own tables never wait on it.
+  const listsWhole = new Map();
+  const setListWhole = (id, whole) => listsWhole.set(id, !!whole);
+  // (And a listed account whose devices are not found yet — its writers not all known: the same unknown, `currentWriters`.)
+  const devicesUnfound = new Map(); // space id → how many listed accounts have no device found yet
   async function currentWriters(sp, name = "") {
     const directory = await ctx.require("directory");
     let listed = rosters.get(sp.id) ?? [];
@@ -1093,6 +1107,8 @@ export async function start(ctx) {
     const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify([...listed, ...mls]), sp.governance?.owner ?? undefined));
     const sets = await Promise.all(dids.map(d => directory.devices.strict(d)));
     const devices = dids.map((d, i) => [d, sets[i]]);
+    // (Who is listed with NO device found yet — their card not read here yet: the space's writers not all known.)
+    devicesUnfound.set(sp.id, devices.filter(([, s]) => !s.length).length);
     return { members: dids.map(did => ({ did })), devices, nodes: [...new Set(sets.flat())] };
   }
   // WHO WROTE A SPACE's ROWS — THE ONE MAP (owner 10-16: "any question about access should be centralized"): its
@@ -1249,6 +1265,7 @@ export async function start(ctx) {
 
   const tables = new Map(); // scope + name -> Promise<table>
   function merged(name, sp, { lazy = false } = {}) {
+    const openedAt = Date.now();
     const scope = scopeOf(sp);
     const at = `${scope.key}/${name}`;
     // Opened already: as it is — or, opened LAZY and now wanted whole, every feed read whole.
@@ -1308,7 +1325,18 @@ export async function start(ctx) {
       // arrives without a reload.
       const opened = new Set();
       const notOpened = new Map(); // writer → its open (a public table): asked again as the open writers list changes
+      // WRITERS STILL OPENING (a writer the list named after the table opened, its feed being read): the table's state
+      // is unknown meanwhile (10-24, fx: a newcomer's read, A just named, A's feed not opened yet — "no posts").
+      let writersOpening = 0;
       const gather = async o => {
+        writersOpening += 1;
+        try {
+          return await gatherOne(o);
+        } finally {
+          writersOpening -= 1;
+        }
+      };
+      const gatherOne = async o => {
         // A PUBLIC table is read by its NAME first — never only after the writer's catalog answers (10-24, live: Wren's
         // page waited on Ivvor's catalog, sealed with a key it lacks, and never opened Ivvor's key operations in Ivvor's
         // New Space — a feed on the network; no tree read, the space unreadable).
@@ -1497,7 +1525,10 @@ export async function start(ctx) {
         get state() {
           const own = me.state ?? { s: "unknown" };
           if (own.s !== "present" && own.s !== "absent") return own;
-          if (!gathered) return { s: "unknown", why: "writers' feeds still being read" };
+          if (!gathered || writersOpening) return { s: "unknown", why: "writers' feeds still being read" };
+          // (Its space's WRITERS NOT ALL KNOWN yet — the list not whole, or a listed account's devices not found: unknown,
+          // for at most KEY_WAIT; the list's own tables never wait on it.)
+          if (sp && (listsWhole.get(sp.id) === false || devicesUnfound.get(sp.id) > 0) && !SELF_JUDGED.test(name) && Date.now() - openedAt < KEY_WAIT) return { s: "unknown", why: "the space's writers not all known yet" };
           // (Every other writer's feed ANSWERED too — not merely opened, shown after WAIT.hint: audit 10-13.)
           if (all.some(f => f !== me && f.state?.s === "unknown")) return { s: "unknown", why: "a writer's feed not answered yet" };
           // (A writer's feed there but SEALED here — a recovery before its keys arrived: never an empty "present", R5.)
@@ -1510,13 +1541,6 @@ export async function start(ctx) {
           return t.state;
         },
         // R3: the writers whose feed did not open here, GATHERED AGAIN (keys arrived since).
-        // ANSWERED: every feed it is built on had the node's answer (rows, or "not there") — not silence — and none
-        // failed to open. Until then what it holds is NOT "empty": it is still arriving (R4; 10-22, live: a space's
-        // board read empty for 15 s, its feeds silent, and every app drew "no posts").
-        // (And every listed writer TRIED — `gathered`, as `state` asks: a writer's feed still opening is not in `all`
-        // yet, so "every feed answered" was true with this node's own alone — 10-22, live: a space's page read its room
-        // as answered and empty, its post arriving seconds later, and drew "no posts".)
-        answered: () => gathered && failedOwners.size === 0 && all.every(f => (typeof f.answered === "function" ? f.answered() : true)),
         retryFailed: () => {
           for (const o of [...failedOwners]) {
             failedOwners.delete(o);
@@ -1772,8 +1796,8 @@ export async function start(ctx) {
         name,
       );
     const settled = add(owners);
-    // (Answered: as a merged table's — every feed it is built on answered.)
-    return { rows: () => rows, onChange: f => changed.push(f), settled, add, answered: () => all.every(f => (typeof f.answered === "function" ? f.answered() : true)) };
+    // (Its read state: the least decided of the feeds it is built on — `ctx.least`, the one combination.)
+    return { rows: () => rows, onChange: f => changed.push(f), settled, add, get state() { return ctx.least(all.map(f => f.state ?? { s: "unknown" })); } };
   }
 
   // THIS NODE's tables opened on this page (the account's, and its own feeds in spaces): what keeping keeps.
@@ -1849,5 +1873,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, setRoster, setListWhole, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

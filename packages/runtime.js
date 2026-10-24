@@ -12,6 +12,16 @@ export function install(ctx, { handled, stateOf, theme }) {
   // A COPY to the clipboard (the bar's Share): in the page, the clipboard itself; an app's frame has its own (`copy`:
   // through the host, on a gesture) and keeps it.
   ctx.copy ??= text => navigator.clipboard.writeText(String(text));
+  // ONE READ STATE on what a read gives (FOUNDATION §2: unknown, absent, present, unreadable — `failed` for a read that
+  // failed): `ctx.stated(value, state)` marks it (an object or a list, not enumerable), `ctx.least(states)` combines the
+  // states of the parts a read is made of — the LEAST decided: any unknown → unknown (still arriving), else any
+  // unreadable or failed → that, else present if any part holds something, else absent. The one mark and the one rule
+  // (10-24: an `arriving` mark beside it, computed again at each layer, was dropped by one and drew "no posts").
+  ctx.stated = (v, st) => (v && typeof v === "object" && st && Object.defineProperty(v, "state", { value: st, enumerable: false, configurable: true }), v);
+  ctx.least = states => {
+    const all = states.filter(Boolean);
+    return all.find(x => x.s === "unknown") ?? all.find(x => x.s === "failed") ?? all.find(x => x.s === "unreadable") ?? all.find(x => x.s === "present") ?? all[0] ?? { s: "absent" };
+  };
   ctx.total = (what, empty, read) =>
     Object.assign(
       (...args) =>
@@ -20,8 +30,7 @@ export function install(ctx, { handled, stateOf, theme }) {
           .catch(e => {
             const kind = handled(what, e);
             const v = empty();
-            if (v && typeof v === "object") Object.defineProperty(v, "state", { value: { s: stateOf(kind), why: String(e?.message ?? e).slice(0, 120) }, enumerable: false });
-            return v;
+            return ctx.stated(v, { s: stateOf(kind), why: String(e?.message ?? e).slice(0, 120) });
           }),
       { strict: (...args) => Promise.resolve().then(() => read(...args)) },
     );
@@ -103,9 +112,10 @@ export function install(ctx, { handled, stateOf, theme }) {
         return el.replaceChildren(await look("failed", ctx.say(e)), b);
       }
       clearTimeout(slow);
-      // WHAT IS READ SO FAR, STILL ARRIVING (`data.arriving`, an array's mark): drawn, and read again by itself the same
+      // WHAT IS READ SO FAR, STILL ARRIVING (its state unknown — `ctx.stated`): drawn, and read again by itself the same
       // way — until it is the whole answer.
-      if (data?.arriving) {
+      const arriving = data?.state?.s === "unknown";
+      if (arriving) {
         retryIn = Math.min(60000, retryIn ? retryIn * 2 : 2000);
         clearTimeout(retryT);
         retryT = setTimeout(() => el.isConnected && !stopped && refresh(), retryIn);
@@ -116,7 +126,7 @@ export function install(ctx, { handled, stateOf, theme }) {
       if (!stopped && !el.isConnected && !(await attached())) return;
       if (stopped || !el.isConnected) return;
       // (Still arriving and holding FEWER entries than the list on screen: what is shown stays until it answers.)
-      if (data?.arriving && seen && Array.isArray(data) && drawnN != null && data.length < drawnN) return;
+      if (arriving && seen && Array.isArray(data) && drawnN != null && data.length < drawnN) return;
       const st = data?.state?.s;
       const key = (() => {
         try {
@@ -129,7 +139,7 @@ export function install(ctx, { handled, stateOf, theme }) {
       if (key === seen) return;
       if (typing()) return void (again = true); // drawn when they leave the field
       seen = key;
-      if ((st === "unknown" || data?.arriving) && empty(data)) return el.replaceChildren(await look("notRead", "Still arriving…"));
+      if (st === "unknown" && empty(data)) return el.replaceChildren(await look("notRead", "Still arriving…"));
       if (st === "failed") return el.replaceChildren(await look("failed", data.state.why ?? "Could not be read"));
       if (empty(data)) return el.replaceChildren(await look("empty", "Nothing here yet."));
       drawnN = Array.isArray(data) ? data.length : null;

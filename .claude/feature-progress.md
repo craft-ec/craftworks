@@ -2980,8 +2980,16 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       v436 LIVE (gates 3/3): Wren reads Ivvor's 7 key operations, all applied; placed, generations 43825365, 75007387,
       114351403; Ivvor held. Left: MLS epochs 494/169 (Wren never given — Ivvor's page bridges them on its next visit);
       Ivvor's Space has no tree — only its creator CxdiuHjP makes it, on its next visit.
-      fx: joincode 6/6, lostroot 7/7, space-first2 1 fail then 3 passes. OPEN (separate): a read before this device
-      holds the key answers "none" not "arriving" (space-first2 run 1: B not placed yet, board sealed 26089150).
+      fx: joincode 6/6, lostroot 7/7, space-first2 1 fail then 3 passes.
+- [x] 10-24 ONE READ STATE (owner: "is it structural? … design should fit into overall design"): the `answered()`
+      check and `arriving` mark beside the read machine's `state` deleted everywhere (storage, content, items, where,
+      runtime, the frame bridge); `ctx.stated` / `ctx.least` the one mark and combination; a table's state unknown
+      while writers open, the list is not whole, a listed account's devices are unfound, or rows wait on a key — each
+      ≤ KEY_WAIT 2 min; `tools/read-check.mjs` fails a second mark (control: a planted `answered: () => true` fails it).
+      fx: joincode-first 2/2, space-first2, joincode, lostroot, quick PASS. CONTROL on v436: the first-read case PASSES
+      there too (its not-yet fault already reached the view as `unknown`) — the "no posts" runs chased today were the
+      TESTS reading the old mark; this is the structural cleanup, plus the outside room's frozen state and unfound
+      devices counted. Released as v437.
 - [ ] K8.4 Migration measured: every space's keys-history holds its MLS epochs (lost-branch keys moved out of keys.js);
       live spaces listed migrated / not (members never back named).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.

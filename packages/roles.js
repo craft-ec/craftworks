@@ -166,8 +166,11 @@ export async function start(ctx) {
     let roster = new Set(first ? [first] : []);
     let bans = new Set();
     let gone = new Set();
-    // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
+    // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6). A MEMBER's
+    // space: told to the storage from the start — not whole until a replay says so, so its tables read as still arriving
+    // meanwhile (FOUNDATION §2 R5; from outside, the space's public reads never wait on it).
     let listWhole = false;
+    if (!out) storage.setListWhole(sp.id, false);
     // MLS (until K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`). WHO IS IN is
     // the LIST (K8.1): `group` below; REMOVED is the list's word too (K8.2, the replay).
     let mlsMembers = [];
@@ -226,6 +229,7 @@ export async function start(ctx) {
         // unread, the list's own tables read.
         const feeds = t.state?.s === "present" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];
         listWhole = !node.glue.guard_list_whole(JSON.stringify(devicesUnread), JSON.stringify(feeds), miss.length);
+        if (!out) storage.setListWhole(sp.id, listWhole);
         keys.setList(sp.id, {
           roster: [...roster],
           owner,
