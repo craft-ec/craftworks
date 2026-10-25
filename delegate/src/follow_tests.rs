@@ -726,12 +726,12 @@ fn k5_a_beekem_space_whose_operations_read_empty_is_not_caught_up_as_mls() {
     assert!(!said.iter().any(|s| s.contains("BeeKEM generation")), "said: {said:?}");
 }
 
-/// 10-19: A LISTED MEMBER's CARD THAT DOES NOT READ while their DEVICES CONTRACT does is not a short list — the one step
-/// (`account::devices_step`) asks the contract before saying anything (the node had said "short" first, and decided
-/// nothing for days). The removal by the acts goes ahead. Control (`a_short_read_decides_nothing`): Y's key log never
-/// answers — short, nothing moves.
+/// 10-25: A LISTED MEMBER's CARD THAT DOES NOT READ: their devices contract is NOT asked "in case" (owner: a read goes
+/// only where something lists it — the card's `devices` mark is that listing; an unlisted GET of a contract nobody
+/// made is a 60 s not-found that parks the delegate, the page's requests queued behind it). The read is short and
+/// says why. Before (10-19): the contract was asked whenever the card did not read.
 #[test]
-fn an_unread_card_with_a_devices_contract_is_not_a_short_list() {
+fn an_unread_card_asks_no_devices_contract() {
     let (x, y) = (person(0x35), person(0x36));
     let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x, &y]);
     x.publish(&mut w.net, &[]);
@@ -740,11 +740,11 @@ fn an_unread_card_with_a_devices_contract_is_not_a_short_list() {
     let owner = craftworks_account::owner_seed(&y.entropy).unwrap();
     let cred = identity::credential(&y.did, &[0x77; 32], &[2u8; 32], &owner);
     let dev = craftworks_devices_contract::params(&y.did, &contract_keys::code_hash(IDLOG));
-    w.net.st.insert(id(DEVICES, &dev), craftworks_devices_contract::encode(&[cred]));
-    w.run();
-    let said = w.said();
-    assert!(!said.iter().any(|s| s.starts_with("list-short")), "not short: {said:?}");
-    assert!(!w.leaves().contains(&x.id()), "the removal went ahead: {said:?}");
+    let dev_id = id(DEVICES, &dev);
+    w.net.st.insert(dev_id, craftworks_devices_contract::encode(&[cred]));
+    let asked = w.run();
+    assert!(!asked.iter().any(|x| matches!(x, Io::Get { id: g, .. } if *g == dev_id)), "the devices contract not asked: {:?}", w.said());
+    assert!(w.said().iter().any(|s| s.contains("card not read")), "said why: {:?}", w.said());
 }
 
 /// 10-19: ON A SHORT READ an entry the list check TAKES is applied all the same (its answer never changes as more is

@@ -516,15 +516,13 @@ impl Reading {
         }
         if self.bag == Some(id) && !self.bag_read {
             self.bag_read = true;
-            // The bag: whom it lists, whether any entry did not open here (BLIND), and the OPEN list's public tables.
-            let (mut listed, mut blind, mut named) = (BTreeSet::new(), false, Vec::<([u8; 32], String)>::new());
+            // The bag: whom it lists, and the OPEN list's public tables. An entry that does not open here names no one
+            // here: skipped (`account::table_writers`).
+            let (mut listed, mut named) = (BTreeSet::new(), Vec::<([u8; 32], String)>::new());
             if let Some(st) = &state {
                 let address = sealed_bag_address(&self.space, "writers");
                 for p in craftworks_bag_contract::read(&address, st).unwrap_or_default() {
-                    let Some(v) = open_bag_item(&self.space, &self.epochs, "writers", craftworks_bag_contract::payload(&p)) else {
-                        blind = true;
-                        continue;
-                    };
+                    let Some(v) = open_bag_item(&self.space, &self.epochs, "writers", craftworks_bag_contract::payload(&p)) else { continue };
                     let Some(w) = v["w"].as_str().and_then(unhex32) else { continue };
                     listed.insert(w);
                     named.extend(v["pub"].as_str().map(|t| (w, t.to_string())));
@@ -540,14 +538,14 @@ impl Reading {
                 self.tables = wanted;
             }
             // THE WRITERS (`account::table_writers`, the page's too): their catalogs; a public table also by the open list.
-            let members = craftworks_account::table_writers(&self.writers, &listed, blind, &[], false, &[0; 32]);
+            let members = craftworks_account::table_writers(&self.writers, &listed, &[], false, &[0; 32]);
             for w in &members {
                 io.extend(self.ask(c, *w, &cat, cat.clone(), Purpose::Catalog { capped: None }));
             }
             let space = self.space;
             for t in self.tables.clone().into_iter().filter(|t| is_public(&space, t)) {
                 let by_list: Vec<[u8; 32]> = named.iter().filter(|(_, n)| *n == t).map(|(w, _)| *w).collect();
-                for w in craftworks_account::table_writers(&[], &listed, false, &by_list, true, &[0; 32]).into_iter().filter(|w| !members.contains(w)) {
+                for w in craftworks_account::table_writers(&[], &listed, &by_list, true, &[0; 32]).into_iter().filter(|w| !members.contains(w)) {
                     io.extend(self.ask(c, w, &t, t.clone(), Purpose::Feed { cap: None }));
                 }
             }

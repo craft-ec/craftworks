@@ -31,9 +31,17 @@ export async function start(ctx) {
   // (10-13) while the page had given up at 30 s and failed. Waited for as long as it takes, up to 3 minutes.
   // REGISTERED ONLY WHEN THE NODE LACKS THIS BUILD (owner 10-25: a page waited 22 s on every load while the node
   // compiled a delegate it already held): asked first; a node that answers it holds it, and nothing is sent.
+  // EACH STEP SAID, with its time (owner 10-25: identity took 110 s and nothing said where): the question, its answer
+  // (or none), the registration and how long the node took to answer it.
+  const t0 = performance.now();
+  const secs = () => `${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  ctx.log("identity", { what: `asking the node whether it holds this build (${core.identity_key().slice(0, 16)}…)` });
   const held = await ctx.optional("identity: does the node hold this build", ask(core.frames_who(), s => s.kind === "identity" || s.kind === "delegate-missing", "asking whether the node holds this identity build", 10000), () => null);
+  ctx.log("identity", { what: held ? `the node answered "${held.kind}" after ${secs()}` : `no answer in 10 s (${secs()}): registering` });
   if (held?.kind !== "identity") {
+    const r0 = performance.now();
     const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate", 180000);
+    ctx.log("identity", { what: `registering answered "${reg.kind}" after ${((performance.now() - r0) / 1000).toFixed(1)} s` });
     if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
   }
   ctx.log("identity ready", { what: core.identity_key().slice(0, 16) + "…" });

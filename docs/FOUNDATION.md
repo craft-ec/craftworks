@@ -127,6 +127,12 @@ t.onState(fn)
   Craftworks' Board and Home empty, the list short for good). A read TRAVERSES WHAT IS LISTED — a catalog, the writers bag, the index — so
   every feed it waits on is there and answers; nothing is decided by a clock (owner 10-25: "it either is there or not
   and should be traversable. that is our design" — a read that needs a deadline is looking up something unlisted).
+  NO READ "IN CASE", page or node: a writers-bag entry that does not open here names no one (skipped and said, never
+  "every member's device"), and an account's devices contract is read only where its card's `devices` mark lists it
+  (`account::table_writers`, `account::devices_step`). Each GET of a contract nobody made is a 60 s not-found on the
+  node; the identity delegate PARKS on its own GETs, and every request to it — a loading page's first — queues
+  behind them (10-25, owner's node: registering waited 99.5 s behind upkeep's reads of absent feeds and an absent
+  devices contract, then ran in 3 ms; its minute wake-up skipped 23–25 times an hour).
 - **ONE READ STATE, one mark (10-24).** What a read gives carries this state — `ctx.stated(value, state)` — and a read
   made of parts takes the LEAST decided of theirs (`ctx.least`: any `unknown` → `unknown`). Rooms, items, Discover's
   lists and an app's frame (across the host) pass it on; a failed part keeps its state (`ctx.total`), never a plain empty

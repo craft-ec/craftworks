@@ -266,6 +266,8 @@ export async function start(ctx) {
   // or dropped: what a dropped one wrote before is still theirs (`storage.writersOf`, up to where it stood).
   async function devicesEver(did) {
     if (!(await keysOf(did))) return [];
+    // Read only where their card LISTS a devices contract (owner 10-25: never a read "in case").
+    if (!(await card(did))?.hasDevices) return [];
     const devicesCode = await ctx.require("devices-wasm");
     if (!(await auth.identity.readDevices(didBytes(did)))) return [];
     return Array.from(core.account_devices_ever(devicesCode, idlogCode, didBytes(did)));

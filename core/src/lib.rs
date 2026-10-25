@@ -1609,12 +1609,12 @@ mod js {
             Ok(serde_json::to_string(&account::reading_dids(&g, owner.as_deref())).expect("a list encodes"))
         }
         /// THE WRITERS A TABLE IS READ FROM (`craftworks_account::table_writers`, the node's too): hex JSON lists of the
-        /// members' devices, the writers bag's listed, the open list's writers for this table; `blind`, `public`; `me`.
-        pub fn table_writers(devices: &str, listed: &str, blind: bool, named: &str, public: bool, me: &str) -> Result<String, JsValue> {
+        /// members' devices, the writers bag's listed, the open list's writers for this table; `public`; `me`.
+        pub fn table_writers(devices: &str, listed: &str, named: &str, public: bool, me: &str) -> Result<String, JsValue> {
             let hexes = |j: &str, what: &str| -> Result<Vec<[u8; 32]>, JsValue> { Ok(serde_json::from_str::<Vec<String>>(j).map_err(|e| err(format!("{what}: {e}")))?.iter().filter_map(|h| craftworks_identity::unhex32(h)).collect()) };
             let listed: std::collections::BTreeSet<[u8; 32]> = hexes(listed, "listed")?.into_iter().collect();
             let me = craftworks_identity::unhex32(me).unwrap_or([0; 32]);
-            let out = account::table_writers(&hexes(devices, "devices")?, &listed, blind, &hexes(named, "named")?, public, &me);
+            let out = account::table_writers(&hexes(devices, "devices")?, &listed, &hexes(named, "named")?, public, &me);
             Ok(serde_json::to_string(&out.iter().map(|n| hex(n)).collect::<Vec<_>>()).expect("a list encodes"))
         }
 

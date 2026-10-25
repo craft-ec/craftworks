@@ -796,6 +796,14 @@ fn a_members_devices_are_read_from_their_devices_contract_on_the_current_key() {
         net.0.insert(upkeep::id_of(&contract_keys::code_hash(IDLOG), &did), log.encode());
         let dev = upkeep::id_of(&contract_keys::code_hash(DEVICES), &craftworks_devices_contract::params(&did, &contract_keys::code_hash(IDLOG)));
         net.0.insert(dev, craftworks_devices_contract::encode(creds));
+        // Their CARD says the account has a devices contract (what lists it: read only then).
+        let data_key = SigningKey::from_bytes(&craftworks_account::data_seed(&words).unwrap());
+        let mut card = data::Open::new(TAIL, &data_key.verifying_key().to_bytes(), "card");
+        card.public = true;
+        let (seq, hh) = card.prepare(vec![tail::Op::Set { key: b"devices".to_vec(), value: b"1".to_vec() }]).unwrap();
+        let pp = craftec_register_contract::wire::Params::parse(&card.params).unwrap();
+        card.commit(data_key.sign(&pp.signed_message(false, seq, &hh)).to_bytes()).unwrap();
+        net.0.insert(card.id_bytes(), card.state());
         let (mut r, first) = Reading::of_members(&codes(), SPACE, BTreeMap::new(), &[did], &["files"]);
         run(&mut r, first, &net);
         let mut w: Vec<[u8; 32]> = r.writer_dids().iter().map(|(k, _)| *k).collect();
@@ -811,7 +819,7 @@ fn a_members_devices_are_read_from_their_devices_contract_on_the_current_key() {
 }
 
 #[test]
-fn a_members_devices_contract_is_asked_for_only_when_their_card_says_or_nothing_on_it_counts() {
+fn a_members_devices_contract_is_asked_for_only_when_their_card_says() {
     // One account, device A on its card; its devices contract absent from the network (an account never made one).
     let words = [0x31u8; 16];
     let log = craftworks_idlog_contract::Log { events: vec![craftworks_account::inception(&words).unwrap()] };
@@ -840,8 +848,9 @@ fn a_members_devices_contract_is_asked_for_only_when_their_card_says_or_nothing_
     assert_eq!(read(vec![("nodes", nodes.clone())]), (vec![a], false));
     // It says so: asked (absent here — the card's device still counts).
     assert_eq!(read(vec![("nodes", nodes), ("devices", "1".into())]), (vec![a], true));
-    // CONTROL: nothing on the card counts — asked, as for an account that made one before cards said so.
-    assert_eq!(read(vec![("nodes", "[]".into())]), (vec![], true));
+    // Nothing on the card counts and it does not say: none, and nothing asked "in case" (owner 10-25: a read goes only
+    // where something lists it).
+    assert_eq!(read(vec![("nodes", "[]".into())]), (vec![], false));
 }
 
 /// THE ROUNDS' MODEL TEST, the FILES round (FOUNDATION "The node's rounds", R2): the same re-key after a removal with a

@@ -98,6 +98,7 @@ export async function start(ctx) {
   // how many, how many SLOW (over SLOW_MS), the longest, the total, how many never answered. The visit report carries
   // the worst (`waits()`); never content.
   const SLOW_MS = 3000;
+  const LOG_MS = 10000;
   const stats = new Map();
   const label = what => String(what).replace(/[0-9a-f]{8,}/gi, "…").replace(/\d{2,}/g, "#").slice(0, 60);
   const note = (what, ms, timedOut = false) => {
@@ -109,6 +110,9 @@ export async function start(ctx) {
     if (ms >= SLOW_MS) x.slow += 1;
     if (timedOut) x.timeouts += 1;
     stats.set(k, x);
+    // A SLOW ANSWER SAID AS IT HAPPENS (owner 10-25: "put more log, don't assume"): what waited, and how long — the
+    // trace names every wait over LOG_MS, not only the totals the visit report carries.
+    if (!timedOut && ms >= LOG_MS) ctx.log("slow answer", { what: `${what}: answered after ${(ms / 1000).toFixed(1)} s` });
   };
   const waits = (top = 8) =>
     [...stats]

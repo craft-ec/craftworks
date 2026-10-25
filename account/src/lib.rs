@@ -397,8 +397,10 @@ pub fn devices(did: &[u8; 32], log: &Log, contract: Option<&[Vec<u8>]>, card: &[
 }
 
 /// A member's DEVICES, STEP BY STEP — the one resolution's order and failures, page and node (each only fetches): their
-/// key log, then their card, then their devices contract where the card says they have one or nothing on the card
-/// counts. `log`: None — not read. `card`: its device credentials and whether it says they have a devices contract;
+/// key log, then their card, then their devices contract ONLY where the card says they have one (owner 10-25: a read
+/// goes only where something lists it — the contract asked "in case" when the card did not read or named no device was
+/// a GET of a contract nobody made: a 60 s not-found on the node, every upkeep round, and the delegate's requests,
+/// the page's first, queued behind it). `log`: None — not read. `card`: its device credentials and whether it says they have a devices contract;
 /// None — not read. `contract`: None — not asked yet; `Some(None)` — asked, not read. A READ that failed is said
 /// (`unread`) — never a list of no devices taken for a member with none (10-19: the node took an unread card for a
 /// short list before it asked the devices contract, which would have answered).
@@ -411,20 +413,13 @@ pub enum DevicesStep {
 }
 pub fn devices_step(did: &[u8; 32], log: Option<&Log>, card: Option<(&[Vec<u8>], bool)>, contract: Option<Option<&[Vec<u8>]>>) -> DevicesStep {
     let Some(log) = log else { return DevicesStep::Done { devices: Vec::new(), unread: Some("their key log not read".into()) } };
-    let (creds, marked) = card.unwrap_or((&[], false));
-    let on_card = members(did, log, creds, &[]);
-    if card.is_some() && !marked && !on_card.is_empty() {
-        return DevicesStep::Done { devices: on_card, unread: None };
+    let Some((creds, marked)) = card else { return DevicesStep::Done { devices: Vec::new(), unread: Some("their card not read".into()) } };
+    if !marked {
+        return DevicesStep::Done { devices: members(did, log, creds, &[]), unread: None };
     }
     let Some(contract) = contract else { return DevicesStep::ReadDevices };
     let devices = devices(did, log, contract, creds);
-    let unread = match (devices.is_empty(), card.is_some(), contract.is_some()) {
-        (false, ..) => None,
-        (true, false, false) => Some("their card and devices contract not read".into()),
-        (true, false, true) => Some("their card not read".into()),
-        (true, true, false) if marked => Some("their devices contract not read".into()),
-        _ => None,
-    };
+    let unread = (devices.is_empty() && contract.is_none()).then(|| "their devices contract not read".into());
     DevicesStep::Done { devices, unread }
 }
 
@@ -506,12 +501,13 @@ pub fn reading_dids(group: &[String], owner: Option<&str>) -> Vec<String> {
     out
 }
 
-/// THE WRITERS A SPACE's TABLE IS READ FROM (page and node): the members' devices the space's writers bag lists — all of
-/// them where the bag is BLIND (entries this reader cannot open: who they name is unknown) — and, a PUBLIC table, every
-/// writer the space's OPEN list names for it (needing no key: what a member not keyed yet reads first). Never `me`.
-/// 10-19: the page read the open list for public tables and every device on a blind bag; the node did neither.
-pub fn table_writers(devices: &[[u8; 32]], listed: &std::collections::BTreeSet<[u8; 32]>, blind: bool, named: &[[u8; 32]], public: bool, me: &[u8; 32]) -> Vec<[u8; 32]> {
-    let mut out: Vec<[u8; 32]> = devices.iter().filter(|d| blind || listed.contains(*d)).copied().collect();
+/// THE WRITERS A SPACE's TABLE IS READ FROM (page and node): the members' devices the space's writers bag LISTS and, a
+/// PUBLIC table, every writer the space's OPEN list names for it (needing no key: what a member not keyed yet reads
+/// first). Never `me`. An entry of the bag this reader cannot open names no one here — skipped, never "read every
+/// device" (owner 10-25: a read goes only where something lists it; every member's device read for one blind entry
+/// asked for feeds nobody made, each a 60 s not-found).
+pub fn table_writers(devices: &[[u8; 32]], listed: &std::collections::BTreeSet<[u8; 32]>, named: &[[u8; 32]], public: bool, me: &[u8; 32]) -> Vec<[u8; 32]> {
+    let mut out: Vec<[u8; 32]> = devices.iter().filter(|d| listed.contains(*d)).copied().collect();
     if public {
         out.extend(named.iter().copied());
     }
@@ -539,24 +535,22 @@ mod tests {
         assert!(beekem_member(&did, &dk, b"{}").is_err());
     }
 
-    /// THE WRITERS A TABLE IS READ FROM: listed devices only; every device on a blind bag; a public table also the
+    /// THE WRITERS A TABLE IS READ FROM: listed devices only, a blind bag too; a public table also the
     /// open list's writers; never this device. And the owner always among whose devices are read.
     #[test]
     fn table_writers_and_reading_dids_are_the_one_rule() {
         let (a, b, c, me) = ([1u8; 32], [2u8; 32], [3u8; 32], [9u8; 32]);
         let listed: std::collections::BTreeSet<[u8; 32]> = [a, me].into_iter().collect();
-        assert_eq!(table_writers(&[a, b, me], &listed, false, &[c], false, &me), vec![a], "listed only, not me, not the open list");
-        assert_eq!(table_writers(&[a, b, me], &listed, true, &[], false, &me), vec![a, b], "a blind bag: every device");
-        assert_eq!(table_writers(&[a, b], &listed, false, &[c, me], true, &me), vec![a, c], "a public table: the open list too");
+        assert_eq!(table_writers(&[a, b, me], &listed, &[c], false, &me), vec![a], "listed only, not me, not the open list");
+        assert_eq!(table_writers(&[a, b], &listed, &[c, me], true, &me), vec![a, c], "a public table: the open list too");
         assert_eq!(reading_dids(&["did:b".into(), "did:a".into()], Some("did:o")), vec!["did:a", "did:b", "did:o"]);
         assert_eq!(reading_dids(&["did:o".into()], Some("did:o")), vec!["did:o"], "the owner once");
     }
 
-    /// THE ONE DEVICES STEP (page and node): a card read with a device answers; an UNREAD card asks the devices
-    /// contract before anything is said (10-19: the node said "short" first); a failure is said only when nothing
-    /// answered; a card with no device and no contract is none — not a failure.
+    /// THE ONE DEVICES STEP (page and node): the devices contract asked ONLY where the card says it exists — an unread
+    /// card, or one naming no device, asks nothing more (owner 10-25: read only what is listed).
     #[test]
-    fn devices_step_asks_the_contract_before_saying_unread() {
+    fn devices_step_reads_the_contract_only_where_the_card_lists_it() {
         let words = [3u8; 16];
         let e = inception(&words).unwrap();
         let did = e.id();
@@ -565,19 +559,19 @@ mod tests {
         let cred = credential(&did, &node, &[1u8; 32], &owner_seed(&words).unwrap());
         // A card read with a device: done, no contract asked.
         assert_eq!(devices_step(&did, Some(&log), Some((&[cred.clone()], false)), None), DevicesStep::Done { devices: vec![node], unread: None });
-        // The card NOT read: the contract asked first.
-        assert_eq!(devices_step(&did, Some(&log), None, None), DevicesStep::ReadDevices);
-        // …and it answers (the card's device in it): done, nothing unread.
+        // The card NOT read: nothing asked, said.
+        assert_eq!(devices_step(&did, Some(&log), None, None), DevicesStep::Done { devices: vec![], unread: Some("their card not read".into()) });
+        // A card read with NO device and no mark: none, nothing asked.
+        assert_eq!(devices_step(&did, Some(&log), Some((&[], false)), None), DevicesStep::Done { devices: vec![], unread: None });
+        // A card that MARKS a devices contract: asked…
+        assert_eq!(devices_step(&did, Some(&log), Some((&[], true)), None), DevicesStep::ReadDevices);
+        // …it answers: its devices.
         let contract = [cred.clone()];
-        assert!(matches!(devices_step(&did, Some(&log), None, Some(Some(&contract))), DevicesStep::Done { unread: None, .. }));
-        // …or it does not read either: said.
-        assert_eq!(devices_step(&did, Some(&log), None, Some(None)), DevicesStep::Done { devices: vec![], unread: Some("their card and devices contract not read".into()) });
+        assert!(matches!(devices_step(&did, Some(&log), Some((&[], true)), Some(Some(&contract))), DevicesStep::Done { unread: None, .. }));
+        // …or does not read: said.
+        assert_eq!(devices_step(&did, Some(&log), Some((&[], true)), Some(None)), DevicesStep::Done { devices: vec![], unread: Some("their devices contract not read".into()) });
         // The key log not read: said.
         assert!(matches!(devices_step(&did, None, Some((&[cred], false)), None), DevicesStep::Done { unread: Some(_), .. }));
-        // A card read with NO device, no contract there: none — not a failure.
-        assert_eq!(devices_step(&did, Some(&log), Some((&[], false)), Some(Some(&[]))), DevicesStep::Done { devices: vec![], unread: None });
-        // A card that says a contract exists, the contract not read: said.
-        assert_eq!(devices_step(&did, Some(&log), Some((&[], true)), Some(None)), DevicesStep::Done { devices: vec![], unread: Some("their devices contract not read".into()) });
     }
 
     use super::*;

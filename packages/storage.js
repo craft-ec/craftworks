@@ -1208,10 +1208,10 @@ export async function start(ctx) {
           const t0 = performance.now();
           const index = await ctx.require("index");
           const items = await index.spacePointers.strict(sp, "writers");
-          // `blind`: entries no key here opens — who they name is unknown, so every member's device is read (a
-          // missing catalog only costs a lookup, asked less and less often).
+          // `blind`: entries no key here opens — who they name is unknown here, so they are skipped and said (never
+          // "read every device": a feed nobody made is a 60 s not-found, owner 10-25).
           const b = { set: new Set(items.map(i => i?.w).filter(w => typeof w === "string")), blind: (items.unread ?? 0) > 0, pub: new Set(items.filter(i => typeof i?.w === "string" && typeof i?.pub === "string").map(i => `${i.w}|${i.pub}`)), dids: new Map(items.filter(i => typeof i?.w === "string" && typeof i?.did === "string").map(i => [i.w, i.did])) };
-          ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)`, ms: Math.round(performance.now() - t0) });
+          ctx.log("storage", { what: `${sp.name ?? sp.id.slice(0, 8)}: writers bag — ${b.set.size} writer(s)${b.blind ? `, ${items.unread} entr(ies) not opened here: skipped` : ""}`, ms: Math.round(performance.now() - t0) });
           // A writer listed only under an EPOCH (before the list was sealed with the space's own key): listed again as
           // every member reads it, by whoever reads it now — once per page and writer.
           for (const w of b.set)
@@ -1268,10 +1268,10 @@ export async function start(ctx) {
       const [mine, nowWriters] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers(name)]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
       const bag = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(), () => null) : null;
-      // THE WRITERS (`account::table_writers`, the node's too): the members' devices the bag lists (all, a blind bag) and,
+      // THE WRITERS (`account::table_writers`, the node's too): the members' devices the bag lists (only those) and,
       // a public table, the open list's writers for it. (The account: its directory's nodes, no bag.)
       const named = bag?.pub ? [...bag.pub].filter(x => x.endsWith(`|${name}`)).map(x => x.split("|")[0]) : [];
-      const others = scope.bag && bag ? JSON.parse(glue.CraftworksCore.table_writers(JSON.stringify(nowWriters), JSON.stringify([...bag.set]), !!bag.blind, JSON.stringify(named), !!scope.opts(name).public, scope.self)) : nowWriters;
+      const others = scope.bag && bag ? JSON.parse(glue.CraftworksCore.table_writers(JSON.stringify(nowWriters), JSON.stringify([...bag.set]), JSON.stringify(named), !!scope.opts(name).public, scope.self)) : nowWriters;
       const listed = o => !scope.bag || (!!bag && others.includes(o));
       const lists = (cat, n) => own(cat).some(r => r.key === n);
       const all = [];
