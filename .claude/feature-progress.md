@@ -3049,6 +3049,12 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   items.feed from the page, never the screen. Gate now runs tools/upgrade-gate/frames.mjs (Home, Board, Discover must
   draw text, no page error); control on v443 FAILED with the same error. Owner's node after v444: Home + Board draw;
   Discover decided by 60 s (Craftworks, Ivvor's New Space — the two public spaces with Board).
+- [x] 10-26 v445 — A LISTING NAMES WHAT IS THERE (cd5311a; manifest 5b105c590dba; gates 3/3 + frames). After v443 the
+  owner's delegate still skipped 10–16 wake-ups/h: a writer (45120963) listed in Wren#BZ6QnL's bag with pub-acts/pub-
+  keyops it never made; the page also read listed writers' public tables whatever their catalog said. Now: bag and
+  open-list entries written AFTER the make (own catalog still notes before); public tables read only where listed;
+  the delegate keeps a listed tail found absent (`Reading::absent`, keyed by the listing's state hash) until that
+  listing changes (test + mutation). NEXT: re-read the owner node log for skipped wake-ups after their v445 login.
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 
