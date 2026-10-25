@@ -3016,6 +3016,9 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       never read whole, so `unlisted` never set. v441: a member's space with no BeeKEM tree (`members.hasTree`, decided
       and empty) is forgotten too. fx tokens-off: chat-room, joincode-first, remove-control-bk, space-first2, behind,
       quick PASS.
+      v441 LIVE (gates 3/3) — verified: Wren's list drops Ivvor's Space (and stays dropped on a fresh load); the
+      owner's list is Craftworks, Ivvor, Wren (RedFox's DM gone); Discover lists Craftworks, Ivvor's New Space, bible,
+      IvvorsThirdSpace (decided), Ivvor's Space and radio395 hidden.
       OPEN (pre-existing, seen 10-24 morning too): join by code ~1 in 4 — B's `join` act IS in its pub-acts, B's own
       replay does not count it (myJoin 0) and A never lists B. Instrumented (`pw/joincode-aside.mjs`: A's acts door
       states, B-side rows/saves); not reproduced in 4 runs since. Unmeasured cause.
