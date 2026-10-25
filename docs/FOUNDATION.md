@@ -347,7 +347,9 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    totally … won't even appear as open"): no MLS-era history is carried over. A space whose list, read whole, never
    moved this account in or out (not listed, not its owner, no counted act letting it in or putting it out —
    `gov::entry_move`; an MLS-era member nobody listed) is
-   taken out of this person's list as a removal is (`roles.unlisted`, `upkeep`); a public space whose key operations
+   taken out of this person's list as a removal is (`roles.unlisted`, `upkeep`), and so is a space with no BeeKEM tree
+   at all (`members.hasTree`: its key operations, read to a decision, hold none — an MLS-era space whose sealed acts a
+   member without MLS keys cannot even read whole; live, Wren in Ivvor's Space); a public space whose key operations
    hold no tree is not listed in Discover and does not open from outside (`items.opens`). A newcomer is named by its own
    join or its invite, so never hidden. From OUTSIDE, a public space is read from what its index LISTS: its public acts
    (and departed record, and key operations — its creator, who writes the tree's root, writes its acts) from the

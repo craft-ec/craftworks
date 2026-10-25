@@ -420,6 +420,13 @@ export async function start(ctx) {
           await save();
         }),
       placed: () => !!g?.placed(),
+      // WHETHER THE SPACE HAS A TREE (owner 10-24/25, not migrated is not shown): its key operations, read to a decision,
+      // hold one — `null` while undecided. A space nobody moved onto BeeKEM has none.
+      hasTree: async () => {
+        const t = await feed();
+        const st = await t.decided();
+        return st.s === "present" || st.s === "absent" ? t.rows().some(x => x.value) : null;
+      },
       // WHY THE TREE IS WHERE IT IS (diagnostics, 10-23): each key operation of the space — its writer, and what our
       // check makes of it merged afresh in causal order ("applied", "refused: why", or waiting for a predecessor no feed
       // here holds). Read-only: a fresh tree, never this page's.

@@ -3011,6 +3011,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       the list-not-whole rule kept with NO clock (the list decides); OUTSIDE reads traverse what the index LISTS — public
       acts, departed record and key operations from the `acts <space>` bag's writers, never every member device. fx
       (tokens off): space-first2, joincode-first, quick, remove-control-bk, behind PASS; joincode-door2 1 fail / 6 pass.
+      v440 LIVE: Discover (as Wren) lists 4 public spaces — Craftworks, Ivvor's New Space, bible, IvvorsThirdSpace —
+      decided; Ivvor's Space and radio395 hidden (no tree). Wren's own list still held Ivvor's Space: its sealed MLS acts
+      never read whole, so `unlisted` never set. v441: a member's space with no BeeKEM tree (`members.hasTree`, decided
+      and empty) is forgotten too. fx tokens-off: chat-room, joincode-first, remove-control-bk, space-first2, behind,
+      quick PASS.
       OPEN (pre-existing, seen 10-24 morning too): join by code ~1 in 4 — B's `join` act IS in its pub-acts, B's own
       replay does not count it (myJoin 0) and A never lists B. Instrumented (`pw/joincode-aside.mjs`: A's acts door
       states, B-side rows/saves); not reproduced in 4 runs since. Unmeasured cause.

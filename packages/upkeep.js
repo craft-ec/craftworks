@@ -44,9 +44,16 @@ export async function start(ctx) {
       // The space open first.
       for (const sp of [...servers.filter(s => s.id === ctx.space), ...servers.filter(s => s.id !== ctx.space)]) {
         await node.idle();
-        // REMOVED from it (the list says so — K8.2), or NOT MIGRATED (the list never named this account — `unlisted`):
-        // no longer in this person's list — never left shown as theirs.
-        if (await ctx.optional("upkeep: removed", roles.of(sp).then(async r => (await r?.settled, !!(r?.left || r?.unlisted))), () => false)) {
+        // REMOVED from it (the list says so — K8.2), or NOT MIGRATED — the list never moved this account in or out
+        // (`unlisted`), or the space has no BeeKEM tree at all (`members.hasTree`: an MLS-era space nobody moved, whose
+        // sealed acts this account cannot even read): no longer in this person's list — never left shown as theirs.
+        const gone = async () => {
+          const r = await roles.of(sp);
+          await r?.settled;
+          if (r?.left || r?.unlisted) return true;
+          return (await (await ctx.require("members")).group(sp).hasTree()) === false;
+        };
+        if (await ctx.optional("upkeep: removed", gone(), () => false)) {
           (await ctx.require("lifecycle")).become("group", sp.id, "removed", {});
           await space.forget(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: ${e.message}`));
           continue;
