@@ -138,7 +138,11 @@ export async function start(ctx) {
     const t0 = performance.now();
     const chain = (new Error().stack ?? "").split("\n").slice(2, 9).map(l => l.trim().replace(/^at /, "").replace(/\(?blob:[^)]*\)?/g, "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" < ");
     calls.push({ what, tail: String(tail).slice(0, 12), ids: ids.map(b => b.slice(0, 8)).join(","), at: Math.round(t0), chain });
+    // Said by the read that RACES: one joining races already running (every page of a feed waiting on the same block)
+    // says nothing — 10-25, one Home load: 851 fetches joined 467 races, each logged as a read of its own.
+    const starts = ids.some(b => !racing.has(`${tail}/${b}`));
     const how = await Promise.all(ids.map(b => race(tail, b, `reading ${what}'s tree`)));
+    if (!starts) return;
     const rebuilt = how.filter(h => h === "rebuilt").length;
     stats.read += ids.length;
     stats.rebuilt += rebuilt;
