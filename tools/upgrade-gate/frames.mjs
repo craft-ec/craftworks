@@ -23,6 +23,8 @@ for (const [hash, frameOf, read] of PAGES) {
   for (let i = 0; i < 36 && !text && !errs.length; i++) {
     await p.waitForTimeout(5000);
     text = ((await frameOf(p)?.evaluate(read).catch(() => "")) ?? "").replace(/\s+/g, " ").trim();
+    // A placeholder is not drawn (the owner's Discover read "Loading…" when first checked).
+    if (/^(Loading…|Still arriving…)$/.test(text)) text = "";
   }
   const ok = !!text && !errs.length;
   if (!ok) failed += 1;

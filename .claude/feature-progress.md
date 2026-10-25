@@ -3043,6 +3043,12 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   delegate (#5544). Fix in the one rule (account): a blind writers-bag entry is skipped (never "every device"); the
   devices contract is read only where the card's `devices` mark lists it (page devicesEver too). Logs: identity steps
   with times, any node answer ≥ 10 s. NEXT: after the owner's login on v443, re-read the node log for parks/skips.
+- [x] 10-25 v444 — APP FRAMES DRAW AGAIN (c32bc81; manifest c0be758647dd; gates 3/3 incl. the new draw check).
+  Since v437 every app frame called ctx.stated on its boot answer (before the runtime was installed), threw, drew
+  nothing: Home/Board/every app blank while every read answered (owner: "no discover home page loaded"). My checks read
+  items.feed from the page, never the screen. Gate now runs tools/upgrade-gate/frames.mjs (Home, Board, Discover must
+  draw text, no page error); control on v443 FAILED with the same error. Owner's node after v444: Home + Board draw;
+  Discover decided by 60 s (Craftworks, Ivvor's New Space — the two public spaces with Board).
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 
