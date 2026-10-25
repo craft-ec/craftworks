@@ -36,7 +36,10 @@ export const SOURCE = `
       if (m.event === "cb") return cbs.get(m.id)?.(...back(m.args ?? []));
       if (m.event === "route") return Object.assign(ctx, m.where), dispatchEvent(new CustomEvent("craftworks:route"));
       const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id);
-      m.ok ? w.resolve(ctx.stated(m.value, m.state)) : w.reject(Object.assign(new Error(m.error), { kind: m.kind }));
+      // An answer's read state marked by the RUNTIME's \`ctx.stated\` — installed from the BOOT answer itself, so an answer
+      // with no state (boot, a package) is taken as it is (10-25: every frame called it on boot's answer, threw, and no
+      // app ever drew).
+      m.ok ? w.resolve(m.state ? ctx.stated(m.value, m.state) : m.value) : w.reject(Object.assign(new Error(m.error), { kind: m.kind }));
     });
     const fromB64 = b => Uint8Array.from(atob(b), c => c.charCodeAt(0));
     const importB64 = b => import("data:text/javascript;base64," + b);

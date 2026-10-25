@@ -38,4 +38,7 @@ if ! cmp -s "$OLD/packages/build/identity.wasm" "$NEW/packages/build/identity.wa
 fi
 # Every read: the before row, the DM and the after row read on the new build.
 grep -q '"aBefore":"written on the old build"' "$OUT/new.log" && grep -q '"bDm":"a direct message on the old build"' "$OUT/new.log" && grep -q "B reads after: written on the new build" "$OUT/new.log" || { echo "GATE: a read failed"; exit 1; }
+# Every app DRAWS on the candidate (a read answering is not a screen: 10-25, every app frame drew nothing for a day).
+perl -e 'alarm 900; exec @ARGV' node "$here/frames.mjs" "${F}c" > "$OUT/frames.log" 2>&1; cat "$OUT/frames.log"
+grep -q "^FRAMES: PASS" "$OUT/frames.log" || { echo "GATE: an app did not draw"; exit 1; }
 echo "GATE: PASS"
