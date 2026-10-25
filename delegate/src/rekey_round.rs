@@ -171,7 +171,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
     };
     // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
     let dids: Vec<[u8; 32]> = roster.iter().filter_map(|(_, d)| craftworks_account::did_bytes(d)).collect();
-    let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
+    let (reading, io) = crate::upkeep::members_read(h, &c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
     let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: identity::upkeep_wakeups(h), moved_ms: identity::upkeep_now_ms(h), salt: None };
     keep(h, Some(&r));
     io
@@ -272,7 +272,7 @@ fn replied_<H: Host>(h: &mut H, c: &Held, reply: Reply, now_ms: u64) -> Vec<Io> 
     r.moved_ms = identity::upkeep_now_ms(h);
     match (r.step.clone(), reply) {
         (Step::Reading, Reply::Got { id, state }) => {
-            let io = r.reading.got(&c.codes(), id, state);
+            let io = crate::upkeep::read_got(h, &mut r.reading, &r.space, &c.codes(), id, state);
             if !r.reading.done() {
                 keep(h, Some(&r));
                 return io;

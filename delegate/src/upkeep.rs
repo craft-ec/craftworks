@@ -261,7 +261,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
             followed(h, &member, &space, craftworks_rules::steps::UNLOADABLE, &format!("{}: its group does not load here: not followed", m.name));
             continue;
         };
-        let (reading, io) = Reading::of_members(&c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
+        let (reading, io) = members_read(h, &c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
         let r = Round { member, me, space, rest, reading, step: Step::Acts, state: m.state.clone(), moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false, files_unread: Vec::new(), listing: Vec::new(), mls_owed: false };
         keep(h, Some(&r));
         return io;
@@ -295,6 +295,33 @@ pub(crate) fn governance<H: Host>(h: &mut H, r: &Round, now_ms: u64) -> Option<c
 }
 /// A space's LIST as this node last read it whole (none yet: empty — its owner is read, and the list widens round by
 /// round as its acts name more).
+/// ABSENT, DECIDED (`Reading::absent`), per space: the listed tails the node answered NOT THERE, each with what listed
+/// it — kept across rounds, so a contract nobody made is not asked again (a 60 s not-found that parks this delegate,
+/// every request to it queued behind) until what lists it changes. The newest `ABSENT_KEPT`.
+const ABSENT: &[u8] = b"identity_upkeep/absent/";
+const ABSENT_KEPT: usize = 256;
+pub(crate) fn absent_of<H: Host>(h: &H, space: &[u8; 32]) -> Vec<([u8; 32], [u8; 32])> {
+    h.get_secret(&[ABSENT, &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+fn keep_absent<H: Host>(h: &mut H, space: &[u8; 32], absent: &[([u8; 32], [u8; 32])]) {
+    let from = absent.len().saturating_sub(ABSENT_KEPT);
+    let _ = h.set_secret(&[ABSENT, &space[..]].concat(), &bincode::serialize(&absent[from..]).unwrap_or_default());
+}
+/// A space's read of its members' tables (`Reading::of_members`), what it found absent before remembered.
+pub(crate) fn members_read<H: Host>(h: &H, c: &crate::table::Codes, space: [u8; 32], epochs: std::collections::BTreeMap<u64, [u8; 32]>, dids: &[[u8; 32]], tables: &[&str]) -> (Reading, Vec<Io>) {
+    let (mut reading, io) = Reading::of_members(c, space, epochs, dids, tables);
+    reading.absent = absent_of(h, &space);
+    (reading, io)
+}
+/// An answer to a read (`Reading::got`); what it found absent kept.
+pub(crate) fn read_got<H: Host>(h: &mut H, reading: &mut Reading, space: &[u8; 32], c: &crate::table::Codes, id: [u8; 32], state: Option<Vec<u8>>) -> Vec<Io> {
+    let n = reading.absent.len();
+    let io = reading.got(c, id, state);
+    if reading.absent.len() != n {
+        keep_absent(h, space, &reading.absent);
+    }
+    io
+}
 const ROSTER: &[u8] = b"identity_upkeep/roster/";
 fn roster_key(member: &[u8; 32], space: &[u8; 32]) -> Vec<u8> {
     [ROSTER, &member[..], &space[..]].concat()
@@ -449,7 +476,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             if !r.reading.wants(&id) {
                 return Vec::new();
             }
-            let io = r.reading.got(&c.codes(), id, state);
+            let io = read_got(h, &mut r.reading, &r.space, &c.codes(), id, state);
             if !r.reading.done() {
                 keep(h, Some(&r));
                 return io;
@@ -520,7 +547,7 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
             if !r.reading.wants(&id) {
                 return Vec::new();
             }
-            let io = r.reading.got(&c.codes(), id, state);
+            let io = read_got(h, &mut r.reading, &r.space, &c.codes(), id, state);
             if !r.reading.done() {
                 keep(h, Some(&r));
                 return io;

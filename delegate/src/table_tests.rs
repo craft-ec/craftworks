@@ -863,3 +863,35 @@ fn files_round_strays_move_nothing() {
     let row: serde_json::Value = serde_json::from_slice(&files_rows[b"k/file1".as_slice()].value).unwrap();
     assert_eq!(row["key"].as_str(), Some(table::hex(&files::content_key(&a.hsh, Some(&st.s))).as_str()), "re-keyed all the same: {:?}", a.said);
 }
+
+/// ABSENT, DECIDED (owner 10-25: "it either is there or not"): a writer the bag lists whose catalog the node answers NOT
+/// THERE is asked once; the next read, carrying what was found absent, does not ask it again while the bag is the same
+/// — and asks again once the bag changes. (On the owner's node a writer listed with tables it never made was asked
+/// every round, each a 60 s not-found parking the delegate, a loading page queued behind it.)
+#[test]
+fn an_absent_listed_tail_is_not_asked_again_until_its_listing_changes() {
+    let s0 = [0x10; 32];
+    let epochs: BTreeMap<u64, [u8; 32]> = [(0, s0)].into_iter().collect();
+    let (a, b) = (writer(1), writer(2));
+    let mut net = Net::default();
+    writers_bag(&mut net, &s0, &[pubkey(&a)]); // A listed; its catalog never made
+    let (mut r1, first) = Reading::new(&codes(), SPACE, epochs.clone(), vec![pubkey(&a), pubkey(&b)], &["files"]);
+    let asked1 = run(&mut r1, first, &net);
+    assert_eq!(asked1.len(), 2, "the bag, then A's catalog: {asked1:?}");
+    assert_eq!(r1.absent.len(), 1, "A's catalog found absent, remembered");
+    // The next read, carrying it: the bag only.
+    let (mut r2, first) = Reading::new(&codes(), SPACE, epochs.clone(), vec![pubkey(&a), pubkey(&b)], &["files"]);
+    r2.absent = r1.absent.clone();
+    let asked2 = run(&mut r2, first, &net);
+    assert_eq!(asked2, asked1[..1].to_vec(), "not asked again: {asked2:?}");
+    // CONTROL: carrying nothing, it is asked.
+    let (mut r0, first) = Reading::new(&codes(), SPACE, epochs.clone(), vec![pubkey(&a), pubkey(&b)], &["files"]);
+    assert_eq!(run(&mut r0, first, &net), asked1);
+    // The bag CHANGES (B listed too): A's catalog asked again, and B's.
+    writers_bag(&mut net, &s0, &[pubkey(&a), pubkey(&b)]);
+    let (mut r3, first) = Reading::new(&codes(), SPACE, epochs, vec![pubkey(&a), pubkey(&b)], &["files"]);
+    r3.absent = r1.absent.clone();
+    let asked3 = run(&mut r3, first, &net);
+    assert!(asked3.contains(&asked1[1]), "asked again once its listing changed: {asked3:?}");
+    assert_eq!(asked3.len(), 3, "the bag, A's catalog, B's: {asked3:?}");
+}

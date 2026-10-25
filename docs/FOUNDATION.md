@@ -129,7 +129,12 @@ t.onState(fn)
   and should be traversable. that is our design" — a read that needs a deadline is looking up something unlisted).
   NO READ "IN CASE", page or node: a writers-bag entry that does not open here names no one (skipped and said, never
   "every member's device"), and an account's devices contract is read only where its card's `devices` mark lists it
-  (`account::table_writers`, `account::devices_step`). Each GET of a contract nobody made is a 60 s not-found on the
+  (`account::table_writers`, `account::devices_step`); another writer's public table is read by name only where its
+  catalog or the open list names it. A LISTING NAMES WHAT IS THERE: a device's writers-bag entry and a public table's
+  open-list entry are written AFTER the contract is made (its own catalog still notes it before, for itself), and a
+  device whose made catalog is not listed lists it on its next page. A listed contract the node answered NOT THERE is
+  DECIDED ABSENT: the node's upkeep keeps it (`Reading::absent`, with the state of what listed it) and asks again only
+  when that listing changes. Each GET of a contract nobody made is a 60 s not-found on the
   node; the identity delegate PARKS on its own GETs, and every request to it — a loading page's first — queues
   behind them (10-25, owner's node: registering waited 99.5 s behind upkeep's reads of absent feeds and an absent
   devices contract, then ran in 3 ms; its minute wake-up skipped 23–25 times an hour).

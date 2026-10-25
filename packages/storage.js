@@ -321,7 +321,7 @@ export async function start(ctx) {
       // A PUBLIC table of a space (`pub-…`): also named in the space's open writers list by its writer (`listPublic`).
       const pubIn = opts.public && inSpace?.id ? inSpace : null;
       const listPub = () => (pubIn ? listPublic(pubIn, owner, app) : Promise.resolve());
-      const made = { ...rest, beforeCreate: cat && ownKeys.has(owner) ? () => notePlace(cat, app, "blinded").then(listPub) : rest.beforeCreate };
+      const made = { ...rest, beforeCreate: cat && ownKeys.has(owner) ? () => notePlace(cat, app, "blinded") : rest.beforeCreate, afterCreate: cat && ownKeys.has(owner) ? listPub : rest.afterCreate };
       if (!cat) return tailAt(owner, app, app, made);
       return cat.answer().then(async () => {
         const place = placeOf(cat, app);
@@ -332,7 +332,8 @@ export async function start(ctx) {
           // and judged by what it holds — found through a catalog sealed with its writer's newest generation, the key
           // operation that would give that generation could never be read (Craftworks: the owner's own operations waited
           // for ever on a predecessor in a feed no catalog this page opens listed).
-          if (pubIn && !ownKeys.has(owner)) return tailAt(owner, app, app, made);
+          // …only where its writer NAMED it there (`listPublic`): never read "whatever they say" (owner 10-25).
+          if (pubIn && !ownKeys.has(owner) && (await ctx.optional("storage: writersBag", writersBag(pubIn), () => null))?.pub?.has(`${owner}|${app}`)) return tailAt(owner, app, app, made);
           return whenListed(cat, app, tailAt(owner, app, app, { ...made, known: false }));
         }
         // One of this account's own, made before the open list named public tables: named there now (once a page).
@@ -381,7 +382,7 @@ export async function start(ctx) {
     return opts.lazy ? p : p.then(t => (t.lazy ? t.whole().then(() => t) : t));
   }
 
-  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false, wait = WAIT.ask, follow = true } = {}) {
+  function tailAt(owner, app, label, { known = null, catalogKey = false, beforeCreate = null, afterCreate = null, sealWith = null, space: inSpace = null, public: open = false, lazy = false, wait = WAIT.ask, follow = true } = {}) {
     // FOLLOWED (the door's budget, R6): unless every opener so far reads it from OUTSIDE (`follow: false`); a member's
     // open turns it on (`t.follow()`), never off.
     let follows = follow;
@@ -700,13 +701,17 @@ export async function start(ctx) {
       if (now.s === "unreadable") throw new Fault("sealed", `${app}: not saved, its table unreadable here`, { message: `${app}: not saved — ${now.why}`, d: { app } });
       sealedBelow("not saved");
       if (t.refuse) throw new Error(t.refuse);
-      // Listed BEFORE it is created: a failure between the two leaves a listed tail that is empty, never one nobody
-      // can find.
-      if (now.s === "absent" && beforeCreate) await beforeCreate();
+      // ITS OWN CATALOG notes it BEFORE it is created (`beforeCreate`: this device's own reading of where it is). What
+      // OTHERS read by (the space's writers list, its open list) names it only AFTER it is made (`afterCreate`): a listed
+      // contract is one that is there (owner 10-25: a writer listed with tables it never made was asked by every reader,
+      // each a 60 s not-found). A listing that failed after the make is written again by this device's next page.
+      const making = now.s === "absent";
+      if (making && beforeCreate) await beforeCreate();
       await signed(() => {
         const v = typeof value === "function" ? value() : typeof value === "string" ? enc.encode(value) : value;
         return core.tail_prepare(id, enc.encode(key), v);
       }, "saving to");
+      if (making && afterCreate) ctx.background(`storage: listing ${app}`, afterCreate());
       // FLUSH once the tail is long: its rows into the tree, the tail emptied (in this write's turn of the queue).
       if (Core.flush_due(core.tail_pending(id))) await flush().catch(e => ctx.failed("flush failed", e, `${app}: ${e.message}`));
       t.absent = false;
@@ -1164,11 +1169,11 @@ export async function start(ctx) {
           addEventListener("craftworks:roster", e => e.detail?.space === sp.id && (fn(), ctx.background("storage: watch", each())));
         })());
       },
-      // This device's catalog listed in the space's writers bag BEFORE it is made: nobody asks for it before then.
+      // This device's catalog listed in the space's writers bag once it is MADE: a listed catalog is one that is there.
       catalogOf: w =>
         tail(w, sp.tables.catalog, {
           space: sp,
-          ...(w === sp.self ? { beforeCreate: () => listWriters(sp, [w]).catch(e => ctx.failed("storage", e, `${sp.name ?? sp.id}: listing this device as a writer: ${e?.message ?? e}`)) } : {}),
+          ...(w === sp.self ? { afterCreate: () => listWriters(sp, [w]).catch(e => ctx.failed("storage", e, `${sp.name ?? sp.id}: listing this device as a writer: ${e?.message ?? e}`)) } : {}),
         }),
       // DEPARTED writers (removed, banned, left): the space's table `departed` — written by the member who took their
       // nodes out of the group, BEFORE the commit — gives each node's feeds' last sequence then (`heads`), and what
@@ -1268,6 +1273,9 @@ export async function start(ctx) {
       const [mine, nowWriters] = await Promise.all([scope.catalogOf(scope.self).then(async c => (await c.answer(), c)), scope.writers(name)]);
       // A space: its WRITERS BAG says whose catalogs exist — only those are read (the account: its directory's nodes).
       const bag = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(), () => null) : null;
+      // THIS DEVICE's catalog made but not in the bag (its listing, written after the make, failed): listed now.
+      if (scope.bag && bag && scope.list && !bag.set.has(scope.self))
+        ctx.background("storage: listing this device", mine.decided().then(st => st.s === "present" && scope.list([scope.self])));
       // THE WRITERS (`account::table_writers`, the node's too): the members' devices the bag lists (only those) and,
       // a public table, the open list's writers for it. (The account: its directory's nodes, no bag.)
       const named = bag?.pub ? [...bag.pub].filter(x => x.endsWith(`|${name}`)).map(x => x.split("|")[0]) : [];

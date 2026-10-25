@@ -62,6 +62,10 @@ struct Job {
     blocks: Vec<([u8; 32], Vec<u8>)>,
     /// Read to its end: its rows as stored (`None`: absent or unreadable here).
     rows: Option<Option<BTreeMap<Vec<u8>, Vec<u8>>>>,
+    /// WHAT LISTED IT, as it stood: the hash of the state of the contract that named this tail (the writers bag, a
+    /// catalog). `None`: not remembered absent.
+    #[serde(default)]
+    listed_by: Option<[u8; 32]>,
 }
 
 /// A READ of some of a space's tables, in progress.
@@ -107,6 +111,18 @@ pub struct Reading {
     cards_only: bool,
     #[serde(default)]
     card_trees: Vec<([u8; 32], Vec<u8>, Vec<([u8; 32], Vec<u8>)>, Vec<([u8; 32], [u8; 32])>)>,
+    /// ABSENT, DECIDED (owner 10-25: "it either is there or not"): `(tail id, what listed it — its state's hash)` — a
+    /// listed tail the node answered NOT THERE. Not asked again while what listed it is unchanged: each GET of a contract
+    /// nobody made is a 60 s not-found that parks the delegate, a loading page's requests queued behind it (10-25, the
+    /// owner's node: a writer listed with public tables it never made, asked every round). Kept across rounds by
+    /// upkeep (`absent_of` / `keep_absent`); a listing that changes asks again.
+    #[serde(default)]
+    pub absent: Vec<([u8; 32], [u8; 32])>,
+}
+
+/// The hash a listing is remembered by (`Reading::absent`): its state's (none: empty).
+fn listing_hash(state: Option<&[u8]>) -> [u8; 32] {
+    *blake3::hash(state.unwrap_or_default()).as_bytes()
 }
 
 
@@ -189,6 +205,7 @@ impl Reading {
             feeds_unread: Vec::new(),
             cards_only: false,
             card_trees: Vec::new(),
+            absent: Vec::new(),
         };
         (r, vec![Io::Get { id: bag, subscribe: false }])
     }
@@ -435,7 +452,7 @@ impl Reading {
                         continue; // listed, never made
                     }
                     let label = if place == data::Place::Blinded && !by_name(&self.space, &t) { identity::blind_name(&identity::space_table_key(&self.space, &t), &t) } else { t.clone() };
-                    io.extend(self.ask(c, j.owner, &t, label, Purpose::Feed { cap }));
+                    io.extend(self.ask(c, j.owner, &t, label, Purpose::Feed { cap }, Some(listing_hash(j.state.as_deref()))));
                 }
                 io
             }
@@ -476,20 +493,24 @@ impl Reading {
                 self.writer_dids.push((w.node, w.did.clone()));
             }
             let cat = table_name(&self.space, "tables");
-            io.extend(self.ask(c, w.node, &cat, cat.clone(), Purpose::Catalog { capped: Some(caps) }));
+            io.extend(self.ask(c, w.node, &cat, cat.clone(), Purpose::Catalog { capped: Some(caps) }, None));
         }
         io
     }
 
-    /// A tail asked for (once).
-    fn ask(&mut self, _c: &Codes, owner: [u8; 32], table: &str, label: String, purpose: Purpose) -> Vec<Io> {
+    /// A tail asked for (once) — not where it is remembered ABSENT under the listing that names it now (`absent`).
+    fn ask(&mut self, _c: &Codes, owner: [u8; 32], table: &str, label: String, purpose: Purpose, listed_by: Option<[u8; 32]>) -> Vec<Io> {
         if self.jobs.iter().any(|j| j.owner == owner && j.label == label) {
             return Vec::new();
         }
         let public = is_public(&self.space, table);
-        self.jobs.push(Job { owner, table: table.to_string(), label, public, purpose, state: None, blocks: Vec::new(), rows: None });
+        self.jobs.push(Job { owner, table: table.to_string(), label, public, purpose, state: None, blocks: Vec::new(), rows: None, listed_by });
         let i = self.jobs.len() - 1;
         let id = data::Open::new(_c.tail, &owner, &self.jobs[i].label).id_bytes();
+        if listed_by.is_some_and(|l| self.absent.contains(&(id, l))) {
+            self.jobs[i].rows = Some(None);
+            return Vec::new();
+        }
         self.waiting.push((id, i, None));
         vec![Io::Get { id, subscribe: false }]
     }
@@ -529,6 +550,7 @@ impl Reading {
                 }
             }
             let cat = table_name(&self.space, "tables");
+            let by_bag = Some(listing_hash(state.as_deref()));
             let mut io = Vec::new();
             let mut wanted = self.tables.clone();
             // `departed` read alongside, for the departed writers' feeds.
@@ -540,13 +562,13 @@ impl Reading {
             // THE WRITERS (`account::table_writers`, the page's too): their catalogs; a public table also by the open list.
             let members = craftworks_account::table_writers(&self.writers, &listed, &[], false, &[0; 32]);
             for w in &members {
-                io.extend(self.ask(c, *w, &cat, cat.clone(), Purpose::Catalog { capped: None }));
+                io.extend(self.ask(c, *w, &cat, cat.clone(), Purpose::Catalog { capped: None }, by_bag));
             }
             let space = self.space;
             for t in self.tables.clone().into_iter().filter(|t| is_public(&space, t)) {
                 let by_list: Vec<[u8; 32]> = named.iter().filter(|(_, n)| *n == t).map(|(w, _)| *w).collect();
                 for w in craftworks_account::table_writers(&[], &listed, &by_list, true, &[0; 32]).into_iter().filter(|w| !members.contains(w)) {
-                    io.extend(self.ask(c, w, &t, t.clone(), Purpose::Feed { cap: None }));
+                    io.extend(self.ask(c, w, &t, t.clone(), Purpose::Feed { cap: None }, by_bag));
                 }
             }
             return io;
@@ -557,6 +579,11 @@ impl Reading {
             (None, Some(st)) => self.jobs[i].state = Some(st),
             (None, None) => {
                 self.jobs[i].rows = Some(None);
+                if let Some(l) = self.jobs[i].listed_by {
+                    if !self.absent.contains(&(id, l)) {
+                        self.absent.push((id, l));
+                    }
+                }
                 return Vec::new();
             }
             (Some(cid), Some(st)) => self.jobs[i].blocks.push((cid, st)),
@@ -619,6 +646,7 @@ impl Reading {
                 state: Some(state),
                 blocks,
                 rows: None,
+                listed_by: None,
                 });
                 self.jobs.len() - 1
             }
