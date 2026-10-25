@@ -3036,6 +3036,13 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       upkeep now records WHY it drops a space: "unlisted (list of 1, whole)"): an act moving one in that is PRESENT, its
       author from its feed, keeps it; `hasTree` reads the owner's own feeds. fx: joincode-kept 4/4 (1 setup timeout),
       quick, chat-room PASS. Loader v31.
+- [x] 10-25 v443 — NO READ IN CASE (902adca; manifest ac9fb3001266, site v443, loader v62; gates 3/3). Measured on the
+  owner's node log: identity's 110 s = RegisterDelegate queued 99.5 s behind the identity delegate PARKED on its own
+  upkeep GETs (contracts nobody made: a devices contract, writers' pub-acts/log/pub-keyops → 60 s not-found each), then
+  ran in 3 ms; the delegate's minute wake-up skipped 23–25×/hour all day. Freenet queues every request to a parked
+  delegate (#5544). Fix in the one rule (account): a blind writers-bag entry is skipped (never "every device"); the
+  devices contract is read only where the card's `devices` mark lists it (page devicesEver too). Logs: identity steps
+  with times, any node answer ≥ 10 s. NEXT: after the owner's login on v443, re-read the node log for parks/skips.
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 
