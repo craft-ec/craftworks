@@ -3,6 +3,8 @@
 #   served.js (the one fetch; a 503 is "not yet"; raceK), rto.js + instrument-vocab.js (its generated constants),
 #   pieces.js (open a piece set) and decoder.wasm (the erasure decoder).
 # They are generated in a checkout of that revision and kept in loader/sdk/, so a build needs no SDK checkout.
+# LOCAL CHANGE kept in loader/sdk/served.js (10-25, owner): `raceK` asks EVERY piece at once — no paced window. A
+# regeneration must keep it.
 #
 #   tools/sdk-racing-parts.sh <path to a craftworks-sdk git repo>
 set -euo pipefail

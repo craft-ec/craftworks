@@ -3025,6 +3025,17 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
       OPEN (tokens, not live): `statement.js` audit reads (~594 key logs/records a page on fx) follow through the door
       and spend the budget — its `node.read(...)` should pass `{ follow: false }` (file holds others' uncommitted token
       work: not staged here). fx with tokens ON fails joins until then.
+- [x] 10-25 v442 — PAGE LOAD + newcomer kept. Health: start median 6 s on 10-17, 50–90 s from 10-18/19 — the D6 gate
+      (`fetchable`: every package of a page fetched before it starts, to fall back to `previous`) — owner's Board trace:
+      77 s of 107 in that gate. Removed: the page runs the version served at once, each package fetched when required,
+      never an older one (owner: "fallback is not the solution"). `raceK` asked pieces through a window of 4 widened by
+      an answer or a second — every piece now asked at once (loader/sdk/served.js; noted in tools/sdk-racing-parts.sh).
+      Identity delegate registered only when the node answers it lacks this build (the trace: 22 s compiling a held
+      build every load). The list-not-whole hold on a space's tables REMOVED (it kept Craftworks' Board "still
+      arriving"). v441 regression fixed: a newcomer's space dropped as `unlisted` (its own join not counted yet —
+      upkeep now records WHY it drops a space: "unlisted (list of 1, whole)"): an act moving one in that is PRESENT, its
+      author from its feed, keeps it; `hasTree` reads the owner's own feeds. fx: joincode-kept 4/4 (1 setup timeout),
+      quick, chat-room PASS. Loader v31.
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 

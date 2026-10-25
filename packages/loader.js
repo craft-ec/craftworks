@@ -7,7 +7,7 @@
 // edited by publishing the app, never the loader. Only the current page's packages are fetched; everything else
 // loads the first time something asks for it (`ctx.require(name)`), once. The node's code is loaded after the first
 // page is up even where the page needs none: to FOLLOW the app's and the loader's sites (below).
-const VERSION = "30";
+const VERSION = "31";
 
 // THE APPS, as a phone lists them: by NAME (A–Z), each with its CATEGORY (the manifest's) — every list of apps (Home,
 // the header's menus, the spaces panel) in this one order.
@@ -242,7 +242,7 @@ export async function run(boot) {
   // A PIECE never changes (its address is its content's): the browser's copy is used when it has one — a reload asks
   // the node for nothing it already holds. The package's hash is checked after decoding anyway; a mismatch asks the
   // node again, bypassing the copy.
-  // ONE FETCH PER PACKAGE HASH: what `fetchable` fetched, the page then runs (a failure kept for nobody: `ctx.cache`).
+  // ONE FETCH PER PACKAGE HASH: fetched once a page, when the page first requires it (a failure kept for nobody: `ctx.cache`).
   const fetched = new Map();
   const packageBytes = (p, name) => ctx.cache(fetched, p.sha256, () => fetchPackage(p, name));
   async function fetchPackage(p, name, fresh = false) {
@@ -292,31 +292,6 @@ export async function run(boot) {
     return ctx.cache(entries, name, () => entryOf(head, name).then(e => (read.set(name, e), e)));
   }
 
-  // A RELEASE STILL SPREADING: for minutes after a release the network cannot find its new pieces yet (10-17: the
-  // owner's node answered 503 for 51 of them while B held every one). So before anything starts, the packages this
-  // page needs are fetched; a version that cannot give them — a package that FAILS (a piece the network does not have
-  // yet), never one only SLOW (a cold browser fetching 131 packages takes over 20 s even from a node holding every piece:
-  // v401, every first visit ran the version before and reloaded a minute later) — is not run: the manifest's `previous`
-  // (the version before, its entries kept on the site; its pieces long spread, most in the browser already) is, and
-  // this one is asked again every RETRY_MS, taken once it can be (`follow`).
-  // (A backstop only: a fetch that never answers at all.)
-  const READY_MS = 120_000;
-  const RETRY_MS = 30_000;
-  async function fetchable(man, at) {
-    const names = [...new Set([man.theme, ...(man.needs?.[routeIn(man, placeOf(at).full)] ?? [])])].filter(n => n && man.packages[n]);
-    const t = performance.now();
-    let timer;
-    const ok = await Promise.race([
-      Promise.all(names.map(n => entryOf(man.packages[n], n).then(e => packageBytes(e, n)))).then(
-        () => true,
-        () => false,
-      ),
-      new Promise(res => (timer = setTimeout(() => res(false), READY_MS))),
-    ]);
-    clearTimeout(timer);
-    ctx.log("fetchable", { what: `${names.length} packages of this page: ${ok ? "all fetched" : "not all yet"}`, ms: Math.round(performance.now() - t) });
-    return ok;
-  }
 
   // A PACKAGE's BYTES for an app's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the same verified bytes this page
   // runs — `{ kind, bytes, sha256 }` — and the RUNTIME's own file. (A piece is the browser's once fetched: no second GET.)
@@ -640,8 +615,6 @@ export async function run(boot) {
     return { inSpace, full: inSpace ? (inSpace[2] && inSpace[2] !== "/" ? inSpace[2] : "/space") : at };
   }
   const routeIn = (man, full) => Object.keys(man.pages).filter(r => full === r || full.startsWith(r === "/" ? "/" : `${r}/`)).sort((a, b) => b.length - a.length)[0] ?? "/";
-  // The version served, when the one running is its `previous` (it could not be fetched yet): asked again by `follow`.
-  let waitingFor = null;
   try {
     ctx.log("loader started", { what: `loader v${VERSION}` });
     const m = await boot.manifest();
@@ -649,17 +622,9 @@ export async function run(boot) {
     // The SITE's version (its manifest's hash): what every health report names — one package's hash cannot tell two
     // releases apart that left it unchanged.
     ctx.siteV = hex(await crypto.subtle.digest("SHA-256", m.bytes)).slice(0, 12);
-    if (manifest.previous && !(await fetchable(manifest, route()))) {
-      waitingFor = manifest;
-      manifest = manifest.previous;
-      // (Its version named apart: `<served>~previous` — the reports say which ran.)
-      ctx.siteV = `${ctx.siteV}~previous`;
-      ctx.log("previous", { what: "this version's packages cannot be fetched yet: the one before runs, this one asked again" });
-      // A lifecycle STEP of the page (reported): which version this page runs is never a guess. (The previous code's
-      // own table may not know the step yet: then only the trace says it.)
-      const served = ctx.siteV.split("~")[0];
-      lifeOf()?.then(l => l?.transition("page", "page", "previous", { served })).catch(() => {});
-    }
+    // THE LATEST VERSION, AT ONCE (owner 10-25): the page starts with the manifest served, each package fetched as
+    // the page requires it — never held for all of them, never an older version run instead (a release is published
+    // only once every piece is findable; a fetch that fails is asked again — `ctx.cache` keeps no failure).
     // Each package's VERSION (its sha256, as the manifest names it): what a record of a critical action carries.
     ctx.shaOf = n => manifest?.packages?.[n]?.sha256 ?? null;
     ctx.app = manifest.app;
@@ -727,14 +692,6 @@ export async function run(boot) {
     const node = await require("node");
     const sites = [stack.appSite(), stack.loaderSite()].filter(Boolean);
     let told = false;
-    if (waitingFor) {
-      const again = async () => {
-        if (told) return;
-        if (await fetchable(waitingFor, route())) return newer();
-        setTimeout(() => again().catch(e => ctx.log("newest", { what: `asking again: ${e.message}` })), RETRY_MS);
-      };
-      setTimeout(() => again().catch(e => ctx.log("newest", { what: `asking again: ${e.message}` })), RETRY_MS);
-    }
     // A newer version: TAKEN BY ITSELF, at the first moment nothing would be lost — nobody typing, no text waiting in a
     // box, no dialog open; looked at every 2 s, and taken at once when the page changes or goes out of view.
     // IN PLACE when only COMPONENTS changed (`inPlace`): the services — the node, the tables read, the keys — kept,

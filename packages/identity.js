@@ -29,8 +29,13 @@ export async function start(ctx) {
   const { core, glue, ask } = node;
   // Registering compiles the delegate on the node (2.9 MB): a slow node takes a minute — the owner's answered at 64 s
   // (10-13) while the page had given up at 30 s and failed. Waited for as long as it takes, up to 3 minutes.
-  const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate", 180000);
-  if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
+  // REGISTERED ONLY WHEN THE NODE LACKS THIS BUILD (owner 10-25: a page waited 22 s on every load while the node
+  // compiled a delegate it already held): asked first; a node that answers it holds it, and nothing is sent.
+  const held = await ctx.optional("identity: does the node hold this build", ask(core.frames_who(), s => s.kind === "identity" || s.kind === "delegate-missing", "asking whether the node holds this identity build", 10000), () => null);
+  if (held?.kind !== "identity") {
+    const reg = await ask(core.frames_register_identity(), s => s.kind === "registered" || s.kind === "refused", "registering the identity delegate", 180000);
+    if (reg.kind !== "registered") throw new Error(`the node refused the identity delegate: ${reg.said}`);
+  }
   ctx.log("identity ready", { what: core.identity_key().slice(0, 16) + "…" });
 
   // Put one of the account's contracts (its key log, a whoami); read one by its 32-byte id (true: the core holds it).

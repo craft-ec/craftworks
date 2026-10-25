@@ -15,7 +15,7 @@
 // to the name (a MISMATCH, refused by name), or a person cancelling
 // (`signal`).
 
-import { RTO_SCHEDULE_MS, STILL_FETCHING_AFTER_MS, STILL_FETCHING_REASK_MS, WINDOW_AFTER_ANSWERS } from "./rto.js";
+import { RTO_SCHEDULE_MS, STILL_FETCHING_AFTER_MS, STILL_FETCHING_REASK_MS } from "./rto.js";
 import { COARSEN_BANDS, COARSEN_LAST_GRAIN, EVENT, HTTP_CLASSES, KEY, OUTCOME, SITE, STATUS, STRIDE } from "./instrument-vocab.js";
 
 /** A time, coarsened by the recording vocabulary's own rule (generated from craftworks-instrument's bands). */
@@ -286,8 +286,8 @@ export async function served(
  * RACE THE LOAD PIECES (sdk#347, the owner's rule 11 applied to loading the SDK): `spec.pieces` is the `k + m`
  * pieces of the SDK's bundle (`{ url | urls, sha256 }`, data first), and the bundle needs ANY `k` of them. Each
  * piece is asked through `served()` (the one fetch: re-asked on the RTO, never ended by a status) and checked by its
- * sha256; a piece that verifies counts, one with the wrong bytes does not. At most `WINDOW_AFTER_ANSWERS[answers]`
- * are in flight (the page's own window, generated from page/src/rto.rs: no second pacing rule). At the FIRST `k`
+ * sha256; a piece that verifies counts, one with the wrong bytes does not. EVERY piece is asked at once (a race —
+ * owner 10-25; a paced window of 4 had a page's 145 packages take 75 s). At the FIRST `k`
  * verified it resolves and ABORTS every piece still asked: a stalled piece never holds the page.
  *
  * No time cut-off (rule 8): while fewer than `k` have verified, it waits and `onWait` says so. It rejects only
@@ -325,31 +325,24 @@ export async function raceK(
   const notHeld = new Set();
   let verified = 0;
   let refused = 0;
-  let answers = 0;
   let inFlight = 0;
   let next = 0;
-  // WIDENED BY TIME TOO: a race whose first pieces stay silent (a route whose peers never answer, a node answering
-  // "not found" for a piece it holds) asks one more piece every WIDEN_MS — so every distinct piece is in flight within
-  // seconds, and the first that answers wins. Waiting for an answer before widening let three silent routes hold a
-  // page while six other ways to the same bytes were never tried.
-  const WIDEN_MS = 1000;
-  let extra = 0;
-  const window = () => WINDOW_AFTER_ANSWERS[Math.min(answers, WINDOW_AFTER_ANSWERS.length - 1)] + extra;
+  // A RACE (owner 10-25: "ask for each piece is correct for race"): EVERY piece asked at once, the first k that verify
+  // taken, the rest cancelled. Before, a window of 4 widened by one an answer or a second paced a 36-piece package
+  // through 4–8 at a time — a load of 145 packages took 75 s.
+  const window = () => k + m;
   // One request per distinct source: two pieces at one address are one route (a small package's copies can coincide).
   const sourceOf = p => JSON.stringify(p.urls ?? [p.url]);
   const sourcesAsked = new Set();
-  let widen = null;
   try {
     return await new Promise((resolve, reject) => {
       const settle = () => {
         if (verified >= k) {
-          clearInterval(widen);
           stop.abort();
           resolve({ pieces: got, verified, asked, notHeld: [...notHeld].filter(i => !got[i]).sort((a, b) => a - b) });
         } else if (stop.signal.aborted) {
           reject(new Error(`the SDK's pieces: cancelled with ${verified} of ${k} verified`));
         } else if (refused > m) {
-          clearInterval(widen);
           stop.abort();
           reject(new Error(`the SDK's pieces refused: ${refused} of ${k + m} gave bytes that do not hash to their name, so fewer than k = ${k} can verify`));
         } else {
@@ -384,7 +377,6 @@ export async function raceK(
             bytes => {
               got[i] = bytes;
               verified += 1;
-              answers += 1;
             },
             () => {
               // Cancelled (the race is over) or refused (the wrong bytes from every source): not counted.
@@ -396,15 +388,9 @@ export async function raceK(
           });
         }
       };
-      widen = setInterval(() => {
-        if (stop.signal.aborted || next >= k + m) return clearInterval(widen);
-        extra += 1;
-        launch();
-      }, WIDEN_MS);
       launch();
     });
   } finally {
-    clearInterval(widen);
     signal?.removeEventListener?.("abort", cancel);
   }
 }

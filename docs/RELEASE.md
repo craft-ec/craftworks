@@ -29,8 +29,8 @@ cp ~/dev/craftworks/contracts/identity-history <release tree>/contracts/   # mai
 
 ## 2. Publish (through B, under the lock)
 
-`PREVIOUS_SITE` = the live site (`tools/previous-site.sh`), so a page that cannot fetch the new packages yet runs the
-version before; `FIND_WS` = the owner node's tunnel, so every piece is checked from a node other than B and placed
+`PREVIOUS_SITE` = the live site (`tools/previous-site.sh`), so the identity builds the live version knows are carried
+(a page always runs the version served — never an older one: owner 10-25); `FIND_WS` = the owner node's tunnel, so every piece is checked from a node other than B and placed
 again where it is not found (up to 8 rounds).
 
 ## 3. After — the release reached people
@@ -39,9 +39,9 @@ again where it is not found (up to 8 rounds).
       have at least `k` pieces. Compare a failure against a FRESH live node (one started for the check): a piece only
       the owner's node cannot get is the node (10-18: restart fixed it), not the placement.
 - [ ] **Wren on the live network** (B): Wren logs in on the new version with its PIN, reads its spaces, channels and
-      DMs, writes one row; its report names the new version without `~previous`.
-- [ ] **Health** (`tools/health-watch/check-live.sh`): versions per account — `~previous` means that page could not
-      fetch this version; `lifecycle-build` moves show which earlier builds a login retired.
+      DMs, writes one row; its report names the new version.
+- [ ] **Health** (`tools/health-watch/check-live.sh`): versions per account; `lifecycle-build` moves show which earlier
+      builds a login retired.
 - [ ] Record the release (version, manifest hash, identity build) in `.claude/feature-progress.md`.
 
 ## The token build (once, when it goes live)

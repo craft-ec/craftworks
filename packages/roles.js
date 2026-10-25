@@ -166,10 +166,8 @@ export async function start(ctx) {
     let roster = new Set(first ? [first] : []);
     let bans = new Set();
     let gone = new Set();
-    // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6). A MEMBER's
-    // space: told to the storage from the start — not whole until a replay says so (FOUNDATION §2 R5).
+    // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
     let listWhole = false;
-    if (!out) storage.setListWhole(sp.id, false);
     // MLS (until K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`). WHO IS IN is
     // the LIST (K8.1): `group` below; REMOVED is the list's word too (K8.2, the replay).
     let mlsMembers = [];
@@ -228,7 +226,6 @@ export async function start(ctx) {
         // unread, the list's own tables read.
         const feeds = t.state?.s === "present" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];
         listWhole = !node.glue.guard_list_whole(JSON.stringify(devicesUnread), JSON.stringify(feeds), miss.length);
-        if (!out) storage.setListWhole(sp.id, listWhole);
         keys.setList(sp.id, {
           roster: [...roster],
           owner,
@@ -444,9 +441,20 @@ export async function start(ctx) {
       // (`gov::entry_move`, the node's too; an MLS-era member the list never carried over — another act naming it, a
       // rejection, moves nothing). A newcomer is moved in by its own join or its admission, so never this. Taken out of
       // its list as a removal is (`upkeep`).
+      // (An act moving it in that is THERE, counted or not, names it too: a newcomer's own `join`, in its own feed, rests
+      // on an invite sealed with keys it is still to be given — not counted yet, and its space must stay. 10-25, fx.)
       get unlisted() {
         const moved = a => JSON.parse(node.glue.entry_move(JSON.stringify(a)) ?? "null")?.[1] === me?.id;
-        return !!(me && !out && listWhole && !roster.has(me.id) && owner !== me.id && !counted.some(moved));
+        const present = () => t.rows().some(r => {
+          try {
+            // (A row names who wrote it by its feed, not in its act: `by` filled from `author`, as the replay does.)
+            const a = r.value ? JSON.parse(r.value) : null;
+            return !!a && moved({ ...a, by: a.by ?? author(r) });
+          } catch {
+            return false;
+          }
+        });
+        return !!(me && !out && listWhole && !roster.has(me.id) && owner !== me.id && !counted.some(moved) && !present());
       },
       // Whether its members are KNOWN yet (its group read once — or, from outside, its roster).
       get membersKnown() {

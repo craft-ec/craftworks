@@ -1082,12 +1082,6 @@ export async function start(ctx) {
   // writers bag names with its account, its devices confirming it — a self-joiner's `join` act is read before the list
   // names it (K8.3: no MLS entry brings their feeds in any more). Every other table: the list's.
   const SELF_JUDGED = /-(acts|pub-acts|pub-keyops)$/;
-  // WHETHER A SPACE's LIST READ WHOLE (`roles`, each replay; unset: not known here — a guest's): a space's table read
-  // while its list is NOT whole may lack a writer the list has yet to name — `unknown`, never an answered "none", for
-  // as long as the list is not whole: what it names is listed, so it arrives (10-24, fx: a newcomer's first read drew
-  // "no posts"). No clock: the list decides. The list's own tables never wait on it.
-  const listsWhole = new Map();
-  const setListWhole = (id, whole) => listsWhole.set(id, !!whole);
   async function currentWriters(sp, name = "") {
     const directory = await ctx.require("directory");
     let listed = rosters.get(sp.id) ?? [];
@@ -1525,7 +1519,6 @@ export async function start(ctx) {
           const own = me.state ?? { s: "unknown" };
           if (own.s !== "present" && own.s !== "absent") return own;
           if (!gathered || writersOpening) return { s: "unknown", why: "writers' feeds still being read" };
-          if (sp && listsWhole.get(sp.id) === false && !SELF_JUDGED.test(name)) return { s: "unknown", why: "the space's list not read whole yet" };
           // (Every other writer's feed ANSWERED too — not merely opened, shown after WAIT.hint: audit 10-13.)
           if (all.some(f => f !== me && f.state?.s === "unknown")) return { s: "unknown", why: "a writer's feed not answered yet" };
           // (A writer's feed there but SEALED here — a recovery before its keys arrived: never an empty "present", R5.)
@@ -1886,5 +1879,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { decided, writersOf, currentWriters, setRoster, setListWhole, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

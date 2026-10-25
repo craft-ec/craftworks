@@ -422,9 +422,16 @@ export async function start(ctx) {
       placed: () => !!g?.placed(),
       // WHETHER THE SPACE HAS A TREE (owner 10-24/25, not migrated is not shown): its key operations, read to a decision,
       // hold one — `null` while undecided. A space nobody moved onto BeeKEM has none.
+      // (Read where a tree must be if there is one: its CREATOR's devices — the owner writes the root. `null` while the
+      // owner's devices are not known or their feeds not read: 10-25, a newcomer's page read the space's key operations
+      // before it had found the owner's devices, took the empty read for "no tree", and dropped the space it had just
+      // joined.)
       hasTree: async () => {
-        const t = await feed();
-        const st = await t.decided();
+        const devs = [...(await ctx.optional("members: the owner's devices", storage.writersOf(sp, { roster: [sp.governance.owner], departedRows: [] }), () => ({ byNode: new Map() }))).byNode.keys()];
+        if (!devs.length) return null;
+        const t = storage.readOnly(space.tableOf(sp, "pub-keyops"), devs);
+        await t.settled;
+        const st = t.state ?? { s: "unknown" };
         return st.s === "present" || st.s === "absent" ? t.rows().some(x => x.value) : null;
       },
       // WHY THE TREE IS WHERE IT IS (diagnostics, 10-23): each key operation of the space — its writer, and what our

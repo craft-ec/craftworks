@@ -122,8 +122,9 @@ t.onState(fn)
   never remembered as "none".
 - **R5 — A merged table is decided when its own feed and every listed writer's feed are**; a sealed or unread writer
   list makes it `unreadable`, never an empty `present`. A writer named since it opened, its feed still opening, keeps
-  it `unknown` until that feed answers; so does its space's list not read whole yet (it may lack a writer the list
-  will name — `roles` tells the storage; 10-24, fx: a newcomer's first read drew "no posts"). A read TRAVERSES WHAT IS LISTED — a catalog, the writers bag, the index — so
+  it `unknown` until that feed answers. A list SHORT of whole never makes what was read unknown: what is listed and
+  read is shown (10-25, live: a rule that held a space's every table "still arriving" while its list was short kept
+  Craftworks' Board and Home empty, the list short for good). A read TRAVERSES WHAT IS LISTED — a catalog, the writers bag, the index — so
   every feed it waits on is there and answers; nothing is decided by a clock (owner 10-25: "it either is there or not
   and should be traversable. that is our design" — a read that needs a deadline is looking up something unlisted).
 - **ONE READ STATE, one mark (10-24).** What a read gives carries this state — `ctx.stated(value, state)` — and a read
