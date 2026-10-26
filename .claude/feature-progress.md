@@ -3067,6 +3067,10 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   account's tables sealed with its generation, each device's own resealed once; words login opens the `g/` escrows;
   a device without the words reads through `m/<n>/<epoch>`. NEXT: owner's devices after login (tree made? each placed?
   `keys-reconciled` journal); phase 4 (node reconcile, device removal, writable gate) before K8.6.
+- [x] 10-27 v448 — K8.5 DEVICE REMOVAL (026a65d; manifest ab35d067b75f; gates 3/3 + frames; identity changed: one
+  PIN entry). A removed device is taken out of the account's tree and reads nothing written after (fx/fy k85-two
+  PASS); upgrade v447 → v448 with a device back without the words (k85-mls) PASS. NEXT: node reconcile of the account
+  tree (before K8.6), writable gate by the tree.
 - [ ] K8.5 The ACCOUNT group off MLS — DESIGN written 10-26 (FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"). Phases:
   - [x] 1. `groups::AccountCheck` (members = devices; listed = current; add only current, remove only not current;
         root = lowest current device that wrote) + `the_accounts_tree_follows_its_devices_list` (controls for each;
