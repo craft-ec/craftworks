@@ -1485,8 +1485,10 @@ export async function start(ctx) {
       };
       const write = async (key, value, user = !!navigator.userActivation?.isActive) => {
         // (K8.3: no fresh MLS group read before a write — the table's newest key is checked below, its own only.)
-        // A newer epoch just learned: the open tails move onto it before this is sealed.
-        if (sp.kind !== "account") await ctx.background("storage: sealNewest", sealNewest(hexOf(me.id)));
+        // A newer epoch just learned: the open tails move onto it before this is sealed — the ACCOUNT's tables too
+        // (K8.5: a write right after a device was removed went out under the generation before, which the removed
+        // device holds, and it read it — fx/fy 10-27; under MLS the account's writes waited on its group instead).
+        await ctx.background("storage: sealNewest", sealNewest(hexOf(me.id)));
         return versioned(me, key, value, await currentId(key), user);
       };
       const t = {

@@ -136,12 +136,16 @@ impl Check for ListCheck {
 /// THE ACCOUNT's CHECK (K8.5, FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"): the account's own tree, whose members are
 /// its DEVICES (each device's member: the group key its credential names), and WHO IS IN IS THE DEVICES LIST —
 /// `current`: the members its devices contract credentials under its key log's current key (`account::device_members`).
-/// A device is "listed" while current; an add is allowed of a current device only, a removal of one no longer current
-/// only (no act: the devices list is the word). The ROOT is the lowest current member among the authors of the root
-/// operations in the account's channel (`writers`) — never a second tree from two makers.
+/// An operation's AUTHOR counts when the device was EVER the account's (`ever`: credentialed under any key its key log
+/// has had — a device removed since still made the root and the adds before: fx/fy 10-26, judged by the current list
+/// alone every earlier operation went unauthorized and the removal never landed). An add is allowed of a CURRENT device
+/// only (a removed one never adds itself back), a removal of one no longer current only (no act: the devices list is the
+/// word). The ROOT is the lowest member ever the account's among the authors of the root operations in the account's
+/// channel (`writers`) — never a second tree from two makers.
 #[derive(Debug, Default)]
 pub struct AccountCheck {
     pub current: Vec<[u8; 32]>,
+    pub ever: Vec<[u8; 32]>,
     pub writers: Vec<[u8; 32]>,
 }
 fn hex32(b: &[u8; 32]) -> String {
@@ -152,13 +156,13 @@ impl Check for AccountCheck {
         Some(hex32(member))
     }
     fn listed(&self, device: &str) -> bool {
-        self.current.iter().any(|c| hex32(c) == device)
+        self.current.iter().chain(&self.ever).any(|c| hex32(c) == device)
     }
     fn allows(&self, _act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
         self.current.contains(target) == add
     }
     fn creator(&self) -> Option<String> {
-        self.current.iter().filter(|c| self.writers.contains(c)).min().map(hex32)
+        self.current.iter().chain(&self.ever).filter(|c| self.writers.contains(c)).min().map(hex32)
     }
 }
 
@@ -544,13 +548,13 @@ mod page {
         }
         /// THE ACCOUNT's CHECK (`AccountCheck`): `current` `[member hex…]` — the group keys of its devices' credentials
         /// on its key log's current key; `writers` `[member hex…]` — the devices whose `account-keyops` the directory lists.
-        pub fn account(current: js_sys::Array, writers: js_sys::Array) -> Result<BeeList, JsValue> {
+        pub fn account(current: js_sys::Array, ever: js_sys::Array, writers: js_sys::Array) -> Result<BeeList, JsValue> {
             let h32 = |v: JsValue| -> Result<[u8; 32], JsValue> {
                 let s = v.as_string().ok_or_else(|| err("a hex string"))?;
                 let b: Option<Vec<u8>> = (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect();
                 b32(&b.ok_or_else(|| err("hex"))?)
             };
-            Ok(BeeList(Chk::Account(AccountCheck { current: current.iter().map(h32).collect::<Result<_, _>>()?, writers: writers.iter().map(h32).collect::<Result<_, _>>()? })))
+            Ok(BeeList(Chk::Account(AccountCheck { current: current.iter().map(h32).collect::<Result<_, _>>()?, ever: ever.iter().map(h32).collect::<Result<_, _>>()?, writers: writers.iter().map(h32).collect::<Result<_, _>>()? })))
         }
     }
 

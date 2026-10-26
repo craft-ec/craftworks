@@ -586,14 +586,18 @@ export async function start(ctx) {
         const keyLog = await auth.identity.readKeyLog(didB);
         const devices = keyLog && (await auth.identity.readDevices(didB));
         const current = devices ? [...node.core.account_device_members(devicesCode, idlogCode, didB)].map(x => String(x).toLowerCase()) : [];
+        // (Whose operations count as authored: every device the account EVER had — a removed one's root still stands.)
+        const ever = devices ? [...node.core.account_device_members_ever(devicesCode, idlogCode, didB)].map(x => String(x).toLowerCase()) : [];
         // THE ROOT's MAKERS: the authors of root operations (an add with no predecessor).
         const roots = opsOf(t).map(r => JSON.parse(glue.keyop_row(r.value) ?? "null")?.op).filter(Boolean).map(op => G.beekem_op_info(bytes(op))).filter(x => x && x[1] === "add" && !x[2].length).map(x => String(x[3]).toLowerCase());
         const writers = [...new Set(roots)];
         return {
-          list: G.BeeList.account(current, writers),
+          list: G.BeeList.account(current, ever, writers),
           // (No root yet: this device, when current — two at once end on the lowest's, the other's tree dropped.)
-          creator: () => writers.filter(w => current.includes(w)).sort()[0] ?? (current.includes(m.id) ? m.id : null),
-          cards: current.filter(id => leaves.has(id)).map(id => [id, bytes(id), bytes(leaves.get(id))]),
+          creator: () => writers.filter(w => ever.includes(w) || current.includes(w)).sort()[0] ?? (current.includes(m.id) ? m.id : null),
+          // (EVERY device with a signed leaf, current or not: the reconcile takes out only a placed member it has a card
+          // for — fx/fy 10-26, cards of the current alone left a removed device in the tree.)
+          cards: [...leaves.keys()].map(id => [id, bytes(id), bytes(leaves.get(id))]),
           listedNow: current,
           ins: Object.fromEntries(current.map(id => [id, ZERO])),
           // (Whom to take out: a device that wrote its leaf here and is no longer current.)

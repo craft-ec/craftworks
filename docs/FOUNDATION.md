@@ -403,7 +403,13 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      as now) and the tree places it: any placed device adds it (reconcile), or it enters by itself, its credential the
      proof. Never a second tree: a device makes the root only when no device feed holds an operation, read whole.
    - A DEVICE REMOVED (the delete machine: the key log rotated, the kept devices credentialed again): no longer current,
-     the next reconcile takes it out with a new generation — it reads nothing written after.
+     the next reconcile takes it out with a new generation — it reads nothing written after. Its OPERATIONS STILL COUNT
+     (`AccountCheck::ever`: an author is any device credentialed under any key the log has had — judged by the current
+     list alone, the root it made went unauthorized and the removal never landed); an ADD is of a current device only,
+     so a removed one never adds itself back. The reconcile is given EVERY device with a signed leaf (it takes out only
+     a placed member it has a card for), and an account write moves onto the newest generation BEFORE it is sealed
+     (`storage` write: the account's tables too — a write right after a removal went out under the generation before,
+     which the removed device read; fx/fy 10-27: now it reads nothing written after).
    - CARRIED OVER (10-24 rule: MLS-era history is not carried — EXCEPT the account's own data, which is the person's):
      a device holding the account's MLS epochs makes the tree (or is placed), then reseals every table it writes under the
      current generation (`storage.resealOwn`) — each device its own. The MLS epochs it keeps still open what other

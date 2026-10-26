@@ -1595,6 +1595,18 @@ mod js {
             let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
             Ok(account::device_members(&did, &log, &creds).iter().map(|n| JsValue::from(hex(n))).collect())
         }
+        /// EVERY DEVICE THE ACCOUNT TREE EVER HAD (`craftworks_account::device_members_ever`): whose operations count as
+        /// authored. → `[member hex…]`.
+        pub fn account_device_members_ever(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let did = b32(did)?;
+            let lid = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let Some(lst) = self.0.got(&lid) else { return Ok(js_sys::Array::new()) };
+            let log = craftworks_idlog_contract::read(&did, lst).ok_or_else(|| err("the account's key log does not read".into()))?;
+            let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
+            let Some(st) = self.0.got(&dev) else { return Ok(js_sys::Array::new()) };
+            let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
+            Ok(account::device_members_ever(&did, &log, &creds).iter().map(|n| JsValue::from(hex(n))).collect())
+        }
         /// A GENERATION's ESCROW (K8.5): its secret sealed to the account's encryption key (its key log's head) — any
         /// device seals it, only the words open it (`escrow_open`). `eph`: 32 fresh random bytes, the page's.
         pub fn account_escrow(&self, idlog_code: &[u8], did: &[u8], secret: &[u8], eph: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {

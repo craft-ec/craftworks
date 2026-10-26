@@ -412,6 +412,22 @@ pub fn device_members(did: &[u8; 32], log: &Log, contract: &[Vec<u8>]) -> Vec<[u
     out
 }
 
+/// EVERY DEVICE THE ACCOUNT TREE EVER HAD (K8.5): the group key of each credential signed by ANY key its key log has
+/// had — whose operations count as authored (a device removed since still made the root and the adds after it; judged
+/// by who it was, never only by who is current: fx/fy 10-26, a removal made every earlier operation unauthorized).
+pub fn device_members_ever(did: &[u8; 32], log: &Log, contract: &[Vec<u8>]) -> Vec<[u8; 32]> {
+    let keys: Vec<[u8; 32]> = log.events.iter().map(|e| e.key).collect();
+    let mut out: Vec<[u8; 32]> = contract
+        .iter()
+        .filter_map(|c| craftworks_identity::read_credential(c))
+        .filter(|(d, owner, _, _)| d == did && keys.contains(owner))
+        .filter_map(|(_, _, _, key)| key.try_into().ok())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// A member's DEVICES, STEP BY STEP — the one resolution's order and failures, page and node (each only fetches): their
 /// key log, then their card, then their devices contract ONLY where the card says they have one (owner 10-25: a read
 /// goes only where something lists it — the contract asked "in case" when the card did not read or named no device was
@@ -578,6 +594,7 @@ mod tests {
         let again = reissue(&did, &rotated, &words, &creds[..1]).unwrap();
         let all: Vec<Vec<u8>> = creds.iter().chain(&again).cloned().collect();
         assert_eq!(device_members(&did, &rotated, &all), vec![ka], "B removed: its key is not current");
+        assert_eq!(device_members_ever(&did, &rotated, &all), vec![ka, kb], "…but it was: its operations stay authored");
     }
 
     /// THE ONE DEVICES STEP (page and node): the devices contract asked ONLY where the card says it exists — an unread

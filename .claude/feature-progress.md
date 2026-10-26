@@ -3091,7 +3091,12 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
         (`g2/account/<member>`: a shared row handed fy fx's leaf secrets — found by the upgrade probe, fixed).
         fx/fy: `pw/k85-mls.mjs` (v446 → candidate, fx makes the tree alone, fy back with its PIN only: reads via MLS
         epoch, not placed) PASS; k85-phase2 PASS; k85-two PASS (fx reads fy's row in 10 s).
-  - [ ] 4. device removal + writable gate by the tree; node upkeep reconciles the account tree
+  - [~] 4. DEVICE REMOVAL done (fx/fy `pw/k85-two.mjs` PASS: fy removes fx with the words → fx out of the tree, a new
+        generation, fy's tail writes with it, fx reads nothing after). Three fixes found by measuring: authors judged
+        by EVER-credentialed devices (`device_members_ever`); cards for every device with a leaf; account writes
+        move onto the newest key first (`sealNewest` was skipped for account tables). Harness: checks on a removed
+        device bounded (a removed device's `keys.mlsNow` waits for ever). STILL: node upkeep reconciles the account
+        tree (before K8.6); writable gate by the tree.
   - [ ] 5. K8.6 — MLS removed
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 
