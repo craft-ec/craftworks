@@ -3062,6 +3062,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   `an_mls_era_space_is_not_followed`. The catch-up/follow-out code is unreachable now, deleted with the rest of K8.6.
   NEXT: one full hour of the owner node log on v446 with no probe loads: parks, skips, failed requests.
   d135a31 (tree read logged once per race) rides in v446 too.
+- [x] 10-26 v447 — K8.5 phases 2–3 LIVE (a3bf3c3; manifest b97f4db9cd6d; gates 3/3 + frames; identity changed: one
+  PIN entry). The account's tree beside MLS: made by the first device to run it, devices added by reconcile, the
+  account's tables sealed with its generation, each device's own resealed once; words login opens the `g/` escrows;
+  a device without the words reads through `m/<n>/<epoch>`. NEXT: owner's devices after login (tree made? each placed?
+  `keys-reconciled` journal); phase 4 (node reconcile, device removal, writable gate) before K8.6.
 - [ ] K8.5 The ACCOUNT group off MLS — DESIGN written 10-26 (FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"). Phases:
   - [x] 1. `groups::AccountCheck` (members = devices; listed = current; add only current, remove only not current;
         root = lowest current device that wrote) + `the_accounts_tree_follows_its_devices_list` (controls for each;
