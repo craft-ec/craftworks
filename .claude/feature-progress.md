@@ -3062,7 +3062,12 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   `an_mls_era_space_is_not_followed`. The catch-up/follow-out code is unreachable now, deleted with the rest of K8.6.
   NEXT: one full hour of the owner node log on v446 with no probe loads: parks, skips, failed requests.
   d135a31 (tree read logged once per race) rides in v446 too.
-- [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
+- [ ] K8.5 The ACCOUNT group off MLS — DESIGN written 10-26 (FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"). Phases:
+  - [ ] 1. account `Check` (devices list) + `account-keyops` ops + generation escrow, in groups/account, tested alone
+  - [ ] 2. page makes/joins the account tree beside MLS; new writes sealed with the generation; resealOwn
+  - [ ] 3. words login: escrows opened (every generation), placed by reconcile or self-entry
+  - [ ] 4. device removal + writable gate by the tree; node upkeep reconciles the account tree
+  - [ ] 5. K8.6 — MLS removed
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 
 ## 10-23: releases v422–v427 (K8.1 + BeeKEM repairs, all gate 3/3)
