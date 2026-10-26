@@ -1822,6 +1822,25 @@ pub fn upkeep_sign_space<H: Host>(h: &mut H, member: &[u8; KEY_LEN], params: &[u
     Ok(key.sign(&p.signed_message(false, seq, value_hash)).to_bytes())
 }
 
+/// UPKEEP's ACCOUNT MLS STATE (K8.5): the account's group as kept here for the member — its signer is this device's
+/// member in the account's BeeKEM tree (`craftworks_mls::signer_seed_of`). `None`: none kept.
+pub fn upkeep_account_mls<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<Vec<u8>> {
+    h.get_secret(&in_space(MLS, member, &None)).filter(|s| !s.is_empty())
+}
+
+/// UPKEEP SIGNS a step of the ACCOUNT's CHANNEL with no page open (K8.5: its tree's operations, leaves and escrows):
+/// the account's DATA key — what a page signs the channel with — through the same fork guard as every signing. Only a
+/// tail whose authority is that key.
+pub fn upkeep_sign_channel<H: Host>(h: &mut H, member: &[u8; KEY_LEN], params: &[u8], seq: u64, value_hash: &[u8; 32]) -> Result<[u8; 64], String> {
+    let key = member_(h, member).ok_or("no such member held here")?.data_key().ok_or("the account's data key is not held here")?;
+    let p = Params::parse(params).ok_or("not a tail's params")?;
+    if !matches!(&p.authority, Authority::One(v) if *v == key.verifying_key()) {
+        return Err("not the account's channel".into());
+    }
+    guarded(h, &p.hash, seq, value_hash).map_err(|w| format!("{w:?}"))?;
+    Ok(key.sign(&p.signed_message(false, seq, value_hash)).to_bytes())
+}
+
 /// A question for the person, which the node itself shows (the delegate entry turns it into `RequestUserInput`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prompt {

@@ -414,6 +414,16 @@ fn client(ident: &Rule, store: &Store, kps: &KeyPackages, signer: &(Vec<u8>, Vec
 }
 
 /// A fresh MLS signing key for a member (the page supplies no seed: mls-rs draws from the page's randomness).
+/// THIS DEVICE's MEMBER SEED in the account's BeeKEM tree (K8.5): its signer's Ed25519 seed, read from a saved
+/// state (`Account::save`: `CWMS`, then the signer's secret, length-prefixed) without loading the group — the node has
+/// the state but not, at every wake-up, what loading it needs.
+pub fn signer_seed_of(state: &[u8]) -> Option<[u8; 32]> {
+    let b = state.strip_prefix(b"CWMS")?;
+    let (n, r) = b.split_at_checked(4)?;
+    let n = u32::from_le_bytes(n.try_into().ok()?) as usize;
+    r.get(..n)?.get(..32)?.try_into().ok()
+}
+
 pub fn new_signer() -> Result<(Vec<u8>, Vec<u8>), String> {
     let cs = RustCryptoProvider::default().cipher_suite_provider(SUITE).ok_or("no cipher suite")?;
     let (s, p) = cs.signature_key_generate().map_err(|e| format!("{e:?}"))?;
@@ -811,6 +821,19 @@ mod tests {
         b.process(&dave_in).unwrap();
         assert!(copy.process(&up).is_err(), "the member's own update is not the copy's to follow");
         assert!(copy.process(&dave_in).is_err(), "and what follows it is out of the copy's reach");
+    }
+
+    /// K8.5: the member seed read from a SAVED state is the signer's — the key its credential names. Control: a blob that
+    /// is not a state gives none.
+    #[test]
+    fn the_signer_seed_reads_from_a_saved_state() {
+        let owner = [1u8; 32];
+        let mut a = Account::create(ident(&[owner]), &owner, &[0xA; 32]).unwrap();
+        let st = a.save().unwrap();
+        let seed = signer_seed_of(&st).expect("a seed");
+        assert_eq!(seed.to_vec(), a.signer.0[..32].to_vec());
+        assert_eq!(ed25519_dalek::SigningKey::from_bytes(&seed).verifying_key().to_bytes().to_vec(), a.signer.1);
+        assert_eq!(signer_seed_of(b"not a state"), None);
     }
 
     #[test]

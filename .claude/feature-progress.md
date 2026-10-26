@@ -3101,6 +3101,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
         move onto the newest key first (`sealNewest` was skipped for account tables). Harness: checks on a removed
         device bounded (a removed device's `keys.mlsNow` waits for ever). STILL: node upkeep reconciles the account
         tree (before K8.6); writable gate by the tree.
+    - [x] 4a. delegate keys: `mls::signer_seed_of` (the device's member seed from the saved MLS state, test),
+          `identity::upkeep_account_mls`, `identity::upkeep_sign_channel` (data key, fork guard; test: signed, same
+          step again ok, different step refused, other authority refused)
+    - [ ] 4b. `delegate::account_round`: channel + devices read, merge, reconcile, escrows, keep, write — delegate tests
+    - [ ] 4c. wired into the wake-up; fx/fy: a device back with every page closed is placed by the node
   - [ ] 5. K8.6 — MLS removed
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 

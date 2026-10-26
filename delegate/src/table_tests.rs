@@ -895,3 +895,21 @@ fn an_absent_listed_tail_is_not_asked_again_until_its_listing_changes() {
     assert!(asked3.contains(&asked1[1]), "asked again once its listing changed: {asked3:?}");
     assert_eq!(asked3.len(), 3, "the bag, A's catalog, B's: {asked3:?}");
 }
+
+/// K8.5 THE NODE SIGNS THE ACCOUNT's CHANNEL (its tree's operations, leaves and escrows, with no page open): with the
+/// account's DATA key, through the fork guard — the same step again signed, a different one at that place refused; a
+/// tail with another authority (the member's own key) refused.
+#[test]
+fn the_node_signs_the_accounts_channel_with_its_data_key_behind_the_fork_guard() {
+    let (mut h, member) = node();
+    let data_pub = SigningKey::from_bytes(&DATA).verifying_key().to_bytes();
+    let o = data::Open::new(TAIL, &data_pub, "x0123456789ab-log");
+    let sig = identity::upkeep_sign_channel(&mut h, &member, &o.params, 1, &[0xAA; 32]).expect("signed");
+    let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(&data_pub).unwrap();
+    assert!(ed25519_dalek::Verifier::verify(&vk, &p.signed_message(false, 1, &[0xAA; 32]), &ed25519_dalek::Signature::from_bytes(&sig)).is_ok(), "by the data key");
+    assert!(identity::upkeep_sign_channel(&mut h, &member, &o.params, 1, &[0xAA; 32]).is_ok(), "the same step again");
+    assert!(identity::upkeep_sign_channel(&mut h, &member, &o.params, 1, &[0xBB; 32]).is_err(), "never two different steps at one place");
+    let mine = data::Open::new(TAIL, &member, "x0123456789ab-log");
+    assert!(identity::upkeep_sign_channel(&mut h, &member, &mine.params, 1, &[0xAA; 32]).is_err(), "not the account's channel");
+}

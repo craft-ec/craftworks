@@ -427,7 +427,11 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      generation reads at once (fx 10-26: without it, a device joined through MLS held epoch 0 only, and the account's
      directory, resealed with the generation, did not read).
    - THE NODE's UPKEEP follows the account's tree as a space's (`keys_round::reconcile` with the devices list): a device
-     added or removed while no page is open. REQUIRED BEFORE K8.6 (MLS removed): a device that comes back after another
+     added or removed while no page is open. Its member is THIS device's (the seed of the signer in the account's MLS
+     state the node keeps: `mls::signer_seed_of`); it reads the account's channel (the data key's tail, under its table
+     key) and the devices list (key log, devices contract), merges, reconciles, escrows each new generation (`g/`, `m/`),
+     keeps the generations as the account's epochs, and writes its rows to the channel signed with the data key behind
+     the same fork guard as every upkeep step (`identity::upkeep_sign_channel`). REQUIRED BEFORE K8.6 (MLS removed): a device that comes back after another
      made the tree reads through `m/` meanwhile, but is placed only once a placed device reconciles.
    Phases (each through the gates): (1) the account's `Check`, signed leaves, the devices' members, in `groups`/
    `account`, tested alone; (2) the page makes or joins the tree beside MLS, seals new writes with the generation, reseals its own;
