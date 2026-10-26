@@ -274,11 +274,10 @@ pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, mut r: Round) -> Vec<Io> 
     // tree followed, goes on to the MLS follow-out — whoever the acts put out taken out of the group its content is
     // sealed for (10-21, fx: a member removed from a tree space read on, its MLS epoch never moving — the tree branch
     // returned here and the MLS path never ran).
-    if std::mem::take(&mut r.mls_owed) {
-        if let Some(m) = mandate(h, &r) {
-            return catch_up(h, c, r, &m);
-        }
-    }
+    // NO MLS FOLLOW-OUT (K8.6, owner 10-24: MLS-era support dropped): a BeeKEM space is kept to its list by its tree
+    // alone. The catch-up read the NEXT epoch's log every round — a contract nobody made unless someone committed: a
+    // 60–75 s not-found that parked this delegate and failed the page's requests behind it (10-26, the owner's node).
+    r.mls_owed = false;
     begin(h, c, r.member, r.me, r.rest)
 }
 
@@ -519,7 +518,9 @@ fn follow_replied<H: Host>(h: &mut H, reply: Reply, now_ms: u64) -> Vec<Io> {
                 followed(h, &member, &r.space, craftworks_rules::steps::KEYS_OPS_UNREAD, &format!("{}: its key operations read empty though it holds a BeeKEM generation ({notes}): not followed this round", m.name));
                 return next_space(h, &c, r);
             }
-            catch_up(h, &c, r, &m)
+            // NO TREE AT ALL: an MLS-era space, not migrated — not followed (no MLS catch-up: K8.6); the page hides it.
+            followed(h, &member, &r.space, craftworks_rules::steps::NOT_MIGRATED, &format!("{}: no BeeKEM tree (not migrated): not followed", m.name));
+            next_space(h, &c, r)
         }
         (Step::Keys { table, rows, mut waiting, blocks }, Reply::Put { id, ok } | Reply::Updated { id, ok }) if waiting.contains(&id) => {
             waiting.retain(|w| *w != id);

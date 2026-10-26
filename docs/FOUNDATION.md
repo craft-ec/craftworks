@@ -362,7 +362,11 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    taken out of this person's list as a removal is (`roles.unlisted`, `upkeep`), and so is a space with no BeeKEM tree
    at all (`members.hasTree`: its key operations, read to a decision, hold none — an MLS-era space whose sealed acts a
    member without MLS keys cannot even read whole; live, Wren in Ivvor's Space); a public space whose key operations
-   hold no tree is not listed in Discover and does not open from outside (`items.opens`). A newcomer is named by its own
+   hold no tree is not listed in Discover and does not open from outside (`items.opens`). THE NODE FOLLOWS NO MLS
+   (K8.6's first step, 10-26): its upkeep keeps a space to its list by the BeeKEM tree alone — no MLS catch-up or
+   follow-out; a space with no tree is said `not-migrated` and not followed. The catch-up read the NEXT MLS epoch's log
+   every round, a contract nobody made unless someone committed: on the owner's node a 60–75 s not-found that parked
+   the delegate and failed the page's requests behind it. A newcomer is named by its own
    join or its invite, so never hidden. From OUTSIDE, a public space is read from what its index LISTS: its public acts
    (and departed record, and key operations — its creator, who writes the tree's root, writes its acts) from the
    writers its acts bag names (`acts <space>`; its writers bag is a member's to read) — never from every device of

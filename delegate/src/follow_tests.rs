@@ -275,166 +275,12 @@ impl World {
     }
 }
 
-/// FLOW 6 — a member removed by the acts: their entry out, ONE commit; the new epoch's group info put in its door and
-/// announced (what a listed device with no key enters from). The next round: nothing.
-#[test]
-fn a_removed_member_is_taken_out_and_the_new_info_published() {
-    let x = person(0x33);
-    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x]);
-    x.publish(&mut w.net, &[]);
-    let e = w.mandate().epoch;
-    assert!(w.leaves().contains(&x.id()));
-    w.run();
-    assert_eq!(w.mandate().epoch, e + 1, "one commit: {:?}", w.said());
-    assert!(!w.leaves().contains(&x.id()), "out");
-    let parts: Vec<serde_json::Value> = w.open_items(&format!("door-{}", e + 1)).into_iter().filter(|v| v["k"] == "info").collect();
-    assert!(!parts.is_empty(), "the new epoch's info in its door");
-    let ih = parts[0]["d"].as_str().unwrap().to_string();
-    let info: String = { let mut p = parts.clone(); p.sort_by_key(|v| v["i"].as_u64()); p.iter().map(|v| v["x"].as_str().unwrap().to_string()).collect() };
-    assert_eq!(craftworks_mls::info_facts(&unhex(&info)).unwrap().epoch, e + 1, "whole, at the new epoch");
-    assert!(w.open_items("writers").iter().any(|v| v["epoch"].as_u64() == Some(e + 1) && v["ih"] == ih.as_str()), "announced with its hash");
-    let again = w.run();
-    assert_eq!(World::writes(&again), 0, "nothing more: {:?}", w.said());
-}
 
-/// FLOW 9 — IVVOR'S SPACE: A, B, C listed. The group holds A, C and a stray D (not listed); B never held keys. ONE
-/// commit takes D out; nobody is added (B enters by itself — the node never adds anyone).
-#[test]
-fn ivvors_space_the_stray_out_in_one_commit_nobody_added() {
-    let (a, b, c, d) = (person(0x41), person(0x42), person(0x43), person(0x44));
-    let acts: Vec<serde_json::Value> = [&a, &b, &c].iter().map(|p| json!({ "act": "member", "did": p.id(), "at": 10 })).collect();
-    let mut w = world(&acts, &[&a, &c, &d]);
-    for p in [&a, &b, &c, &d] {
-        p.publish(&mut w.net, &[]);
-    }
-    let e = w.mandate().epoch;
-    // (Whoever's turn: this node acts now, or once a takeover's time passed with nobody else acting.)
-    w.run();
-    if w.mandate().epoch == e {
-        w.run_at(NOW + 3 * craftworks_rules::guards::TAKEOVER_MS);
-    }
-    assert_eq!(w.mandate().epoch, e + 1, "ONE commit: {:?}", w.said());
-    let mut leaves = w.leaves();
-    leaves.sort();
-    let mut want = vec![w.owner.id(), a.id(), c.id()];
-    want.sort();
-    assert_eq!(leaves, want, "D out; B not added");
-}
 
-/// A SHORT READ decides nothing: a removal in the acts, but one member's key log does not answer — the list may be
-/// short, so nothing is judged and nobody taken out.
-#[test]
-fn a_short_read_decides_nothing() {
-    let (x, y) = (person(0x33), person(0x34));
-    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x, &y]);
-    x.publish(&mut w.net, &[]); // (Y's key log never answers.)
-    let asked = w.run();
-    assert_eq!(World::writes(&asked), 0, "nothing moves: {:?}", w.said());
-    assert!(w.leaves().contains(&x.id()));
-    assert!(w.said().iter().any(|s| s.starts_with("list-short")), "said why: {:?}", w.said());
-}
 
-/// CATCH-UP by the one rule: a LISTED device's entry in the door is taken; an OUTSIDER's at the same position is skipped
-/// by the list check — whichever is lower. Control: with the outsider listed, its entry is taken when it is lowest.
-#[test]
-fn the_door_a_listed_entry_taken_an_outsiders_skipped() {
-    let (b, z) = (person(0x52), person(0x5f));
-    let acts = [json!({ "act": "member", "did": b.id(), "at": 10 })];
-    let mut w = world(&acts, &[]);
-    for p in [&b, &z] {
-        p.publish(&mut w.net, &[]);
-    }
-    let e = w.mandate().epoch;
-    let info = w.group().group_info().unwrap();
-    let (bg, b_in) = b.enter(&info, b"");
-    let (_, z_in) = z.enter(&info, b"");
-    w.door_entry(e, &b_in);
-    w.door_entry(e, &z_in);
-    w.run();
-    assert_eq!(w.mandate().epoch, e + 1, "{:?}", w.said());
-    assert!(w.leaves().contains(&b.id()) && !w.leaves().contains(&z.id()), "B in, Z skipped: {:?}", w.said());
-    assert_eq!(w.group().epoch_secret().unwrap(), bg.epoch_secret().unwrap(), "the node follows B's entry");
-    // Control: Z listed too — the LOWER of the two entries is taken (the one order every reader keeps).
-    let acts2 = [json!({ "act": "member", "did": b.id(), "at": 10 }), json!({ "act": "member", "did": z.id(), "at": 10 })];
-    let mut w2 = world(&acts2, &[]);
-    for p in [&b, &z] {
-        p.publish(&mut w2.net, &[]);
-    }
-    let info = w2.group().group_info().unwrap();
-    let (_, b_in) = b.enter(&info, b"");
-    let (_, z_in) = z.enter(&info, b"");
-    w2.door_entry(0, &b_in);
-    w2.door_entry(0, &z_in);
-    w2.run();
-    let entry = |c: &[u8]| json!({ "commit": hex(c), "why": "commit enter" }).to_string();
-    let lowest = if entry(&b_in) < entry(&z_in) { b.id() } else { z.id() };
-    assert!(w2.leaves().contains(&lowest), "the lower entry taken: {:?}", w2.said());
-}
 
-/// SELF-ENTRY BY A CODE (FOUNDATION "Members and keys" 2): a person not listed enters with the code's proof bound to
-/// their DID — taken; the same with a wrong proof — skipped.
-#[test]
-fn a_self_entry_with_a_code_proof_is_taken_a_wrong_one_skipped() {
-    let z = person(0x5e);
-    let acts = [json!({ "act": "invite", "code": CODE, "uses": 1, "at": 100 })];
-    for (proof, taken) in [(craftworks_gov::join_proof(CODE, &z.id()), true), (craftworks_gov::join_proof("wrong-code", &z.id()), false)] {
-        let mut w = world(&acts, &[]);
-        z.publish(&mut w.net, &[]);
-        let aad = json!({ "why": "code", "join": "code", "p": proof }).to_string();
-        let (_, z_in) = z.enter(&w.group().group_info().unwrap(), aad.as_bytes());
-        w.door_entry(0, &z_in);
-        w.run();
-        assert_eq!(w.leaves().contains(&z.id()), taken, "{:?}", w.said());
-    }
-}
 
-/// ONE FOLLOWER AT A TIME: two listed members hold keys and a stray must go — the one ranked second waits (and says
-/// when its turn comes); once the first stays away a takeover's time, it acts.
-#[test]
-fn one_follower_at_a_time_the_second_waits_then_takes_over() {
-    // A listed member Q ranked FIRST for this epoch, the owner's node second.
-    let stray = person(0x70);
-    let q = (0x71u8..0xff).map(person).find(|q| {
-        let ids = vec![person(0x61).id(), q.id()];
-        let w = world(&[json!({ "act": "member", "did": q.id(), "at": 10 })], &[q, &stray]);
-        craftworks_rules::admission::turn(&format!("follow|{}", w.mandate().epoch), &ids, &ids[0]) == 1
-    });
-    let q = q.expect("a member ranked first");
-    let mut w = world(&[json!({ "act": "member", "did": q.id(), "at": 10 })], &[&q, &stray]);
-    for p in [&q, &stray] {
-        p.publish(&mut w.net, &[]);
-    }
-    let e = w.mandate().epoch;
-    w.run();
-    assert_eq!(w.mandate().epoch, e, "not its turn: no commit: {:?}", w.said());
-    let Some(next) = (match identity::upkeep_status(&w.h, Some(&w.member)) { identity::Answer::Upkeep { next, .. } => next, _ => None }) else { panic!("it says when: {:?}", w.said()) };
-    assert!(next > NOW, "its turn later");
-    // Q stays away: after a takeover's time this node acts — one commit.
-    w.run_at(next + 1);
-    assert_eq!(w.mandate().epoch, e + 1, "taken over: {:?}", w.said());
-}
 
-/// AN ENTRY BY A PROOF is kept only while the acts have not put its account out: Z entered by the open door (no `join`
-/// act yet) — kept; Z BANNED — taken out, its proof whatever it says. (Review 10-17: a lapsed or removed proof-entrant
-/// kept the keys for ever.)
-#[test]
-fn a_proof_entry_is_kept_until_the_acts_put_it_out() {
-    let z = person(0x5d);
-    let open = json!({ "act": "policy", "path": "", "action": "join", "who": "anyone", "at": 5 });
-    let aad = json!({ "why": "open", "join": "open" }).to_string();
-    let mut w = world_with(&[open.clone()], &[(&z, aad.as_bytes())]);
-    z.publish(&mut w.net, &[]);
-    let e = w.mandate().epoch;
-    w.run();
-    assert_eq!((w.mandate().epoch, w.leaves().contains(&z.id())), (e, true), "control — its proof admits it: kept: {:?}", w.said());
-    let mut w = world_with(&[open, json!({ "act": "ban", "did": z.id(), "at": 9 })], &[(&z, aad.as_bytes())]);
-    z.publish(&mut w.net, &[]);
-    w.run();
-    if w.leaves().contains(&z.id()) {
-        w.run_at(NOW + 3 * craftworks_rules::guards::TAKEOVER_MS);
-    }
-    assert!(!w.leaves().contains(&z.id()), "banned: out, whatever its leaf says: {:?}", w.said());
-}
 
 // ---- K5: a BeeKEM space kept to its list by the node (docs/proposals/members-and-keys-beekem.md, K5) ----
 
@@ -726,45 +572,7 @@ fn k5_a_beekem_space_whose_operations_read_empty_is_not_caught_up_as_mls() {
     assert!(!said.iter().any(|s| s.contains("BeeKEM generation")), "said: {said:?}");
 }
 
-/// 10-25: A LISTED MEMBER's CARD THAT DOES NOT READ: their devices contract is NOT asked "in case" (owner: a read goes
-/// only where something lists it — the card's `devices` mark is that listing; an unlisted GET of a contract nobody
-/// made is a 60 s not-found that parks the delegate, the page's requests queued behind it). The read is short and
-/// says why. Before (10-19): the contract was asked whenever the card did not read.
-#[test]
-fn an_unread_card_asks_no_devices_contract() {
-    let (x, y) = (person(0x35), person(0x36));
-    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x, &y]);
-    x.publish(&mut w.net, &[]);
-    // Y: the key log and a devices contract naming Y's device — NO card.
-    w.net.st.insert(id(IDLOG, &y.did), y.log.encode());
-    let owner = craftworks_account::owner_seed(&y.entropy).unwrap();
-    let cred = identity::credential(&y.did, &[0x77; 32], &[2u8; 32], &owner);
-    let dev = craftworks_devices_contract::params(&y.did, &contract_keys::code_hash(IDLOG));
-    let dev_id = id(DEVICES, &dev);
-    w.net.st.insert(dev_id, craftworks_devices_contract::encode(&[cred]));
-    let asked = w.run();
-    assert!(!asked.iter().any(|x| matches!(x, Io::Get { id: g, .. } if *g == dev_id)), "the devices contract not asked: {:?}", w.said());
-    assert!(w.said().iter().any(|s| s.contains("card not read")), "said why: {:?}", w.said());
-}
 
-/// 10-19: ON A SHORT READ an entry the list check TAKES is applied all the same (its answer never changes as more is
-/// read — `guards::entry_outcome`, the page's too); nobody is taken out. Y, a member, never answers (the read short).
-/// Before: the node decided nothing on a short read, B's entry left waiting.
-#[test]
-fn a_short_read_still_applies_a_listed_entry() {
-    let (b, y) = (person(0x57), person(0x58));
-    let acts = [json!({ "act": "member", "did": b.id(), "at": 10 })];
-    let mut w = world(&acts, &[&y]);
-    b.publish(&mut w.net, &[]); // (Y's key log never answers: the read is short.)
-    let e = w.mandate().epoch;
-    let info = w.group().group_info().unwrap();
-    let (bg, b_in) = b.enter(&info, b"");
-    w.door_entry(e, &b_in);
-    w.run();
-    assert!(w.said().iter().any(|s| s.starts_with("list-short")), "short: {:?}", w.said());
-    assert_eq!(w.mandate().epoch, e + 1, "B's entry applied: {:?}", w.said());
-    assert_eq!(w.group().epoch_secret().unwrap(), bg.epoch_secret().unwrap(), "the node follows B's entry");
-}
 
 /// Every round of the node's (upkeep's, the re-key's, the reads') is STUCK by one rule (`upkeep::stuck`): not moved for
 /// `STUCK` wake-ups, or for `STUCK_MS` of the node's time even when no wake-up came.
@@ -924,4 +732,19 @@ fn rounds_model_strays_move_nothing_and_a_stalled_round_is_dropped() {
     }
     assert!(checked.0 >= 100 && checked.1 >= 3, "the model ran its cells: {checked:?} (strays, stalls)");
     println!("rounds model: {} strays, {} stalls checked", checked.0, checked.1);
+}
+
+/// K8.6 (owner 10-24: MLS-era support dropped): a space with NO BeeKEM tree is not followed — nothing asked of its MLS
+/// epoch logs or doors (the catch-up read the NEXT epoch's log every round: a contract nobody made unless someone
+/// committed, a 60–75 s not-found parking the delegate — 10-26, the owner's node), and said `not-migrated`.
+#[test]
+fn an_mls_era_space_is_not_followed() {
+    let (x, y) = (person(0x35), person(0x36));
+    let mut w = world(&[json!({ "act": "added", "did": x.id(), "at": 10 }), json!({ "act": "remove", "did": x.id(), "at": 20 })], &[&x, &y]);
+    x.publish(&mut w.net, &[]);
+    let e = w.mandate().epoch;
+    let asked = w.run();
+    assert_eq!(World::writes(&asked), 0, "nothing written: {:?}", w.said());
+    assert_eq!(w.mandate().epoch, e, "its MLS group not moved");
+    assert!(w.said().iter().any(|s| s.starts_with("not-migrated")), "said: {:?}", w.said());
 }

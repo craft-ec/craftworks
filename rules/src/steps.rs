@@ -27,6 +27,8 @@ pub const KEYS_NO_MEMBER: &str = "keys-no-member";
 pub const KEYS_WAIT: &str = "keys-wait";
 pub const KEYS_WRITE: &str = "keys-write";
 pub const KEYS_OPS_UNREAD: &str = "keys-ops-unread";
+/// A space with no BeeKEM tree (MLS-era, not migrated): not followed — no MLS catch-up (owner 10-24: dropped).
+pub const NOT_MIGRATED: &str = "not-migrated";
 pub const NODE_STEP: &str = "node-step";
 pub const NODE_DROPPED: &str = "node-dropped";
 // The node's OTHER rounds — a space's files re-keyed, an account's keeper and witness work: the same one record
@@ -103,6 +105,7 @@ pub const ALL: &[(&str, bool)] = &[
     (KEYS_WAIT, false),
     (KEYS_WRITE, false),
     (KEYS_OPS_UNREAD, false),
+    (NOT_MIGRATED, false),
     (NODE_STEP, false),
     (NODE_DROPPED, false),
     (REKEY_IDLE, true),
