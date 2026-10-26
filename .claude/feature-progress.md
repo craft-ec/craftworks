@@ -3104,7 +3104,15 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
     - [x] 4a. delegate keys: `mls::signer_seed_of` (the device's member seed from the saved MLS state, test),
           `identity::upkeep_account_mls`, `identity::upkeep_sign_channel` (data key, fork guard; test: signed, same
           step again ok, different step refused, other authority refused)
-    - [ ] 4b. `delegate::account_round`: channel + devices read, merge, reconcile, escrows, keep, write — delegate tests
+    - [x] 4b. `delegate::account_round` (reads::Round pattern): key log + devices + channel (and its blocks) read,
+          tree rebuilt through AccountCheck as this device (MLS signer seed), generations kept (`keep_epoch` None —
+          again after its own key change), placed: reconcile (every leaf a card), lowest placed resolves heads
+          (`rotate_seeded`), own `d/` leaf, `g/` + `m/` escrows; one channel step signed with the data key
+          (`write::signed_with` + `upkeep_sign_channel`); a channel due a flush left to a page. Shared: `groups::op_info`
+          (page glue uses it), `identity::upkeep_account`, `identity::account_epoch_secret`. Tests (`account_tests`):
+          the node adds a current device (B placed from the channel alone, every generation `g/`+`m/`, kept, escrow
+          opens with the words, again: nothing written) + control (B not current: not added); mutation (reconcile off)
+          fails it. Delegate 33/33.
     - [ ] 4c. wired into the wake-up; fx/fy: a device back with every page closed is placed by the node
   - [ ] 5. K8.6 — MLS removed
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.

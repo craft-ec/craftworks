@@ -166,6 +166,20 @@ impl Check for AccountCheck {
     }
 }
 
+/// AN OPERATION described: its hash, its kind (`add`, `remove`, `update`), the hashes it builds on, and its AUTHOR (the
+/// member that signed it) — the account tree's root maker is read from it (K8.5). `None`: bytes that are not one.
+pub fn op_info(op: &[u8]) -> Option<([u8; 32], &'static str, Vec<[u8; 32]>, [u8; 32])> {
+    let op = bincode::deserialize::<Signed<CgkaOperation>>(op).ok()?;
+    let h = keyhive_crypto::digest::Digest::hash(&op);
+    let kind = match &op.payload {
+        CgkaOperation::Add { .. } => "add",
+        CgkaOperation::Remove { .. } => "remove",
+        CgkaOperation::Update { .. } => "update",
+    };
+    let preds = op.payload.predecessors().iter().filter_map(|d| <[u8; 32]>::try_from(d.as_slice()).ok()).collect();
+    Some((<[u8; 32]>::try_from(h.as_slice()).ok()?, kind, preds, op.issuer.to_bytes()))
+}
+
 /// What merging every operation did (`merge_all`).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct MergedAll {
@@ -562,17 +576,12 @@ mod page {
     /// `[hash hex, kind, [predecessor hex…]]`, or null for bytes that are not one.
     #[wasm_bindgen]
     pub fn beekem_op_info(op: &[u8]) -> JsValue {
-        let Ok(op) = bincode::deserialize::<Signed<CgkaOperation>>(op) else { return JsValue::NULL };
-        let h = keyhive_crypto::digest::Digest::hash(&op);
-        let kind = match &op.payload {
-            CgkaOperation::Add { .. } => "add",
-            CgkaOperation::Remove { .. } => "remove",
-            CgkaOperation::Update { .. } => "update",
-        };
-        let preds: js_sys::Array = op.payload.predecessors().iter().map(|d| JsValue::from(hex(d.as_slice()))).collect();
+        let Some((h, kind, preds, issuer)) = op_info(op) else { return JsValue::NULL };
+        let preds: js_sys::Array = preds.iter().map(|d| JsValue::from(hex(d))).collect();
         // (Its AUTHOR — the member that signed it: the account tree's root maker is read from it, K8.5.)
-        [JsValue::from(hex(h.as_slice())), JsValue::from(kind), preds.into(), JsValue::from(hex(&op.issuer.to_bytes()))].into_iter().collect::<js_sys::Array>().into()
+        [JsValue::from(hex(&h)), JsValue::from(kind), preds.into(), JsValue::from(hex(&issuer))].into_iter().collect::<js_sys::Array>().into()
     }
+
 
     /// A DEVICE's LEAF, SIGNED by its member (K8.5, `Account::signed_leaf`): `[leaf, signature]`.
     #[wasm_bindgen]

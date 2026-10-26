@@ -12,6 +12,7 @@ pub mod reads;
 pub mod witness_round;
 pub mod witness_statement;
 pub mod keeper_round;
+pub mod account_round;
 #[cfg(test)]
 mod table_tests;
 #[cfg(test)]
@@ -24,6 +25,8 @@ mod witness_tests;
 mod statement_tests;
 #[cfg(test)]
 mod keeper_tests;
+#[cfg(test)]
+mod account_tests;
 
 // A delegate has no randomness of its own: upkeep's pool (stirred by the page, ratcheted per draw: `identity::
 // upkeep_random`) ARMS a stream here before MLS draws; nothing is drawn unarmed.

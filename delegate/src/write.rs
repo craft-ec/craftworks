@@ -59,14 +59,19 @@ fn feed_open(c: &Codes, r: &Reading, owner: &[u8; 32], name: &str, label: &str, 
 /// A prepared step signed by the identity and committed: what to send. A step the identity refuses as a FORK (it signed
 /// this tail further — a step of upkeep's or a page's that never landed): the network ANSWERED with what it holds (the
 /// state read), so this step goes PAST those, as a whole state (as a page does: `tail_skip`).
-fn signed<H: Host>(h: &mut H, member: &[u8; 32], o: &mut data::Open, (seq, hash): (u64, [u8; 32])) -> Result<Io, String> {
-    let sig = match identity::upkeep_sign_space(h, member, &o.params, seq, &hash) {
+fn signed<H: Host>(h: &mut H, member: &[u8; 32], o: &mut data::Open, step: (u64, [u8; 32])) -> Result<Io, String> {
+    signed_with(h, member, o, step, identity::upkeep_sign_space)
+}
+/// The one step signed by `sign` (a space feed's member key, or the account's channel's data key — K8.5).
+pub(crate) type Signer<H> = fn(&mut H, &[u8; 32], &[u8], u64, &[u8; 32]) -> Result<[u8; 64], String>;
+pub(crate) fn signed_with<H: Host>(h: &mut H, member: &[u8; 32], o: &mut data::Open, (seq, hash): (u64, [u8; 32]), sign: Signer<H>) -> Result<Io, String> {
+    let sig = match sign(h, member, &o.params, seq, &hash) {
         Ok(sig) => sig,
         Err(why) => {
             let last: Option<u64> = why.strip_prefix("WouldFork { last_seq: ").and_then(|r| r.trim_end_matches(" }").parse().ok());
             let (Some(last), true) = (last, o.on_network) else { return Err(why) };
             let (seq, hash) = o.skip_to(last).ok_or("the step could not go past the identity's")?;
-            identity::upkeep_sign_space(h, member, &o.params, seq, &hash)?
+            sign(h, member, &o.params, seq, &hash)?
         }
     };
     Ok(match o.commit(sig).ok_or("the tail would not take its own step")? {

@@ -671,6 +671,11 @@ pub fn upkeep_set_tick<H: Host>(h: &mut H, m: &[u8; KEY_LEN]) -> bool {
 }
 
 /// A space's EPOCH SECRET this member holds, and keeping one (upkeep moves a group while no page runs).
+/// The ACCOUNT's epoch `epoch` as kept for the member (no space: its own group's — an MLS epoch or, K8.5, a generation
+/// of its tree).
+pub fn account_epoch_secret<H: Host>(h: &H, m: &[u8; KEY_LEN], epoch: u64) -> Option<[u8; 32]> {
+    secret_in(h, m, &None, epoch)
+}
 pub fn epoch_secret<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], epoch: u64) -> Option<[u8; 32]> {
     secret_in(h, m, &Some(space), epoch)
 }
@@ -1820,6 +1825,13 @@ pub fn upkeep_sign_space<H: Host>(h: &mut H, member: &[u8; KEY_LEN], params: &[u
     }
     guarded(h, &p.hash, seq, value_hash).map_err(|w| format!("{w:?}"))?;
     Ok(key.sign(&p.signed_message(false, seq, value_hash)).to_bytes())
+}
+
+/// UPKEEP's ACCOUNT (K8.5): the member's DID and its account's DATA seed — what the account's channel is opened and
+/// signed with. `None`: no such member, or the data key not held here.
+pub fn upkeep_account<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<([u8; 32], [u8; 32])> {
+    let m = member_(h, member)?;
+    Some((m.did, m.data?))
 }
 
 /// UPKEEP's ACCOUNT MLS STATE (K8.5): the account's group as kept here for the member — its signer is this device's
