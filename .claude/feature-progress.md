@@ -3063,7 +3063,10 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   NEXT: one full hour of the owner node log on v446 with no probe loads: parks, skips, failed requests.
   d135a31 (tree read logged once per race) rides in v446 too.
 - [ ] K8.5 The ACCOUNT group off MLS — DESIGN written 10-26 (FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"). Phases:
-  - [ ] 1. account `Check` (devices list) + `account-keyops` ops + generation escrow, in groups/account, tested alone
+  - [x] 1. `groups::AccountCheck` (members = devices; listed = current; add only current, remove only not current;
+        root = lowest current device that wrote) + `the_accounts_tree_follows_its_devices_list` (controls for each;
+        mutation `allows` → true fails it). Escrow needs nothing new: `account::escrow_seal` seals to the key log's
+        encryption key (any device), `escrow_open` with the words. The `account-keyops` row (op + escrow) is phase 2's.
   - [ ] 2. page makes/joins the account tree beside MLS; new writes sealed with the generation; resealOwn
   - [ ] 3. words login: escrows opened (every generation), placed by reconcile or self-entry
   - [ ] 4. device removal + writable gate by the tree; node upkeep reconciles the account tree

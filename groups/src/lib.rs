@@ -118,6 +118,35 @@ impl Check for ListCheck {
     }
 }
 
+/// THE ACCOUNT's CHECK (K8.5, FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"): the account's own tree, whose members are
+/// its DEVICES (each device's member id), and WHO IS IN IS THE DEVICES LIST — `current`: the devices its devices
+/// contract credentials under its key log's current key (`account::devices`). A device is "listed" while current; an add
+/// is allowed of a current device only, a removal of one no longer current only (no act: the devices list is the word).
+/// The ROOT is the lowest current device that has written the account's key operations (`writers`: whose
+/// `account-keyops` feed the account's directory lists) — never a second tree from two makers.
+#[derive(Debug, Default)]
+pub struct AccountCheck {
+    pub current: Vec<[u8; 32]>,
+    pub writers: Vec<[u8; 32]>,
+}
+fn hex32(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+impl Check for AccountCheck {
+    fn account_of(&self, member: &[u8; 32]) -> Option<String> {
+        Some(hex32(member))
+    }
+    fn listed(&self, device: &str) -> bool {
+        self.current.iter().any(|c| hex32(c) == device)
+    }
+    fn allows(&self, _act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
+        self.current.contains(target) == add
+    }
+    fn creator(&self) -> Option<String> {
+        self.current.iter().filter(|c| self.writers.contains(c)).min().map(hex32)
+    }
+}
+
 /// What merging every operation did (`merge_all`).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct MergedAll {

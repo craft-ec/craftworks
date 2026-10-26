@@ -394,3 +394,50 @@ fn a_held_operation_no_feed_holds_is_handed_back_and_places_the_member() {
     off.accounts.insert(id(&a), "did:a".into());
     assert!(ga.unpublished(&[], &off).is_empty());
 }
+
+
+/// K8.5 THE ACCOUNT's CHECK: the account's tree's members are its devices, the devices list its word. A current device
+/// is added and reads; a device not current is refused; one no longer current is taken out and does not read what is
+/// sealed after; the root is the lowest current device that wrote. Each with its control.
+#[test]
+fn the_accounts_tree_follows_its_devices_list() {
+    let mut rng = StdRng::seed_from_u64(9);
+    let (d1, d2, d3) = (account(0x31), account(0x32), account(0x33));
+    let mut chk = AccountCheck { current: vec![id(&d1), id(&d2)], writers: vec![id(&d1)] };
+    // The ROOT: d1, current and a writer.
+    let (mut g1, root) = Group::create(&SPACE, d1.clone()).unwrap();
+    let mut g2 = Group::empty(&SPACE, d2.clone());
+    assert_eq!(g2.merge(&root, &chk), Merged::Applied, "d1's root taken");
+    // CONTROL: the same root, d1 not a writer and d2 the only one — refused (one maker).
+    let other = AccountCheck { current: vec![id(&d1), id(&d2)], writers: vec![id(&d2)] };
+    assert!(matches!(Group::empty(&SPACE, d3.clone()).merge(&root, &other), Merged::Refused(_)), "not the creator's root");
+    // A CURRENT device added: placed, reads what d1 seals.
+    let add = g1.add_member(&id(&d2), &d2.leaf_key(), &[0; 32]).unwrap().expect("an add");
+    assert_eq!(g2.merge(&add, &chk), Merged::Applied);
+    assert!(g2.placed(), "d2 placed");
+    let (sealed, op) = g1.seal([1; 32], b"the account's row", &mut rng).unwrap();
+    if let Some(op) = op {
+        g2.merge(&op, &chk);
+    }
+    assert_eq!(g2.open(&sealed).unwrap(), b"the account's row");
+    // A device NOT current: its add refused.
+    // (Made on a copy of d1's tree: d1 itself goes on without it.)
+    let add3 = Group::load(&g1.save().unwrap(), d1.clone()).unwrap().add_member(&id(&d3), &d3.leaf_key(), &[0; 32]).unwrap().expect("an add");
+    assert!(matches!(g2.merge(&add3, &chk), Merged::Refused(_)), "d3 is not a current device");
+    // CONTROL: d3 current — the same add taken.
+    let with3 = AccountCheck { current: vec![id(&d1), id(&d2), id(&d3)], writers: vec![id(&d1)] };
+    assert_eq!(Group::load(&g2.save().unwrap(), d2.clone()).unwrap().merge(&add3, &with3), Merged::Applied);
+    // d2 REMOVED (the key log rotated, d2 not credentialed again): taken out; reads nothing sealed after.
+    chk.current = vec![id(&d1)];
+    let out = g1.remove_member(&id(&d2), &[0; 32]).unwrap().expect("a removal");
+    // CONTROL: d2 still current — the removal refused.
+    let still = AccountCheck { current: vec![id(&d1), id(&d2)], writers: vec![id(&d1)] };
+    assert!(matches!(Group::load(&g2.save().unwrap(), d2.clone()).unwrap().merge(&out, &still), Merged::Refused(_)), "a current device is not taken out");
+    assert_eq!(g2.merge(&out, &chk), Merged::Applied);
+    let (after, op) = g1.seal([2; 32], b"after the removal", &mut rng).unwrap();
+    if let Some(op) = op {
+        let _ = g2.merge(&op, &chk);
+    }
+    assert!(g2.open(&after).is_err(), "the removed device reads nothing sealed after");
+}
+
