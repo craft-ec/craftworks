@@ -3072,7 +3072,15 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
         A device's member = its credential's group key (MLS signer seed: `an_mls_signer_seed_gives_its_credential_key`)
         — existing credentials already bind member ⇄ device. Added: `Account::signed_leaf` / `leaf_checks` (+test,
         controls), `account::device_members` (+test: removed device's key not current), `BeeList::account` (page glue).
-  - [ ] 2. page makes/joins the account tree beside MLS; new writes sealed with the generation; resealOwn
+  - [x] 2. (NOT RELEASED — ships with 3–4) `members.group(sp, sub)`: the account is a second SUBJECT of the one tree
+        routine (`members.account()`): device seed from the MLS signer (`keys.deviceSeed`), ops/leaves/escrows in the
+        channel, `BeeList.account`, escrow per generation (`core.account_escrow`), resealOwn once. Words login opens
+        every `g/` escrow first. Lowest placed device alone resolves concurrent heads. Fixed on the way (pre-existing):
+        account tables now re-check writers when the account group changes; `membership.writers()` recomputed when the
+        directory's devices change (was cached for good); directory watchers survive a reopened directory.
+        fx: `pw/k85-phase2.mjs` PASS (fresh account: tree, generation sealing, reload); `pw/k85-two.mjs` PASS (fx makes,
+        fy by the words, fx adds fy, both read each other, no key changes over a minute — before the resolve rule: >15
+        generations in 90 s). Control `NO_TREE=1` on v446 PASS. fx reads fy's row ~100 s after (membership timing).
   - [ ] 3. words login: escrows opened (every generation), placed by reconcile or self-entry
   - [ ] 4. device removal + writable gate by the tree; node upkeep reconciles the account tree
   - [ ] 5. K8.6 — MLS removed

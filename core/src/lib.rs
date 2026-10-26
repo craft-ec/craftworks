@@ -1583,6 +1583,32 @@ mod js {
 
         /// EVERY DEVICE the account has had (`craftworks_account::devices_ever`), its devices contract read (`got`):
         /// node keys, hex. Empty where the contract was not read.
+        /// THE ACCOUNT TREE's MEMBERS (`craftworks_account::device_members`, K8.5): the group key each current
+        /// credential of the account's devices names — its key log and devices contract as held. → `[member hex…]`.
+        pub fn account_device_members(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let did = b32(did)?;
+            let lid = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let Some(lst) = self.0.got(&lid) else { return Ok(js_sys::Array::new()) };
+            let log = craftworks_idlog_contract::read(&did, lst).ok_or_else(|| err("the account's key log does not read".into()))?;
+            let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
+            let Some(st) = self.0.got(&dev) else { return Ok(js_sys::Array::new()) };
+            let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
+            Ok(account::device_members(&did, &log, &creds).iter().map(|n| JsValue::from(hex(n))).collect())
+        }
+        /// A GENERATION's ESCROW (K8.5): its secret sealed to the account's encryption key (its key log's head) — any
+        /// device seals it, only the words open it (`escrow_open`). `eph`: 32 fresh random bytes, the page's.
+        pub fn account_escrow(&self, idlog_code: &[u8], did: &[u8], secret: &[u8], eph: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let did = b32(did)?;
+            let lid = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let lst = self.0.got(&lid).ok_or_else(|| err("the account's key log is not held".into()))?;
+            let log = craftworks_idlog_contract::read(&did, lst).ok_or_else(|| err("the account's key log does not read".into()))?;
+            Ok(js_sys::Uint8Array::from(&account::escrow_seal(&log.head().enc, &b32(secret)?, b32(eph)?)[..]))
+        }
+        /// A GENERATION's secret out of its escrow, with the words (a words login: every generation at once).
+        pub fn account_escrow_open(entropy: &[u8], blob: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let s = account::escrow_open(entropy, blob).ok_or_else(|| err("that escrow does not open with these words".into()))?;
+            Ok(js_sys::Uint8Array::from(&s[..]))
+        }
         pub fn account_devices_ever(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<js_sys::Array, JsValue> {
             let did = b32(did)?;
             let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;

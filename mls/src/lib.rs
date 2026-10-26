@@ -1006,6 +1006,13 @@ mod js {
             Ok(js_sys::Uint8Array::from(&craftworks_account::escrow_seal(&enc, &secret, eph)[..]))
         }
 
+        /// THIS DEVICE's ACCOUNT-TREE MEMBER SEED (K8.5): its MLS signer's Ed25519 seed — the key its credential names
+        /// (`an_mls_signer_seed_gives_its_credential_key`), so the account's devices list already binds it.
+        pub fn device_seed(&self) -> Result<js_sys::Uint8Array, JsValue> {
+            let a = self.0.as_ref().ok_or_else(|| err("no account group loaded"))?;
+            Ok(js_sys::Uint8Array::from(&a.signer.0[..32]))
+        }
+
         /// From now on, escrows are sealed for these words (after they replaced the old ones).
         pub fn escrow_to(&mut self, entropy: &[u8]) -> Result<(), JsValue> {
             self.1 = craftworks_account::enc_public_at(entropy, 0).ok_or_else(|| err("recovery entropy: 16 or 32 bytes"))?;

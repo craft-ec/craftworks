@@ -350,6 +350,27 @@ export async function start(ctx) {
         { policy: { "not-yet": { tries: 7, report: "never" } } },
       ));
     const kept = new Set();
+    // THE ACCOUNT TREE's GENERATIONS FROM THE WORDS (K8.5): every escrow in the channel (`g/<n>`, sealed to the
+    // account's encryption key) opened with the words and kept as the account's epochs — BEFORE the walk, so every table
+    // a device sealed with a generation reads here at once (fx 10-26: a second device joined by MLS held only epoch 0, and
+    // the account's directory, resealed with the tree's generation, did not read: "tables: not saved").
+    if (!fresh) {
+      let n = 0;
+      for (const r of channel.rows()) {
+        const num = Number(r.key.startsWith("g/") ? r.key.slice(2) : NaN);
+        if (!Number.isInteger(num) || !r.value) continue;
+        let s = null;
+        try {
+          s = glue.CraftworksCore.account_escrow_open(entropy, bytes(r.value));
+        } catch (e) {
+          ctx.log("account keys", { what: `the escrow of generation ${num} does not open with these words: ${String(e?.message ?? e).slice(0, 80)}` });
+          continue;
+        }
+        await auth.identity.epochKeep(num, s);
+        n += 1;
+      }
+      if (n) (ctx.log("account keys", { what: `${n} generation(s) of the account's tree recovered from their escrows` }), dispatchEvent(new CustomEvent("craftworks:keys")));
+    }
     // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
     // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
     // recovered the account but not its storage, and nothing said how far the walk had come).
@@ -1229,5 +1250,11 @@ export async function start(ctx) {
     else start();
   });
 
-  return { repairAccount, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
+  // THIS DEVICE's ACCOUNT-TREE MEMBER SEED (K8.5): its MLS signer's seed — the key its credential names, so the
+  // account's devices list already binds it (`members.account`).
+  const deviceSeed = async () => {
+    if (!(await ready())) throw new Error("the account's group is not held here");
+    return mls.device_seed();
+  };
+  return { repairAccount, deviceSeed, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
 }

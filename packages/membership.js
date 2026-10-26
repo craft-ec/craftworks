@@ -23,8 +23,13 @@ export async function start(ctx) {
   const bytes = (await ctx.require("node")).bytes;
 
   // WHO BELONGS: gathered from the members feeds, then the rule of the space's governance.
+  // (Kept for the directory's devices as they were when gathered: a device listed since is gathered — fx 10-26, a
+  // second device's rows never read on the first: its answer, gathered before the second was listed, was kept for good.)
   let cache = null;
-  function writers() {
+  let cachedFor = "";
+  async function writers() {
+    const listed = (await storage.nodes()).slice().sort().join(",");
+    if (listed !== cachedFor) (cache = null), (cachedFor = listed);
     return (cache ??= gather().catch(e => {
       cache = null;
       throw e;

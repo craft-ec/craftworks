@@ -408,8 +408,16 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      a device holding the account's MLS epochs makes the tree (or is placed), then reseals every table it writes under the
      current generation (`storage.resealOwn`) — each device its own. The MLS epochs it keeps still open what other
      devices have not resealed yet; K8.6 drops them.
+   - ONE DEVICE RESOLVES CONCURRENT HEADS: its members are separate devices, so two making the key change that resolves
+     concurrent heads at once each made one the other then saw as concurrent (fx 10-26: a generation every ~6 s). Only
+     the LOWEST placed device makes it; the others write with the newest generation they hold, which every device reads.
+   - A WORDS LOGIN opens every escrow in the channel BEFORE its walk (`keys.joinOrMake`): every table sealed with a
+     generation reads at once (fx 10-26: without it, a device joined through MLS held epoch 0 only, and the account's
+     directory, resealed with the generation, did not read).
    - THE NODE's UPKEEP follows the account's tree as a space's (`keys_round::reconcile` with the devices list): a device
-     added or removed while no page is open.
+     added or removed while no page is open. REQUIRED BEFORE RELEASE (phases 2–4 ship together): a device that comes
+     back after another made the tree is placed only once a placed device reconciles — without the node, only when
+     another of the account's pages is open.
    Phases (each through the gates): (1) the account's `Check`, signed leaves, the devices' members, in `groups`/
    `account`, tested alone; (2) the page makes or joins the tree beside MLS, seals new writes with the generation, reseals its own;
    (3) words login recovers from the escrows and is placed; (4) device removal and the writable gate by the tree; the

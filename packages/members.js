@@ -63,20 +63,25 @@ export async function start(ctx) {
 
   const groups = new Map();
   const life = () => ctx.require("lifecycle");
-  function group(sp) {
+  // `sub`: the ACCOUNT's tree (K8.5, `account()`) — what differs from a space's: whose member (this device), where the
+  // operations live (the account's channel), the check (its devices list), the epochs it keeps (the account's), and
+  // what a new generation owes (its escrow). Everything else is the one routine.
+  function group(sp, sub = null) {
     if (groups.has(sp.id)) return groups.get(sp.id);
+    const A = !!sub;
+    const meHere = () => (A ? sub.me() : me());
     let g = null;
     let queue = Promise.resolve();
     const once = f => (queue = queue.then(f, f));
     // (`g2/`: a tree saved before only the creator's root was taken (10-19) may hold another member's root — rebuilt from
     // the operations under the rule.)
-    const at = `g2/${sp.id}`;
+    const at = A ? "g2/account" : `g2/${sp.id}`;
     // (What was last REPORTED, so each change is said once — never the same report every round.)
     const state = () => storage.table("beekem");
-    const feed = () => storage.table(space.tableOf(sp, "pub-keyops"), sp);
+    const feed = () => (A ? sub.feed() : storage.table(space.tableOf(sp, "pub-keyops"), sp));
     async function load() {
       if (g) return g;
-      const m = await me();
+      const m = await meHere();
       // (The account table read WHOLE first: a row not arrived yet read as no tree — an empty one made, then SAVED over
       // the tree another device saved, 10-24: the Ivvor DM's tree, its root on no feed, lost so on one device.)
       const t = await state();
@@ -101,6 +106,7 @@ export async function start(ctx) {
     const send = async op => {
       const key = glue.keyop_key(op);
       if (glue.keyop_inline(op)) return (await feed()).put(key, hexOf(op));
+      if (A) throw new Error("an account key operation too large for its channel");
       const files = await ctx.require("files");
       const ref = await files.put(new Blob([op]), { space: sp, public: true, app: "members" });
       return (await feed()).put(key, JSON.stringify({ file: ref }));
@@ -115,6 +121,7 @@ export async function start(ctx) {
 
     // OUR CHECK, from the list (`roles`: its roster, owner, acts) and its accounts' cards.
     async function check() {
+      if (A) return sub.check();
       const r = await (await ctx.require("roles")).of.strict(sp);
       // (The acts as they are NOW — an act just written elsewhere, the add of this very member, read before judging.)
       await r.refresh?.();
@@ -161,11 +168,13 @@ export async function start(ctx) {
       let n = 0;
       for (const [num, secret] of tree.generations()) {
         if (kept.has(num)) continue;
-        await auth.identity.epochKeep(Number(num), secret, sp.idBytes);
+        await auth.identity.epochKeep(Number(num), secret, A ? undefined : sp.idBytes);
         kept.add(num);
         n += 1;
       }
-      if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } }));
+      // (The account's: each generation's escrow owed, a first one's reseal — `sub.kept`.)
+      if (A && n) await sub.kept(tree.generations());
+      if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: A ? {} : { space: sp.id } }));
       return kept.size;
     }
 
@@ -210,7 +219,7 @@ export async function start(ctx) {
         // operations waited on it everywhere, Ivvor never placed, while the owner's saved tree held it).
         // (From EVERY version of this account's saved tree — each device saves its own: one device's may hold what
         // another's lost, 10-24, live: device 22b6aa9b's held the DM's root, the merged row was 7388a5ca's empty one.)
-        const m = await me();
+        const m = await meHere();
         const saved = (await state()).versions(at).filter(v => v.value).map(v => { try { return G.BeeGroup.load(bytes(v.value), m.seed); } catch { return null; } }).filter(Boolean);
         const lost = [...new Map([g, ...saved].flatMap(x => [...x.unpublished(read.filter(Boolean), c.list)]).map(op => [hexOf(op), op])).values()];
         if (lost.length) {
@@ -218,7 +227,7 @@ export async function start(ctx) {
           said.republished = lost.length;
           life().then(l => l.transition("group", sp.id, "keys-republished", { why: `${lost.length} operation(s) no feed held, written again from this device's tree` }));
         }
-        const fresh = G.BeeGroup.empty(sp.idBytes, (await me()).seed);
+        const fresh = G.BeeGroup.empty(sp.idBytes, (await meHere()).seed);
         fresh.merge_all(read.filter(Boolean), c.list);
         const reach = new Set(fresh.generations().map(([n]) => String(n)));
         // Every generation the fresh merge reaches kept too (10-23): a concurrent key change — another member's, made
@@ -316,14 +325,14 @@ export async function start(ctx) {
       const said = await syncNow();
       // (A SHORT read changes nothing — above all it never makes a tree: an operation not merged is not proof there is none.)
       if (said.short) return said;
-      const m = await me();
+      const m = await meHere();
       const c = await check();
       if (!c.whole()) return { ...said, short: "the list not read whole" };
-      const myDid = (await space.account())?.id;
-      const listed = c.listedNow.includes(myDid);
+      // (Who this is: the account in a space's tree; this DEVICE's member in the account's.)
+      const myDid = A ? (typeof m.id === "string" ? m.id : hexOf(m.id)) : (await space.account())?.id;
       // ONLY THE CREATOR makes the tree (one root: 10-19, a member's page made a second one). Everyone else waits for it.
       if (!g.placed() && myDid === c.creator() && !g.members().length) {
-        const act = myDid === c.owner ? null : (c.ins[myDid] ?? null);
+        const act = A || myDid === c.owner ? null : (c.ins[myDid] ?? null);
         const [made, op] = G.BeeGroup.create(sp.idBytes, m.seed, act);
         g = made;
         await send(op);
@@ -334,7 +343,7 @@ export async function start(ctx) {
       // NOT PLACED in a tree that exists: nothing this page can add — said once per change, with the tree's members.
       if (!g.placed() && (await feed()).rows().some(x => x.value)) {
         const placed = [...g.members()];
-        const names = await Promise.all(placed.map(async id => (await Promise.all(c.listedNow.map(async d => ((await memberOf(d)).id === id ? d : null)))).find(Boolean) ?? `unnamed ${id.slice(0, 8)}`));
+        const names = A ? placed : await Promise.all(placed.map(async id => (await Promise.all(c.listedNow.map(async d => ((await memberOf(d)).id === id ? d : null)))).find(Boolean) ?? `unnamed ${id.slice(0, 8)}`));
         const why = `this account's member ${(typeof m.id === "string" ? m.id : hexOf(m.id)).slice(0, 8)} is not in the tree; it places ${placed.length}: ${names.map(n => n.replace(/^did:craftec:/, "").slice(0, 8)).join(", ")}`;
         life().then(l => l.transition("group", sp.id, "keys-not-placed", { why, placed: placed.length }));
       }
@@ -349,12 +358,18 @@ export async function start(ctx) {
         // here — one root never updated, members just added, concurrent heads): its operation sent, the generation kept
         // with the others, so the storage seals with it (10-22, measured: nothing ever asked — no generation existed and
         // every write stayed on MLS).
-        const [, , op] = g.current();
-        if (op) (await send(op), await save());
+        // (The ACCOUNT's tree: its members are separate DEVICES, so two resolving concurrent heads at once each made a
+        // key change the other then saw as concurrent — fx 10-26: a new generation every ~6 s. Only the LOWEST placed
+        // device resolves them; the others write with the newest generation they hold, which every device reads.)
+        const resolves = !A || [...g.members()].map(x => String(x).toLowerCase()).sort()[0] === myDid;
+        if (resolves) {
+          const [, , op] = g.current();
+          if (op) (await send(op), await save());
+        }
         said.generations = await keepGenerations();
-        said.bridged = await ctx.optional("members: bridge", bridge(), () => 0);
+        if (!A) said.bridged = await ctx.optional("members: bridge", bridge(), () => 0);
       }
-      said.crossed = await ctx.optional("members: crossBridge", crossBridge(), () => 0);
+      if (!A) said.crossed = await ctx.optional("members: crossBridge", crossBridge(), () => 0);
       const l = await life();
       const short = d => d.replace(/^did:craftec:/, "").slice(0, 6);
       if (said.added?.length || said.removed?.length || said.not?.length)
@@ -376,6 +391,7 @@ export async function start(ctx) {
     async function follow() {
       if (following) return;
       following = true;
+      if (A) return sub.follow(soon);
       (await feed()).onChange(soon);
       (await (await ctx.require("roles")).of.strict(sp)).onChange(soon);
     }
@@ -391,7 +407,7 @@ export async function start(ctx) {
       sync: () => once(syncNow),
       create: () =>
         once(async () => {
-          const m = await me();
+          const m = await meHere();
           const [made, op] = G.BeeGroup.create(sp.idBytes, m.seed);
           g = made;
           await send(op);
@@ -442,8 +458,8 @@ export async function start(ctx) {
         const t = await feed();
         await t.settled;
         const c = await check();
-        const r = await (await ctx.require("roles")).of(sp);
-        const fresh = G.BeeGroup.empty(sp.idBytes, (await me()).seed);
+        const r = A ? null : await (await ctx.require("roles")).of(sp);
+        const fresh = G.BeeGroup.empty(sp.idBytes, (await meHere()).seed);
         const ops = await Promise.all(t.rows().filter(x => x.value).map(async x => ({ key: x.key.slice(0, 12), by: (r?.author(x) ?? "?").slice(12, 18), node: (x.id ?? "").slice(0, 8), op: await ctx.optional("members: diagnose", opOf(x), () => null) })));
         let pending = ops.filter(o => o.op);
         for (let round = 0; round < 64 && pending.length; round++) {
@@ -483,10 +499,110 @@ export async function start(ctx) {
   // EVERY SPACE KEPT TO ITS LIST on this page (K7): each of this account's spaces (every kind — a server, a chat, a
   // circle, a level group; never the account's own) reconciled every 10 minutes — its tree made if it has none, the bridge
   // carried. (With every page closed, the node does it: K5.)
+  // THE ACCOUNT's TREE (K8.5, FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"): the one routine above, its subject the
+  // account — its members this account's DEVICES (each device's member: the group key its credential names, this
+  // device's from its MLS signer seed), its operations (`o/`), signed leaves (`d/`) and generations' escrows (`g/`) in
+  // the account's CHANNEL (its data key's: a words login reads it before any group key), its check the DEVICES LIST
+  // (`account::device_members`, on the key log's current key). Beside MLS until K8.6: the account's tables seal with
+  // its generations once it has one (the newest epoch), and each device reseals its own once.
+  let accountTree = null;
+  async function account() {
+    if (accountTree) return accountTree;
+    const keys = await ctx.require("keys");
+    const acc = await space.account.strict();
+    if (!acc) throw new Error("nobody is logged in");
+    const didB = glue.did_bytes(acc.id);
+    const ch = () => storage.table(space.tables.channel);
+    const [devicesCode, idlogCode] = await Promise.all(["devices-wasm", "idlog-wasm"].map(n => ctx.require(n)));
+    let mine = null;
+    const meA = async () => {
+      if (mine) return mine;
+      const seed = await keys.deviceSeed();
+      const [id] = G.beekem_member(seed);
+      return (mine = { seed, id: String(id).toLowerCase() });
+    };
+    const opsOf = t => t.rows().filter(r => r.key.startsWith("o/") && r.value);
+    const leafOf = value => {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return null;
+      }
+    };
+    const ZERO = new Uint8Array(32);
+    const sub = {
+      me: meA,
+      // The channel's operations, as the routine reads a feed (`o/` taken off their keys).
+      feed: async () => {
+        const t = await ch();
+        return { get settled() { return t.settled; }, rows: () => opsOf(t).map(r => ({ ...r, key: r.key.slice(2) })), put: (k, v) => t.put(`o/${k}`, v), onChange: f => t.onChange(f) };
+      },
+      check: async () => {
+        const t = await ch();
+        await t.settled;
+        const m = await meA();
+        // THIS DEVICE's LEAF, signed by its member (`d/<member>`): what an add encrypts to.
+        if (!t.rows().some(r => r.key === `d/${m.id}` && r.value)) {
+          const [leaf, sig] = G.beekem_signed_leaf(m.seed);
+          await t.put(`d/${m.id}`, JSON.stringify({ leaf: hexOf(leaf), sig: hexOf(sig) }));
+        }
+        const leaves = new Map();
+        for (const r of t.rows()) {
+          const v = r.key.startsWith("d/") && r.value ? leafOf(r.value) : null;
+          if (v?.leaf && v?.sig && G.beekem_leaf_checks(bytes(r.key.slice(2)), bytes(v.leaf), bytes(v.sig))) leaves.set(r.key.slice(2), v.leaf);
+        }
+        // THE DEVICES LIST: the group keys of the devices' credentials on the key log's current key.
+        const keyLog = await auth.identity.readKeyLog(didB);
+        const devices = keyLog && (await auth.identity.readDevices(didB));
+        const current = devices ? [...node.core.account_device_members(devicesCode, idlogCode, didB)].map(x => String(x).toLowerCase()) : [];
+        // THE ROOT's MAKERS: the authors of root operations (an add with no predecessor).
+        const roots = opsOf(t).map(r => JSON.parse(glue.keyop_row(r.value) ?? "null")?.op).filter(Boolean).map(op => G.beekem_op_info(bytes(op))).filter(x => x && x[1] === "add" && !x[2].length).map(x => String(x[3]).toLowerCase());
+        const writers = [...new Set(roots)];
+        return {
+          list: G.BeeList.account(current, writers),
+          // (No root yet: this device, when current — two at once end on the lowest's, the other's tree dropped.)
+          creator: () => writers.filter(w => current.includes(w)).sort()[0] ?? (current.includes(m.id) ? m.id : null),
+          cards: current.filter(id => leaves.has(id)).map(id => [id, bytes(id), bytes(leaves.get(id))]),
+          listedNow: current,
+          ins: Object.fromEntries(current.map(id => [id, ZERO])),
+          // (Whom to take out: a device that wrote its leaf here and is no longer current.)
+          outs: Object.fromEntries([...leaves.keys()].filter(id => !current.includes(id)).map(id => [id, ZERO])),
+          whole: () => !!devices && current.length > 0,
+          owner: null,
+        };
+      },
+      // EACH GENERATION ESCROWED (`g/<n>`: sealed to the account's encryption key — any device seals it, only the
+      // words open it); the FIRST one held here: this device's own tables resealed with it, once.
+      kept: async gens => {
+        const t = await ch();
+        await t.settled;
+        for (const [num, secret] of gens) {
+          if (t.rows().some(r => r.key === `g/${num}` && r.value)) continue;
+          const blob = node.core.account_escrow(idlogCode, didB, secret, crypto.getRandomValues(new Uint8Array(32)));
+          await t.put(`g/${num}`, hexOf(blob));
+        }
+        const st = await storage.table("beekem");
+        if (!st.rows().some(r => r.key === "resealed/account" && r.value)) {
+          ctx.background("members: the account's tables resealed", storage.resealOwn().then(() => st.put("resealed/account", String(Date.now()))));
+          (await ctx.require("lifecycle")).transition("group", "account", "keys-reconciled", { why: "the account's first generation held here: this device's tables resealed with it" });
+        }
+      },
+      follow: async soon => {
+        (await ch()).onChange(soon);
+        directory.onDevices(acc.id, soon);
+      },
+    };
+    accountTree = group({ id: "account", idBytes: didB, name: "account" }, sub);
+    return accountTree;
+  }
+
   async function reconcileAll() {
     if (!(await space.account())) return 0;
     // This account's member on its card first — in no space yet, a space that lists it can still add it.
     await ctx.optional("members: me", me(), () => null);
+    // The ACCOUNT's tree first (K8.5): only where this device holds the account's group (its MLS signer is its member).
+    if (await ctx.optional("members: keys.ready", (await ctx.require("keys")).ready(), () => null))
+      await ctx.optional("members: account", account().then(a => a.reconcile()), () => null);
     let n = 0;
     for (const sp of (await space.mine.strict()).filter(s => s.kind !== "account")) {
       const r = await ctx.optional(`members: reconcile ${sp.id.slice(0, 8)}`, group(sp).reconcile(), () => null);
@@ -496,5 +612,5 @@ export async function start(ctx) {
   }
   (await ctx.require("lifecycle")).job("members reconcile", { every: 600e3, delay: 30e3, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => reconcileAll() });
 
-  return { group, me, memberOf, reconcileAll };
+  return { group, account, me, memberOf, reconcileAll };
 }

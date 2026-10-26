@@ -1015,6 +1015,12 @@ export async function start(ctx) {
   // and `node:<key>` for every node that has feeds; its `CATALOG` row keeps upkeep's marks. Made with the account.
   let directoryOpen = null;
   let directoryTail = null; // the directory, once open: a catalog of plain rows (a node's catalog: versions)
+  const dirWatchers = new Set();
+  function watchDirectory(fn) {
+    dirWatchers.add(fn);
+    if (directoryTail) directoryTail.onChange(fn);
+    else ctx.background("storage: directory", directory());
+  }
   function directory() {
     const p = (directoryOpen ??= (async () => {
       const sp = await space.account.strict();
@@ -1022,6 +1028,11 @@ export async function start(ctx) {
       await d.answer();
       if (d.absent && sp.fresh) await d.put(CATALOG, JSON.stringify({ at: Date.now() }));
       directoryTail = d;
+      // EVERY DIRECTORY WATCHER on the directory as it is NOW, and told once (it may list new devices): a directory
+      // REOPENED when keys arrive (`reopenAfterKeys`) is a new tail — a watch kept on the old one heard nothing more
+      // (fx 10-26, K8.5: the account's tree kept a generation, the directory reopened, and an open table never read a
+      // second device's feed).
+      for (const fn of dirWatchers) (d.onChange(fn), ctx.background("storage: directory watcher", Promise.resolve().then(fn)));
       return d;
     })());
     // R4: a directory that did not open is asked again next time.
@@ -1139,7 +1150,10 @@ export async function start(ctx) {
         opts: name => ({ catalogKey: ANY_GRANT.has(name) }),
         writers: () => writers(sp.self),
         // New nodes of the account: listed in its directory.
-        watch: fn => directory().then(d => d.onChange(fn)),
+        // New devices: the directory lists them, AND the account's group holds them (`writers`) — either can come
+        // second, so both are watched (fx 10-26: the directory changed before the group took the second device in;
+        // nothing checked again when it did, and its rows were never read).
+        watch: fn => (watchDirectory(fn), ctx.background("storage: keys watch", ctx.require("keys").then(k => k.onChange(fn)))),
         catalogOf,
       };
     return {
@@ -1411,6 +1425,12 @@ export async function start(ctx) {
       // read before the list names it; before, a bag change only gathered writers known when the table opened.)
       const rewatch = async () => {
         const fresh = (await ctx.optional("storage: scope.writers", scope.writers(name), () => [])).filter(o => !seen.has(o));
+        // (Said for the account's tables: a device that writes and is never read is seen where it stopped.)
+        if (!sp?.id || sp.kind === "account") {
+          const listed = (await directory()).rows().filter(r => r.key.startsWith("node:")).map(r => r.key.slice(5, 13));
+          const held = await ctx.optional("storage: writers", (await ctx.require("membership")).writers(), () => null);
+          ctx.log("writers checked", { what: `${name}: ${fresh.length ? `new writer(s) ${fresh.map(o => o.slice(0, 8)).join(", ")}` : "none new"} (${seen.size} read; directory ${listed.join(",")}; group ${held ? held.map(o => o.slice(0, 8)).join(",") : "?"})` });
+        }
         if (!fresh.length) return;
         let b = scope.bag ? await ctx.optional("storage: scope.bag", scope.bag(false), () => bag) : null;
         if (b && !b.blind && fresh.some(o => !b.set.has(o))) b = await ctx.optional("storage: scope.bag", scope.bag(true), () => b);

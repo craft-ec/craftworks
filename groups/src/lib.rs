@@ -566,7 +566,21 @@ mod page {
             CgkaOperation::Update { .. } => "update",
         };
         let preds: js_sys::Array = op.payload.predecessors().iter().map(|d| JsValue::from(hex(d.as_slice()))).collect();
-        [JsValue::from(hex(h.as_slice())), JsValue::from(kind), preds.into()].into_iter().collect::<js_sys::Array>().into()
+        // (Its AUTHOR — the member that signed it: the account tree's root maker is read from it, K8.5.)
+        [JsValue::from(hex(h.as_slice())), JsValue::from(kind), preds.into(), JsValue::from(hex(&op.issuer.to_bytes()))].into_iter().collect::<js_sys::Array>().into()
+    }
+
+    /// A DEVICE's LEAF, SIGNED by its member (K8.5, `Account::signed_leaf`): `[leaf, signature]`.
+    #[wasm_bindgen]
+    pub fn beekem_signed_leaf(member_seed: &[u8]) -> Result<js_sys::Array, JsValue> {
+        let (leaf, sig) = Account::of(&b32(member_seed)?).signed_leaf();
+        Ok([js_sys::Uint8Array::from(&leaf[..]), js_sys::Uint8Array::from(&sig[..])].into_iter().map(JsValue::from).collect())
+    }
+    /// Whether a device's leaf is signed by its member (`leaf_checks`).
+    #[wasm_bindgen]
+    pub fn beekem_leaf_checks(member: &[u8], leaf: &[u8], sig: &[u8]) -> bool {
+        let (Ok(m), Ok(l), Ok(s)) = (b32(member), b32(leaf), <[u8; 64]>::try_from(sig)) else { return false };
+        leaf_checks(&m, &l, &s)
     }
 
     /// An account's member id (hex) and first leaf key, from its space member seed.
