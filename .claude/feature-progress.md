@@ -3113,7 +3113,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
           the node adds a current device (B placed from the channel alone, every generation `g/`+`m/`, kept, escrow
           opens with the words, again: nothing written) + control (B not current: not added); mutation (reconcile off)
           fails it. Delegate 33/33.
-    - [ ] 4c. wired into the wake-up; fx/fy: a device back with every page closed is placed by the node
+    - [x] 4c. wired into the wake-up (`account_round::woke`/`replied` in the delegate entry). fx/fy `pw/k85-node.mjs`
+          PASS: fx makes the tree, its page CLOSES; fy by the words writes its leaf; fx's NODE places fy in 320 s; fy
+          reads fx's row. Two fixes found by the run (read from the node's own `account-tree` record): the account's
+          channel is `identity::CHANNEL` ("mls"), not a space-style name; a member is enlisted for upkeep at its inbox
+          watch (an account in no space was never served).
   - [ ] 5. K8.6 — MLS removed
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 

@@ -191,6 +191,9 @@ mod entry {
                     // KEEPING (TOKEN §7a): the beacon's challenges answered, by the member's mandate, with no page open.
                     let io = crate::keeper_round::woke(&mut c);
                     out.extend(send(&c, io));
+                    // THE ACCOUNT's TREE (K8.5): a device added or taken out, with no page of the account open.
+                    let io = crate::account_round::woke(&mut c);
+                    out.extend(send(&c, io));
                     Ok(out)
                 }
                 // The inbox as the node holds it; anything else, an answer upkeep waits for.
@@ -204,6 +207,7 @@ mod entry {
                     let reply = crate::upkeep::Reply::Got { id, state: r.state.map(|s| s.as_ref().to_vec()) };
                     let mut io = crate::witness_round::replied(&mut c, &reply);
                     io.extend(crate::keeper_round::replied(&mut c, &reply));
+                    io.extend(crate::account_round::replied(&mut c, &reply));
                     io.extend(crate::upkeep::replied(&mut c, reply, now));
                     Ok(send(&c, io))
                 }

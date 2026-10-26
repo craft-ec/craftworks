@@ -29,10 +29,10 @@ const LAST: &[u8] = b"identity_account_tree/last";
 /// What an MLS-sealed generation's key is derived with (the page's `members.account`: the same bytes).
 const MLS_SEALED: &[u8] = b"craftworks 2026-10-26 account generation, mls-sealed";
 
-/// The account's CHANNEL's name: `x<the account's id, first 12>-log` (`space.tableOf`; the account's id is its DID).
-pub fn channel_name(did: &[u8; 32]) -> String {
-    let d = craftworks_account::did(did);
-    format!("x{}-log", d.get(..12).unwrap_or(&d))
+/// The account's CHANNEL's name: the identity's (`identity::CHANNEL` — the page's `space.tables.channel` for the
+/// account; fx 10-27: a name computed as a space's, `x<id>-log`, named a contract nobody made).
+pub fn channel_name(_did: &[u8; 32]) -> String {
+    identity::CHANNEL.to_string()
 }
 
 /// A WAKE-UP: when no round is in flight, one for the next member in turn whose page is away and whose node holds the

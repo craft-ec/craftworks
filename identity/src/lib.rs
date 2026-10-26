@@ -1494,6 +1494,9 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             h.set_secret(UPKEEP_INBOX, &inbox);
             upkeep_stir(h, &seed);
             upkeep_set_clock(h, now);
+            // SERVED by upkeep from its first page (K8.5: the account's tree is kept by the node whatever spaces it is in —
+            // fx 10-27, an account in no space was never enlisted, and its node never placed a device).
+            upkeep_enlist(h, &a.public());
             upkeep_status(h, Some(&a.public()))
         }
         Request::UpkeepCodes { bag, tail, idlog, sealed, piece, block, devices } => {
