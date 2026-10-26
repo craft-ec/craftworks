@@ -3055,6 +3055,13 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   open-list entries written AFTER the make (own catalog still notes before); public tables read only where listed;
   the delegate keeps a listed tail found absent (`Reading::absent`, keyed by the listing's state hash) until that
   listing changes (test + mutation). NEXT: re-read the owner node log for skipped wake-ups after their v445 login.
+- [x] 10-26 v446 — THE NODE FOLLOWS NO MLS (4019e5b, K8.6 first step; manifest b2a89a819c87; gates 3/3 + frames).
+  After v445 the owner's delegate still hit PARK_WORK_BUDGET (23:00 ×2, 01:00 ×3; 02:00: 7 page requests failed
+  "no response received from handler") on 56WU… = the NEXT MLS epoch's log of Wren#BZ6QnL, read every round by the
+  MLS catch-up/follow-out. Removed both; a space with no tree said `not-migrated`. MLS-follower tests replaced by
+  `an_mls_era_space_is_not_followed`. The catch-up/follow-out code is unreachable now, deleted with the rest of K8.6.
+  NEXT: one full hour of the owner node log on v446 with no probe loads: parks, skips, failed requests.
+  d135a31 (tree read logged once per race) rides in v446 too.
 - [ ] K8.5 The ACCOUNT group off MLS: account epochs, words/escrow recovery, device list, writable gate — design first.
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
 
