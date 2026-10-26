@@ -3072,7 +3072,7 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
         A device's member = its credential's group key (MLS signer seed: `an_mls_signer_seed_gives_its_credential_key`)
         — existing credentials already bind member ⇄ device. Added: `Account::signed_leaf` / `leaf_checks` (+test,
         controls), `account::device_members` (+test: removed device's key not current), `BeeList::account` (page glue).
-  - [x] 2. (NOT RELEASED — ships with 3–4) `members.group(sp, sub)`: the account is a second SUBJECT of the one tree
+  - [x] 2. (released with 3 as v447) `members.group(sp, sub)`: the account is a second SUBJECT of the one tree
         routine (`members.account()`): device seed from the MLS signer (`keys.deviceSeed`), ops/leaves/escrows in the
         channel, `BeeList.account`, escrow per generation (`core.account_escrow`), resealOwn once. Words login opens
         every `g/` escrow first. Lowest placed device alone resolves concurrent heads. Fixed on the way (pre-existing):
@@ -3081,7 +3081,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
         fx: `pw/k85-phase2.mjs` PASS (fresh account: tree, generation sealing, reload); `pw/k85-two.mjs` PASS (fx makes,
         fy by the words, fx adds fy, both read each other, no key changes over a minute — before the resolve rule: >15
         generations in 90 s). Control `NO_TREE=1` on v446 PASS. fx reads fy's row ~100 s after (membership timing).
-  - [ ] 3. words login: escrows opened (every generation), placed by reconcile or self-entry
+  - [x] 3. words login opens every `g/` escrow before its walk; a device WITHOUT the words reads through `m/<n>/<epoch>`
+        (generations sealed for the account's current MLS epoch, `keys.mlsNow`) until placed. Saved tree PER DEVICE
+        (`g2/account/<member>`: a shared row handed fy fx's leaf secrets — found by the upgrade probe, fixed).
+        fx/fy: `pw/k85-mls.mjs` (v446 → candidate, fx makes the tree alone, fy back with its PIN only: reads via MLS
+        epoch, not placed) PASS; k85-phase2 PASS; k85-two PASS (fx reads fy's row in 10 s).
   - [ ] 4. device removal + writable gate by the tree; node upkeep reconciles the account tree
   - [ ] 5. K8.6 — MLS removed
 - [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.

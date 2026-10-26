@@ -75,7 +75,11 @@ export async function start(ctx) {
     const once = f => (queue = queue.then(f, f));
     // (`g2/`: a tree saved before only the creator's root was taken (10-19) may hold another member's root — rebuilt from
     // the operations under the rule.)
-    const at = A ? "g2/account" : `g2/${sp.id}`;
+    // (The ACCOUNT's tree is saved PER DEVICE — its members are devices: a tree saved in the account's shared table and
+    // loaded by another device handed it the first device's leaf secrets, fx/fy 10-26. A space's tree is one member's,
+    // the same on every device of the account.)
+    const at = A ? null : `g2/${sp.id}`;
+    const atOf = async () => at ?? `g2/account/${(await meHere()).id}`;
     // (What was last REPORTED, so each change is said once — never the same report every round.)
     const state = () => storage.table("beekem");
     const feed = () => (A ? sub.feed() : storage.table(space.tableOf(sp, "pub-keyops"), sp));
@@ -86,7 +90,8 @@ export async function start(ctx) {
       // the tree another device saved, 10-24: the Ivvor DM's tree, its root on no feed, lost so on one device.)
       const t = await state();
       await t.settled;
-      const row = t.rows().find(r => r.key === at)?.value;
+      const key = await atOf();
+      const row = t.rows().find(r => r.key === key)?.value;
       g = row ? G.BeeGroup.load(bytes(row), m.seed) : G.BeeGroup.empty(sp.idBytes, m.seed);
       savedHex = row ?? null;
       return g;
@@ -98,7 +103,7 @@ export async function start(ctx) {
     const save = async () => {
       const h = hexOf(g.save());
       if (h === savedHex) return;
-      await (await state()).put(at, h);
+      await (await state()).put(await atOf(), h);
       savedHex = h;
     };
     // An operation in a row, or one too large for a row as a PUBLIC file of the space the row names — read back and
@@ -172,8 +177,9 @@ export async function start(ctx) {
         kept.add(num);
         n += 1;
       }
-      // (The account's: each generation's escrow owed, a first one's reseal — `sub.kept`.)
-      if (A && n) await sub.kept(tree.generations());
+      // (The account's: each generation's escrows owed — the words', and for the CURRENT MLS epoch, which moves without
+      // a new generation — a first one's reseal: `sub.kept`, every time.)
+      if (A) await sub.kept(tree.generations());
       if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: A ? {} : { space: sp.id } }));
       return kept.size;
     }
@@ -220,7 +226,7 @@ export async function start(ctx) {
         // (From EVERY version of this account's saved tree — each device saves its own: one device's may hold what
         // another's lost, 10-24, live: device 22b6aa9b's held the DM's root, the merged row was 7388a5ca's empty one.)
         const m = await meHere();
-        const saved = (await state()).versions(at).filter(v => v.value).map(v => { try { return G.BeeGroup.load(bytes(v.value), m.seed); } catch { return null; } }).filter(Boolean);
+        const saved = (await state()).versions(await atOf()).filter(v => v.value).map(v => { try { return G.BeeGroup.load(bytes(v.value), m.seed); } catch { return null; } }).filter(Boolean);
         const lost = [...new Map([g, ...saved].flatMap(x => [...x.unpublished(read.filter(Boolean), c.list)]).map(op => [hexOf(op), op])).values()];
         if (lost.length) {
           for (const op of lost) await send(op);
@@ -530,6 +536,30 @@ export async function start(ctx) {
       }
     };
     const ZERO = new Uint8Array(32);
+    // UNTIL K8.6, EVERY CURRENT DEVICE IS IN THE ACCOUNT's MLS GROUP: each generation is also sealed with a key from the
+    // group's CURRENT MLS epoch (`m/<n>/<epoch>`: written by whoever reconciles, for the epoch it is at), so a device that
+    // comes back unplaced (offline while another made the tree; it has no words) opens the generations with the MLS epoch
+    // it catches up to, and reads everything, before anyone places it.
+    const MLS_SEALED = new TextEncoder().encode("craftworks 2026-10-26 account generation, mls-sealed");
+    const mlsKey = async secret => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...MLS_SEALED, ...(typeof secret === "string" ? bytes(secret) : secret)]))));
+    const mlsNow = () => ctx.optional("members: the account's MLS epoch", keys.mlsNow(), () => null);
+    const openedM = new Set();
+    async function openMlsSealed(t) {
+      const now = await mlsNow();
+      if (!now) return;
+      let n = 0;
+      for (const r of t.rows()) {
+        const [m, num, e] = r.key.split("/");
+        if (m !== "m" || Number(e) !== now.epoch || !r.value || openedM.has(num)) continue;
+        const item = bytes(r.value);
+        const plain = glue.bag_open(await mlsKey(now.secret), item);
+        if (!plain) continue;
+        await auth.identity.epochKeep(Number(num), plain);
+        openedM.add(num);
+        n += 1;
+      }
+      if (n) (ctx.log("account keys", { what: `${n} generation(s) of the account's tree opened with its MLS epoch` }), dispatchEvent(new CustomEvent("craftworks:keys")));
+    }
     const sub = {
       me: meA,
       // The channel's operations, as the routine reads a feed (`o/` taken off their keys).
@@ -540,6 +570,7 @@ export async function start(ctx) {
       check: async () => {
         const t = await ch();
         await t.settled;
+        await openMlsSealed(t);
         const m = await meA();
         // THIS DEVICE's LEAF, signed by its member (`d/<member>`): what an add encrypts to.
         if (!t.rows().some(r => r.key === `d/${m.id}` && r.value)) {
@@ -581,6 +612,12 @@ export async function start(ctx) {
           const blob = node.core.account_escrow(idlogCode, didB, secret, crypto.getRandomValues(new Uint8Array(32)));
           await t.put(`g/${num}`, hexOf(blob));
         }
+        const now = await mlsNow();
+        if (now)
+          for (const [num, secret] of gens) {
+            if (t.rows().some(r => r.key === `m/${num}/${now.epoch}` && r.value)) continue;
+            await t.put(`m/${num}/${now.epoch}`, hexOf(glue.bag_seal(await mlsKey(now.secret), now.epoch, secret, crypto.getRandomValues(new Uint8Array(12)))));
+          }
         const st = await storage.table("beekem");
         if (!st.rows().some(r => r.key === "resealed/account" && r.value)) {
           ctx.background("members: the account's tables resealed", storage.resealOwn().then(() => st.put("resealed/account", String(Date.now()))));

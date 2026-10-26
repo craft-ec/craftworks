@@ -1256,5 +1256,12 @@ export async function start(ctx) {
     if (!(await ready())) throw new Error("the account's group is not held here");
     return mls.device_seed();
   };
-  return { repairAccount, deviceSeed, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
+  // THE ACCOUNT's CURRENT MLS EPOCH and its secret (caught up first): what a generation of the account's tree is also
+  // sealed with until K8.6 (`members.account`), so a device without the words opens it.
+  const mlsNow = async () => {
+    if (!(await ready())) return null;
+    const st = mls.status();
+    return { epoch: st.epoch, secret: st.secret };
+  };
+  return { repairAccount, deviceSeed, mlsNow, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
 }
