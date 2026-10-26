@@ -396,6 +396,22 @@ pub fn devices(did: &[u8; 32], log: &Log, contract: Option<&[Vec<u8>]>, card: &[
     members(did, log, card, &[])
 }
 
+/// THE ACCOUNT TREE's MEMBERS (K8.5): the group key each of its devices' credentials names (the field MLS's signing key
+/// fills), on the key log's CURRENT key only (`craftworks_devices_contract::current`) — the account's `AccountCheck`
+/// `current`. A device whose credentials name several (a words login made a new one) has each: only it holds their seeds.
+pub fn device_members(did: &[u8; 32], log: &Log, contract: &[Vec<u8>]) -> Vec<[u8; 32]> {
+    let head = log.head().key;
+    let mut out: Vec<[u8; 32]> = contract
+        .iter()
+        .filter_map(|c| craftworks_identity::read_credential(c))
+        .filter(|(d, owner, _, _)| d == did && *owner == head)
+        .filter_map(|(_, _, _, key)| key.try_into().ok())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// A member's DEVICES, STEP BY STEP — the one resolution's order and failures, page and node (each only fetches): their
 /// key log, then their card, then their devices contract ONLY where the card says they have one (owner 10-25: a read
 /// goes only where something lists it — the contract asked "in case" when the card did not read or named no device was
@@ -545,6 +561,23 @@ mod tests {
         assert_eq!(table_writers(&[a, b], &listed, &[c, me], true, &me), vec![a, c], "a public table: the open list too");
         assert_eq!(reading_dids(&["did:b".into(), "did:a".into()], Some("did:o")), vec!["did:a", "did:b", "did:o"]);
         assert_eq!(reading_dids(&["did:o".into()], Some("did:o")), vec!["did:o"], "the owner once");
+    }
+
+    /// K8.5 THE ACCOUNT TREE's MEMBERS: the group keys of the credentials on the CURRENT key — after a device is removed
+    /// (the key log rotated, the kept device credentialed again), the removed one's is gone. Control: before, both.
+    #[test]
+    fn device_members_are_the_group_keys_on_the_current_key() {
+        let words = [0x51u8; 16];
+        let log0 = Log { events: vec![inception(&words).unwrap()] };
+        let did = log0.events[0].id();
+        let (ka, kb) = ([0xA5u8; 32], [0xB5u8; 32]);
+        let owner = owner_seed(&words).unwrap();
+        let creds = vec![craftworks_identity::credential(&did, &[0x0A; 32], &ka, &owner), craftworks_identity::credential(&did, &[0x0B; 32], &kb, &owner)];
+        assert_eq!(device_members(&did, &log0, &creds), vec![ka, kb], "both, on the first key");
+        let rotated = rotate(&log0, &words).unwrap();
+        let again = reissue(&did, &rotated, &words, &creds[..1]).unwrap();
+        let all: Vec<Vec<u8>> = creds.iter().chain(&again).cloned().collect();
+        assert_eq!(device_members(&did, &rotated, &all), vec![ka], "B removed: its key is not current");
     }
 
     /// THE ONE DEVICES STEP (page and node): the devices contract asked ONLY where the card says it exists — an unread

@@ -385,14 +385,20 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      contract signed under its key log's current key, the card's `nodes`). One owner of the fact; the tree follows it
      as a space's tree follows its acts. An operation is taken when its author is a current device, and it adds only
      current devices and removes only devices no longer current (the account's `Check`, as `ListCheck` is a space's).
-   - A DEVICE's LEAF: a share key it makes and keeps in its delegate, its public half named on its credential (the field
-     MLS's key fills today) — what an add encrypts to.
-   - ITS OPERATIONS in each device's own public feed `account-keyops` (by name, listed in the account's directory: read
-     only where listed), merged by every device as a space's are; republished from a saved tree (`unpublished`).
+   - A DEVICE's MEMBER is the key its credential already names (the field MLS's signing key fills): the device's
+     BeeKEM member is derived from that key's seed (`groups::Account::of`), so every existing credential, signed by the
+     owner key, already binds member ⇄ device — nothing new to sign. Its LEAF (what an add encrypts to) is published
+     as a row signed by that member, so no other holder of the account's data key can put a leaf of its own in its place.
+   - EVERYTHING IN THE ACCOUNT's CHANNEL (`log`, the one shared tail under the account's DATA key — readable with the
+     words before any group key, which is why MLS's escrows live there): each operation `o/<hash>`, each device's
+     signed leaf `d/<member>`, each generation's escrow `g/<n>`. Not a per-device feed listed in the account's directory:
+     the directory is sealed with the very keys a words login comes to recover. Merged by every device as a space's
+     operations are; republished from a saved tree (`unpublished`). The ROOT's maker (`AccountCheck::writers`): the
+     authors of the root operations found there, the lowest current one taken.
    - SEALING: the account's tables are sealed with the tree's current GENERATION (numbered from `FIRST_GENERATION`,
      never an MLS epoch's number); a device is WRITABLE (the account `MEMBER`, the session `OPEN`) when it is placed.
    - RECOVERY WITH THE WORDS: whoever makes a generation ESCROWS its secret to the account's encryption key (its key
-     log's head: `account::escrow_seal`) in its `account-keyops` feed, beside the operation. A words login opens every
+     log's head: `account::escrow_seal`) in the channel (`g/<n>`), beside the operation. A words login opens every
      escrow (`escrow_open`) — every generation held at once, every table read — then its credential is written (login,
      as now) and the tree places it: any placed device adds it (reconcile), or it enters by itself, its credential the
      proof. Never a second tree: a device makes the root only when no device feed holds an operation, read whole.
@@ -404,8 +410,8 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      devices have not resealed yet; K8.6 drops them.
    - THE NODE's UPKEEP follows the account's tree as a space's (`keys_round::reconcile` with the devices list): a device
      added or removed while no page is open.
-   Phases (each through the gates): (1) the account's `Check` + `account-keyops` + escrow, in `groups`/`account`, tested
-   alone; (2) the page makes or joins the tree beside MLS, seals new writes with the generation, reseals its own;
+   Phases (each through the gates): (1) the account's `Check`, signed leaves, the devices' members, in `groups`/
+   `account`, tested alone; (2) the page makes or joins the tree beside MLS, seals new writes with the generation, reseals its own;
    (3) words login recovers from the escrows and is placed; (4) device removal and the writable gate by the tree; the
    node's upkeep; (5) K8.6 — MLS removed.
    A SHORT LIST STILL MERGES what the check takes (10-23): an operation taken on a short read is taken on the whole one

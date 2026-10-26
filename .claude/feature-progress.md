@@ -3066,7 +3066,12 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   - [x] 1. `groups::AccountCheck` (members = devices; listed = current; add only current, remove only not current;
         root = lowest current device that wrote) + `the_accounts_tree_follows_its_devices_list` (controls for each;
         mutation `allows` → true fails it). Escrow needs nothing new: `account::escrow_seal` seals to the key log's
-        encryption key (any device), `escrow_open` with the words. The `account-keyops` row (op + escrow) is phase 2's.
+        encryption key (any device), `escrow_open` with the words.
+        DESIGN CORRECTED: no per-device feed (the account directory is sealed with the keys a words login recovers) —
+        ops `o/<hash>`, signed leaves `d/<member>`, escrows `g/<n>` in the account's CHANNEL (data key, words-readable).
+        A device's member = its credential's group key (MLS signer seed: `an_mls_signer_seed_gives_its_credential_key`)
+        — existing credentials already bind member ⇄ device. Added: `Account::signed_leaf` / `leaf_checks` (+test,
+        controls), `account::device_members` (+test: removed device's key not current), `BeeList::account` (page glue).
   - [ ] 2. page makes/joins the account tree beside MLS; new writes sealed with the generation; resealOwn
   - [ ] 3. words login: escrows opened (every generation), placed by reconcile or self-entry
   - [ ] 4. device removal + writable gate by the tree; node upkeep reconciles the account tree

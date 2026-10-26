@@ -58,6 +58,21 @@ impl Account {
     pub fn leaf_key(&self) -> ShareKey {
         self.leaf.share_key()
     }
+    /// ITS LEAF, SIGNED by this member (K8.5: a device's leaf in the account's channel, `d/<member>`) — what an add
+    /// encrypts to, so no other holder of the channel's key can put a leaf of its own in a device's place.
+    pub fn signed_leaf(&self) -> ([u8; 32], [u8; 64]) {
+        use ed25519_dalek::Signer;
+        let leaf = self.leaf_key().to_bytes();
+        let sig = ed25519_dalek::SigningKey::from_bytes(&self.seed).sign(&[LEAF_SIGNED, &leaf[..]].concat());
+        (leaf, sig.to_bytes())
+    }
+}
+const LEAF_SIGNED: &[u8] = b"craftworks 2026-10-26 account leaf";
+/// A LEAF taken only when its member signed it (`Account::signed_leaf`).
+pub fn leaf_checks(member: &[u8; 32], leaf: &[u8; 32], sig: &[u8; 64]) -> bool {
+    use ed25519_dalek::Verifier;
+    let Ok(k) = ed25519_dalek::VerifyingKey::from_bytes(member) else { return false };
+    k.verify(&[LEAF_SIGNED, &leaf[..]].concat(), &ed25519_dalek::Signature::from_bytes(sig)).is_ok()
 }
 
 /// OUR CHECK, the list's: who a member id is (its account), whether the list names it, and whether an act allows an
@@ -119,11 +134,11 @@ impl Check for ListCheck {
 }
 
 /// THE ACCOUNT's CHECK (K8.5, FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"): the account's own tree, whose members are
-/// its DEVICES (each device's member id), and WHO IS IN IS THE DEVICES LIST — `current`: the devices its devices
-/// contract credentials under its key log's current key (`account::devices`). A device is "listed" while current; an add
-/// is allowed of a current device only, a removal of one no longer current only (no act: the devices list is the word).
-/// The ROOT is the lowest current device that has written the account's key operations (`writers`: whose
-/// `account-keyops` feed the account's directory lists) — never a second tree from two makers.
+/// its DEVICES (each device's member: the group key its credential names), and WHO IS IN IS THE DEVICES LIST —
+/// `current`: the members its devices contract credentials under its key log's current key (`account::device_members`).
+/// A device is "listed" while current; an add is allowed of a current device only, a removal of one no longer current
+/// only (no act: the devices list is the word). The ROOT is the lowest current member among the authors of the root
+/// operations in the account's channel (`writers`) — never a second tree from two makers.
 #[derive(Debug, Default)]
 pub struct AccountCheck {
     pub current: Vec<[u8; 32]>,
@@ -486,7 +501,26 @@ mod page {
     /// OUR CHECK (`ListCheck`, the node's too), built from the list: `byMember` `[[member hex, did]…]`, `listed` `[did…]`,
     /// the owner, `acts` `[[act hash hex, in?, did]…]`.
     #[wasm_bindgen]
-    pub struct BeeList(ListCheck);
+    pub struct BeeList(Chk);
+    /// The check a group is merged under: a space's list, or the account's devices list (K8.5).
+    enum Chk {
+        List(ListCheck),
+        Account(AccountCheck),
+    }
+    impl Check for Chk {
+        fn account_of(&self, m: &[u8; 32]) -> Option<String> {
+            match self { Chk::List(c) => c.account_of(m), Chk::Account(c) => c.account_of(m) }
+        }
+        fn listed(&self, d: &str) -> bool {
+            match self { Chk::List(c) => c.listed(d), Chk::Account(c) => c.listed(d) }
+        }
+        fn allows(&self, act: &[u8; 32], add: bool, t: &[u8; 32]) -> bool {
+            match self { Chk::List(c) => c.allows(act, add, t), Chk::Account(c) => c.allows(act, add, t) }
+        }
+        fn creator(&self) -> Option<String> {
+            match self { Chk::List(c) => c.creator(), Chk::Account(c) => c.creator() }
+        }
+    }
     #[wasm_bindgen]
     impl BeeList {
         #[wasm_bindgen(constructor)]
@@ -506,7 +540,17 @@ mod page {
                 let e = js_sys::Array::from(&e);
                 l.acts.insert(h32(e.get(0))?, (e.get(1).as_bool().unwrap_or(false), e.get(2).as_string().unwrap_or_default()));
             }
-            Ok(BeeList(l))
+            Ok(BeeList(Chk::List(l)))
+        }
+        /// THE ACCOUNT's CHECK (`AccountCheck`): `current` `[member hex…]` — the group keys of its devices' credentials
+        /// on its key log's current key; `writers` `[member hex…]` — the devices whose `account-keyops` the directory lists.
+        pub fn account(current: js_sys::Array, writers: js_sys::Array) -> Result<BeeList, JsValue> {
+            let h32 = |v: JsValue| -> Result<[u8; 32], JsValue> {
+                let s = v.as_string().ok_or_else(|| err("a hex string"))?;
+                let b: Option<Vec<u8>> = (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+                b32(&b.ok_or_else(|| err("hex"))?)
+            };
+            Ok(BeeList(Chk::Account(AccountCheck { current: current.iter().map(h32).collect::<Result<_, _>>()?, writers: writers.iter().map(h32).collect::<Result<_, _>>()? })))
         }
     }
 
@@ -569,7 +613,8 @@ mod page {
             js_sys::Reflect::set(&out, &"applied".into(), &(r.applied as f64).into())?;
             js_sys::Reflect::set(&out, &"waiting".into(), &(r.waiting as f64).into())?;
             js_sys::Reflect::set(&out, &"refused".into(), &r.refused.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
-            js_sys::Reflect::set(&out, &"misses".into(), &list.0.misses.borrow().iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
+            let misses: Vec<String> = match &list.0 { Chk::List(l) => l.misses.borrow().clone(), Chk::Account(_) => Vec::new() };
+            js_sys::Reflect::set(&out, &"misses".into(), &misses.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
             Ok(out.into())
         }
         /// The operations this tree holds that `ops` (the network's) lacks and our check admits (`Group::unpublished`).

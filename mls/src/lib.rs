@@ -645,6 +645,15 @@ pub use craftworks_identity::epoch_table_key as table_key;
 
 #[cfg(test)]
 mod tests {
+    /// K8.5: a device's MLS signer IS its account-tree member — its first 32 bytes are an Ed25519 seed whose public key
+    /// is the signing key its credential names (`groups::Account::of(seed)` derives that same member id).
+    #[test]
+    fn an_mls_signer_seed_gives_its_credential_key() {
+        let (secret, public) = new_signer().unwrap();
+        assert_eq!(secret.len(), 64, "a keypair: seed then public");
+        let seed: [u8; 32] = secret[..32].try_into().unwrap();
+        assert_eq!(ed25519_dalek::SigningKey::from_bytes(&seed).verifying_key().to_bytes().to_vec(), public);
+    }
     use ed25519_dalek::SigningKey;
     use super::*;
 

@@ -441,3 +441,18 @@ fn the_accounts_tree_follows_its_devices_list() {
     assert!(g2.open(&after).is_err(), "the removed device reads nothing sealed after");
 }
 
+/// K8.5 A DEVICE's LEAF is taken only signed by its member: a leaf signed by another member, or changed, is refused.
+#[test]
+fn a_devices_leaf_is_taken_only_signed_by_it() {
+    let (d1, d2) = (account(0x41), account(0x42));
+    let (leaf, sig) = d1.signed_leaf();
+    assert!(leaf_checks(&id(&d1), &leaf, &sig), "its own, signed");
+    assert_eq!(leaf, d1.leaf_key().to_bytes(), "the leaf an add encrypts to");
+    // CONTROLS: another member's signature; a changed leaf.
+    let (_, other) = d2.signed_leaf();
+    assert!(!leaf_checks(&id(&d1), &leaf, &other), "signed by another member");
+    let mut changed = leaf;
+    changed[0] ^= 1;
+    assert!(!leaf_checks(&id(&d1), &changed, &sig), "a leaf put in its place");
+}
+
