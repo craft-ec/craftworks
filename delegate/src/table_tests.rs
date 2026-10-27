@@ -913,3 +913,34 @@ fn the_node_signs_the_accounts_channel_with_its_data_key_behind_the_fork_guard()
     let mine = data::Open::new(TAIL, &member, "x0123456789ab-log");
     assert!(identity::upkeep_sign_channel(&mut h, &member, &mine.params, 1, &[0xAA; 32]).is_err(), "not the account's channel");
 }
+
+/// K8.6 THIS DEVICE's MEMBER SEED, kept by the identity: with no MLS state, the first fresh seed is kept and given again
+/// (a second, different fresh one ignored); upkeep reads the same, never minting one. A device WITH an account MLS state
+/// gives its signer's (the key its credential names).
+#[test]
+fn a_devices_member_seed_is_kept_once_or_its_mls_signers() {
+    let (mut h, member) = node();
+    assert_eq!(identity::upkeep_device_seed(&h, &member), None, "none before a page asks");
+    let first = match identity::serve(&mut h, Request::DeviceMember { fresh: [0x61; 32] }, [9; 32]) {
+        identity::Answer::DeviceMember { seed } => seed,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(first, [0x61; 32]);
+    let again = match identity::serve(&mut h, Request::DeviceMember { fresh: [0x62; 32] }, [9; 32]) {
+        identity::Answer::DeviceMember { seed } => seed,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(again, first, "kept: a second fresh one ignored");
+    assert_eq!(identity::upkeep_device_seed(&h, &member), Some(first), "upkeep reads it");
+    // A device with an account MLS state: its signer's seed.
+    let (mut h2, member2) = node();
+    let mut st = b"CWMS".to_vec();
+    st.extend_from_slice(&64u32.to_le_bytes());
+    st.extend_from_slice(&[0x5E; 64]);
+    identity::Host::set_secret(&mut h2, &[identity::MLS, &member2[..]].concat(), &st);
+    let mine = match identity::serve(&mut h2, Request::DeviceMember { fresh: [0x63; 32] }, [9; 32]) {
+        identity::Answer::DeviceMember { seed } => seed,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(mine, [0x5E; 32], "its MLS signer's seed");
+}

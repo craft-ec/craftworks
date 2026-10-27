@@ -1250,11 +1250,16 @@ export async function start(ctx) {
     else start();
   });
 
-  // THIS DEVICE's ACCOUNT-TREE MEMBER SEED (K8.5): its MLS signer's seed — the key its credential names, so the
-  // account's devices list already binds it (`members.account`).
+  // THIS DEVICE's ACCOUNT-TREE MEMBER SEED (K8.6): kept by the identity — its MLS signer's where it has one (the key its
+  // credential names), else one drawn here once.
   const deviceSeed = async () => {
-    if (!(await ready())) throw new Error("the account's group is not held here");
-    return mls.device_seed();
+    // (Not before the account's group is held here: until its credential is written from this seed (K8.6), a device's
+    // credential names its MLS signer's key — a seed minted before the MLS join saved its signer named a key no
+    // credential holds, and the device was never added (fx/fy 10-27).)
+    if (!(await ready())) throw new Error("the account's group is not held here yet");
+    const r = await auth.identity.deviceMember(crypto.getRandomValues(new Uint8Array(32)));
+    if (!r?.deviceMember) throw new Error(`this device has no member in the account's tree: ${r?.refused ?? JSON.stringify(r)}`);
+    return bytes(r.deviceMember.seed);
   };
   // THE ACCOUNT's CURRENT MLS EPOCH and its secret (caught up first): what a generation of the account's tree is also
   // sealed with until K8.6 (`members.account`), so a device without the words opens it.

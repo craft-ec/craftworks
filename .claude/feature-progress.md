@@ -3126,6 +3126,12 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   - [ ] 6a. the account on its tree alone: writable = placed; device seed kept by the delegate (MLS signer's if any);
         registration/words login write the device credential, no MLS group; removal re-credentials from the devices
         list; no MLS rows; node round seed from the delegate; `m/` under the last MLS epoch
+        - [x] piece 1 (10-27): device seed kept by the delegate (`Request::DeviceMember`; MLS signer's if any, else a
+              fresh one); node round per member, ungated, recorded (`accountTree`); a RETIRED member never served, a
+              build every member left reads nothing at a wake-up. Found: fx skipped the newest build's wake-ups ~20 min
+              after publish — the node-wide duty budget spent by 46 woken builds (freenet 0.2.146 `duty_available`;
+              its own bucket was full). Owner node: v448 (AD1L28KH) skipped ~15/h on its own budget. fx: k85-two PASS,
+              k85-node PASS on the first run after publish; delegate 35/35 (retired test killed both mutants).
   - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows

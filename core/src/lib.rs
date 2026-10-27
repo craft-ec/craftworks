@@ -44,6 +44,7 @@ pub fn answer_json(a: &Answer) -> Value {
         } => json!({ "spaceMember": {
             "seed": hex(seed), "public": hex(public), "credential": hex(credential),
         } }),
+        Answer::DeviceMember { seed } => json!({ "deviceMember": { "seed": hex(seed) } }),
         Answer::Upkeep {
             wakeups,
             inbox,
@@ -55,12 +56,14 @@ pub fn answer_json(a: &Answer) -> Value {
             decided,
             round_at,
             next,
+            account_tree,
         } => json!({ "upkeep": {
             "wakeups": wakeups, "inbox": inbox.map(|i| hex(&i)), "inboxLen": inbox_len, "now": now, "codes": codes.map(|c| hex(&c)),
             "groups": groups.iter().map(|(s, e, st)| json!({ "space": hex(s), "epoch": e, "state": hex(st) })).collect::<Vec<_>>(),
             "stale": stale.iter().map(|s| hex(s)).collect::<Vec<_>>(),
             "roundAt": round_at,
             "next": next,
+            "accountTree": account_tree,
             "decided": decided.iter().map(|d| json!({ "space": hex(&d.space), "did": d.did, "q": hex(&d.q), "at": d.at, "step": d.step, "why": d.why, "seq": d.seq })).collect::<Vec<_>>(),
         } }),
         Answer::HandedSpaces { spaces } => {
@@ -1134,6 +1137,9 @@ mod js {
             self.ask(Request::InboxKey)
         }
         /// The DID's member for spaces (the home site only): its MLS seed, keys and credential.
+        pub fn frames_device_member(&mut self, fresh: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::DeviceMember { fresh: b32(fresh)? })
+        }
         pub fn frames_space_member(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::SpaceMember)
         }

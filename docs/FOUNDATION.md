@@ -427,13 +427,20 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      generation reads at once (fx 10-26: without it, a device joined through MLS held epoch 0 only, and the account's
      directory, resealed with the generation, did not read).
    - THE NODE's UPKEEP follows the account's tree as a space's (`keys_round::reconcile` with the devices list): a device
-     added or removed while no page is open. Its member is THIS device's (the seed of the signer in the account's MLS
-     state the node keeps: `mls::signer_seed_of`); it reads the account's channel (the data key's tail, under its table
+     added or removed while no page is open. Its member is THIS device's: the device seed the delegate KEEPS (`identity_device/`,
+     set once — the signer seed of the account's MLS state if it has one, else a fresh seed the page stirs in:
+     `Request::DeviceMember`; the page's `keys.deviceSeed` and the round read the same one); it reads the account's channel (the data key's tail, under its table
      key) and the devices list (key log, devices contract), merges, reconciles, escrows each new generation (`g/`, `m/`),
      keeps the generations as the account's epochs, and writes its rows to the channel signed with the data key behind
      the same fork guard as every upkeep step (`identity::upkeep_sign_channel`). Its channel is the identity's
      (`identity::CHANNEL`); every member whose page handed the node its inbox watch is served (an account in no space
-     too). fx/fy 10-27: a device back with every page of the account closed was placed by the node in 320 s. REQUIRED BEFORE K8.6 (MLS removed): a device that comes back after another
+     too), each its OWN round, every wake-up, its page open or not (as a space's follower: concurrent reconciles merge);
+     how each member's round last went is in the upkeep status (`accountTree`). A RETIRED member (an empty mandate: the
+     page moved to a newer build) is never served again, and a build every member left reads nothing at a wake-up: the
+     node wakes EVERY build of the app it ever registered, every minute, all charged to one node-wide duty budget
+     (freenet 0.2.146: 100 ms/s across delegates, 10 ms/s each; a wake-up that finds either spent is skipped). fx 10-27
+     with 46 builds woken: the newest build's wake-ups were skipped for ~20 min after registering (its own budget full,
+     so the node-wide one). fx/fy 10-27: a device back with every page of the account closed was placed by the node in 320 s. REQUIRED BEFORE K8.6 (MLS removed): a device that comes back after another
      made the tree reads through `m/` meanwhile, but is placed only once a placed device reconciles.
    MLS REMOVED (K8.6, design 10-27), in three phases, each through the gates:
    (6a) THE ACCOUNT ON ITS TREE ALONE — a device may write for the account when the tree PLACES it (`keys.writable`); its

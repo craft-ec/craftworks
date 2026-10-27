@@ -206,6 +206,9 @@ export async function start(ctx) {
     inboxKey: () => call(core.frames_inbox_key(), "reading the inbox key"),
     // The DID's member for spaces (the same on every device of the account): its MLS seed and keys, its credential.
     spaceMember: () => call(core.frames_space_member(), "the account's member for spaces"),
+    // THIS DEVICE's member in the account's tree (K8.6): its seed, kept by the identity (`fresh`: drawn here, kept the
+    // first time; a device with an account MLS state keeps its signer's).
+    deviceMember: fresh => call(core.frames_device_member(fresh), "this device's member in the account's tree"),
     // UPKEEP with no page open: the inbox the delegate watches at each wake-up, and what it has done.
     // With it, the page's randomness and time: the delegate has neither of its own.
     upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox, crypto.getRandomValues(new Uint8Array(32)), Date.now()), "handing upkeep the inbox"),

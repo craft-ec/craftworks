@@ -418,10 +418,7 @@ fn client(ident: &Rule, store: &Store, kps: &KeyPackages, signer: &(Vec<u8>, Vec
 /// state (`Account::save`: `CWMS`, then the signer's secret, length-prefixed) without loading the group — the node has
 /// the state but not, at every wake-up, what loading it needs.
 pub fn signer_seed_of(state: &[u8]) -> Option<[u8; 32]> {
-    let b = state.strip_prefix(b"CWMS")?;
-    let (n, r) = b.split_at_checked(4)?;
-    let n = u32::from_le_bytes(n.try_into().ok()?) as usize;
-    r.get(..n)?.get(..32)?.try_into().ok()
+    craftworks_identity::mls_signer_seed(state)
 }
 
 pub fn new_signer() -> Result<(Vec<u8>, Vec<u8>), String> {

@@ -107,7 +107,8 @@ fn world(b_current: bool) -> World {
     h.set_secret(identity::UPKEEP_DEVICES, &contract_keys::code_hash(DEVICES));
     h.set_secret(identity::UPKEEP_IDLOG, &contract_keys::code_hash(IDLOG));
     h.set_secret(identity::UPKEEP_WAKEUPS, &30u64.to_le_bytes());
-    identity::upkeep_stir(&mut h, &[7; 32]);
+    // (ENLISTED as a page enlists it: its inbox watch.)
+    identity::serve(&mut h, Request::UpkeepWatch { inbox: [0x1B; 32], seed: [7; 32], now: 1_800_000_000 }, [9; 32]);
     // THE DEVICES LIST: A, and B (current or not).
     let mut net = Net::default();
     net.st.insert(id(IDLOG, &did), log.encode());
@@ -195,4 +196,18 @@ fn the_node_does_not_add_a_device_that_is_not_current() {
     let check = craftworks_groups::AccountCheck { current: vec![w.a.id.0.to_bytes(), w.b.id.0.to_bytes()], ever: vec![], writers: vec![w.a.id.0.to_bytes()] };
     gb.merge_all(&ops, &check);
     assert!(!gb.placed(), "B not added");
+}
+
+/// A RETIRED member (their page moved to a newer build, leaving this one an empty mandate): the round never starts for
+/// them, and a build every member left reads nothing at a wake-up. CONTROL: before retiring, both do.
+#[test]
+fn a_retired_member_is_not_served_and_a_left_build_reads_nothing() {
+    let mut c = world(true);
+    assert!(!account_round::woke(&mut c.h).is_empty(), "control: the round starts for a member still here");
+    assert_eq!(identity::upkeep_woke(&mut c.h), Some([0x1B; 32]), "control: the inbox read while a member is here");
+    let mut w = world(true);
+    identity::serve(&mut w.h, Request::UpkeepMandate { me: String::new(), spaces: Vec::new(), spent: Vec::new() }, [9; 32]);
+    assert!(identity::upkeep_retired(&w.h, &w.member), "retired by the empty mandate");
+    assert!(account_round::woke(&mut w.h).is_empty(), "no round for a retired member");
+    assert_eq!(identity::upkeep_woke(&mut w.h), None, "no inbox read for a build every member left");
 }

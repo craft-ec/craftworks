@@ -24,8 +24,12 @@ use crate::reads::{self, Round};
 use crate::rekey_round::Held;
 use crate::upkeep::{id_of, Io, Reply};
 
-pub const ROUND: &[u8] = b"identity_account_tree/round";
-const LAST: &[u8] = b"identity_account_tree/last";
+pub const ROUND: &[u8] = b"identity_account_tree/round/";
+/// ONE ROUND PER MEMBER (a node serving several accounts serves each every wake-up — one in turn left a member waiting
+/// as many minutes as the node had members: fx 10-27, a test node with a member per run never reached a new one).
+fn round_of(member: &[u8; 32]) -> Vec<u8> {
+    [ROUND, &member[..]].concat()
+}
 /// What an MLS-sealed generation's key is derived with (the page's `members.account`: the same bytes).
 const MLS_SEALED: &[u8] = b"craftworks 2026-10-26 account generation, mls-sealed";
 
@@ -35,45 +39,67 @@ pub fn channel_name(_did: &[u8; 32]) -> String {
     identity::CHANNEL.to_string()
 }
 
-/// A WAKE-UP: when no round is in flight, one for the next member in turn whose page is away and whose node holds the
-/// account's data key and MLS state.
+/// A WAKE-UP: a round for EVERY member whose node holds the account's data key and this device's member, and whose own
+/// round is not in flight.
 pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
-    if reads::busy(h, ROUND) {
-        return Vec::new();
+    let mut out = Vec::new();
+    for member in identity::upkeep_members(h) {
+        // (Why a member's round does not start, SAID each wake-up.) NOT KEPT OUT OF A PAGE's WAY (as a space's follower is
+        // not): a page and the node reconciling at once merge, and only the lowest placed device resolves heads — waiting
+        // for the page to be "away" counted completed wake-ups, which a busy node runs rarely (fx 10-27: 2 in 20 minutes,
+        // a device placed after 9 minutes or not in 10).
+        // A RETIRED member (moved to a newer build): this build never touches their account's tree again.
+        if identity::upkeep_retired(h, &member) {
+            continue;
+        }
+        let not: Option<String> = if identity::upkeep_account(h, &member).is_none() {
+            Some("not started: the account's data key is not held here".into())
+        } else if identity::upkeep_device_seed(h, &member).is_none() {
+            Some("not started: this device has no member in the account's tree here".into())
+        } else if reads::busy(h, &round_of(&member)) {
+            Some("not started: its round is still waiting on an answer".into())
+        } else {
+            None
+        };
+        match not {
+            Some(why) => identity::upkeep_account_tree_said(h, &member, &why),
+            None => out.extend(start(h, member)),
+        }
     }
-    let all: Vec<[u8; 32]> = identity::upkeep_members(h)
-        .into_iter()
-        .filter(|m| identity::upkeep_since_tick(h, m) >= crate::upkeep::PAGE_AWAY && identity::upkeep_account(h, m).is_some() && identity::upkeep_account_mls(h, m).is_some())
-        .collect();
-    let Some(member) = reads::next(h, LAST, &all) else {
-        reads::save(h, ROUND, None);
-        return Vec::new();
-    };
-    start(h, member)
+    out
 }
 /// A round for `member` begun.
 pub fn start<H: Host>(h: &mut H, member: [u8; 32]) -> Vec<Io> {
     drive(h, Round { member, started: identity::upkeep_wakeups(h), started_ms: identity::upkeep_now_ms(h), ..Round::default() })
 }
 
-/// An ANSWER from the network: kept if this round asked for it, then the round driven on.
+/// An ANSWER from the network: to EVERY member's round that asked for it, each driven on.
 pub fn replied<H: Host>(h: &mut H, reply: &Reply) -> Vec<Io> {
     let Reply::Got { id, state } = reply else { return Vec::new() };
-    match reads::take(h, ROUND, id, state.clone()) {
-        Some(r) => drive(h, r),
-        None => Vec::new(),
+    let mut out = Vec::new();
+    for member in identity::upkeep_members(h) {
+        if let Some(r) = reads::take(h, &round_of(&member), id, state.clone()) {
+            out.extend(drive(h, r));
+        }
     }
+    out
 }
 
 fn drive<H: Host>(h: &mut H, r: Round) -> Vec<Io> {
     let (out, want) = match step(h, &r) {
-        Ok(x) => x,
+        Ok(x) => {
+            let said = if !x.1.is_empty() { format!("reading {} contract(s)", x.1.len()) } else if x.0.is_empty() { "in step: nothing to write".into() } else { "wrote to the channel".into() };
+            identity::upkeep_account_tree_said(h, &r.member, &said);
+            x
+        }
         Err(why) => {
+            identity::upkeep_account_tree_said(h, &r.member, &format!("stopped: {why}"));
             crate::upkeep::followed(h, &r.member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::ACCOUNT_TREE, &why);
             (Vec::new(), Vec::new())
         }
     };
-    reads::go(h, ROUND, r, out, want)
+    let name = round_of(&r.member);
+    reads::go(h, &name, r, out, want)
 }
 
 /// The state read of `id` this round: `Some(None)` read, not there; `None` not read yet.
@@ -87,8 +113,9 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
     let held = Held::of(h).ok_or("the contracts' code is not held here yet")?;
     let c = held.codes();
     let (did, data_seed) = identity::upkeep_account(h, &member).ok_or("the account's data key is not held here")?;
-    let mls_state = identity::upkeep_account_mls(h, &member).ok_or("the account's group is not held here")?;
-    let seed = craftworks_mls::signer_seed_of(&mls_state).ok_or("the account's group state does not read")?;
+    // (The account's PRE-TREE history, if any: its last MLS epoch seals the `m/` copies.)
+    let mls_state = identity::upkeep_account_mls(h, &member);
+    let seed = identity::upkeep_device_seed(h, &member).ok_or("this device's member in the account's tree is not kept here")?;
     let me = Account::of(&seed);
     let my_id = me.id.0.to_bytes();
 
@@ -173,7 +200,12 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
         let (leaf, sig) = Account::of(&seed).signed_leaf();
         out_rows.push((format!("d/{}", identity::hex(&my_id)).into_bytes(), serde_json::json!({ "leaf": identity::hex(&leaf), "sig": identity::hex(&sig) }).to_string().into_bytes()));
     }
-    // 4. PLACED: the reconcile, the heads, the escrows.
+    // 4. PLACED: the reconcile, the heads, the escrows. (Not placed here: SAID — what the node did is never silent.)
+    if !g.placed() {
+        let why = format!("not placed in the tree it rebuilt ({} operation(s), {} member(s), {} current, {} leaf/leaves): nothing it can add", ops.len(), g.members().len(), current.len(), leaves.len());
+        crate::upkeep::followed(h, &member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::ACCOUNT_TREE, &why);
+    }
+    let mut said = String::new();
     if g.placed() {
         let rand = identity::upkeep_random(h).ok_or("no randomness armed")?;
         let hexs = |b: &[u8; 32]| identity::hex(b);
@@ -182,6 +214,7 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
         let ins: BTreeMap<String, [u8; 32]> = current.iter().map(|m| (hexs(m), [0; 32])).collect();
         let outs: BTreeMap<String, [u8; 32]> = leaves.keys().filter(|m| !current.contains(m)).map(|m| (hexs(m), [0; 32])).collect();
         let rec = g.reconcile(&cards, &|d| listed.iter().any(|l| l == d), &ins, &outs, rand);
+        said = format!("{} added, {} removed{}", rec.added.len(), rec.removed.len(), if rec.not.is_empty() { format!(" — not: {}", rec.not.join("; ")) } else { String::new() });
         let mut new_ops = rec.ops;
         // (Only the LOWEST placed device resolves concurrent heads — two at once fed each other key changes.)
         if g.members().into_iter().min() == Some(my_id) && g.current_now().is_none() {
@@ -193,7 +226,7 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
             out_rows.push((format!("o/{}", craftworks_rules::members::keyop_key(op)).into_bytes(), identity::hex(op).into_bytes()));
         }
         // EACH GENERATION's ESCROWS: to the words (`g/`), and for the account's current MLS epoch (`m/`).
-        let mls = mls_epoch(&did, &log, &mls_state);
+        let mls = mls_state.as_deref().and_then(|st| mls_epoch(&did, &log, st));
         let mut eph = blake3::derive_key("craftworks account tree escrow", &rand);
         for (n, k) in g.generations() {
             if !have.contains(&format!("g/{n}")) {
@@ -223,6 +256,7 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
     }
     let step = o.prepare_rows(&out_rows).ok_or("the account's channel would not take the rows")?;
     let io = crate::write::signed_with(h, &member, &mut o, step, identity::upkeep_sign_channel)?;
+    crate::upkeep::followed(h, &member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::ACCOUNT_TREE, &format!("{} row(s) written to the channel ({said})", out_rows.len()));
     Ok((vec![io], Vec::new()))
 }
 

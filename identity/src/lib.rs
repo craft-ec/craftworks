@@ -261,6 +261,9 @@ pub enum Request {
     /// The DID's MEMBER for spaces (the same on every device): its MLS signing key's seed and public key, its
     /// credential (signed by the data key), and its feed key. The home site only.
     SpaceMember,
+    /// THIS DEVICE's MEMBER in the account's BeeKEM tree (K8.6): its seed — kept here; `fresh`, bytes the page drew, kept
+    /// as it the first time (a device with an account MLS state keeps its signer's: its credential names that key).
+    DeviceMember { fresh: [u8; 32] },
     /// UPKEEP with no page open (the node wakes this delegate: its manifest's `upkeep`): the contract the session
     /// account's INBOX is (a bag's instance id, the page computes it) — watched and read at each wake-up; with the
     /// page's RANDOMNESS (stirred into upkeep's pool) and TIME in seconds (upkeep's clock). Home only.
@@ -403,6 +406,8 @@ pub enum Answer {
     /// A member's spaces, handed to the next build: `(space id, its group state, its epochs' secrets)`.
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
     SpaceMember { seed: [u8; 32], public: [u8; 32], credential: Vec<u8> },
+    /// This device's member seed in the account's tree (`Request::DeviceMember`).
+    DeviceMember { seed: [u8; 32] },
     /// Upkeep so far: wake-ups run, the watched inbox (if set) and its state's length when last read.
     Upkeep {
         wakeups: u64,
@@ -421,6 +426,10 @@ pub enum Answer {
         round_at: Option<u64>,
         /// When this member's follower next has its turn (ms, the node's clock): a page asks it to run then.
         next: Option<u64>,
+        /// THE ACCOUNT TREE's ROUND as it last went for this member (K8.5): the wake-up and what it did or why it did not
+        /// start — every wake-up, so a round that never runs is seen.
+        #[serde(default)]
+        account_tree: Option<String>,
     },
     EpochSecrets { epochs: Vec<(u64, [u8; 32])> },
     /// The witness mandate is kept (`Request::WitnessMandate`).
@@ -544,6 +553,7 @@ pub fn upkeep_status<H: Host>(h: &H, m: Option<&[u8; KEY_LEN]>) -> Answer {
         decided: m.map(|m| upkeep_decided(h, m)).unwrap_or_default(),
         round_at: m.and_then(|m| upkeep_round_at(h, m)),
         next: m.and_then(|m| u64_of(h.get_secret(&of(UPKEEP_NEXT, m)))).filter(|n| *n > 0),
+        account_tree: m.and_then(|m| h.get_secret(&of(ACCOUNT_TREE_LAST, m))).and_then(|b| String::from_utf8(b).ok()),
     }
 }
 
@@ -734,7 +744,16 @@ pub fn inbox_address(did: &[u8; 32]) -> [u8; 32] {
 pub fn upkeep_woke<H: Host>(h: &mut H) -> Option<[u8; 32]> {
     let n = u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0) + 1;
     h.set_secret(UPKEEP_WAKEUPS, &n.to_le_bytes());
+    // A build every member LEFT reads nothing: it still wakes every minute (the node wakes every build of the app it
+    // ever registered, all charged to one node-wide budget), so it must cost as little as a wake-up can.
+    if upkeep_members(h).iter().all(|m| upkeep_retired(h, m)) {
+        return None;
+    }
     h.get_secret(UPKEEP_INBOX).and_then(|b| b.try_into().ok())
+}
+/// Member `m` RETIRED here: their page moved to a newer build and left this one an empty mandate.
+pub fn upkeep_retired<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> bool {
+    upkeep_mandate(h, m).is_some_and(|(me, spaces)| me.is_empty() && spaces.is_empty())
 }
 /// The inbox upkeep watches, if one was handed over.
 pub fn upkeep_inbox<H: Host>(h: &H) -> Option<[u8; 32]> {
@@ -1483,6 +1502,16 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             let public = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
             SpaceMember { seed, public, credential: space_member_credential(&a.did, &data, &public) }
         }
+        Request::DeviceMember { fresh } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            match device_seed(h, &a.public(), Some(fresh)) {
+                Some(seed) => DeviceMember { seed },
+                None => Refused(Why::NotSaved),
+            }
+        }
         Request::UpkeepWatch { inbox, seed, now } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
@@ -1835,6 +1864,38 @@ pub fn upkeep_sign_space<H: Host>(h: &mut H, member: &[u8; KEY_LEN], params: &[u
 pub fn upkeep_account<H: Host>(h: &H, member: &[u8; KEY_LEN]) -> Option<([u8; 32], [u8; 32])> {
     let m = member_(h, member)?;
     Some((m.did, m.data?))
+}
+
+/// THE PRE-TREE HISTORY (K8.6 keeps it — migration needs it, and it needs no MLS code): a device's SIGNER SEED read
+/// from a saved MLS state (`CWMS`, then the signer's secret, length-prefixed) — the key its credential names.
+pub fn mls_signer_seed(state: &[u8]) -> Option<[u8; 32]> {
+    let b = state.strip_prefix(b"CWMS")?;
+    let (n, r) = b.split_at_checked(4)?;
+    let n = u32::from_le_bytes(n.try_into().ok()?) as usize;
+    r.get(..n)?.get(..32)?.try_into().ok()
+}
+/// THIS DEVICE's MEMBER SEED in the account's tree (K8.6), kept per member: the one kept here; else its account MLS
+/// state's signer (its credential names that key); else `fresh`, kept as it (none given: none).
+const DEVICE: &[u8] = b"identity_device/";
+fn device_seed<H: Host>(h: &mut H, m: &[u8; KEY_LEN], fresh: Option<[u8; 32]>) -> Option<[u8; 32]> {
+    if let Some(s) = upkeep_device_seed(h, m) {
+        return Some(s);
+    }
+    let s = fresh?;
+    h.set_secret(&of(DEVICE, m), &s).then_some(s)
+}
+/// UPKEEP's DEVICE SEED (K8.6): as a page's `DeviceMember` gives it, never minting one.
+pub fn upkeep_device_seed<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<[u8; 32]> {
+    h.get_secret(&of(DEVICE, m))
+        .and_then(|b| <[u8; 32]>::try_from(b).ok())
+        .or_else(|| h.get_secret(&in_space(MLS, m, &None)).filter(|s| !s.is_empty()).and_then(|st| mls_signer_seed(&st)))
+}
+
+/// The account tree's round as it last went for a member (`upkeep_status`'s `account_tree`).
+pub const ACCOUNT_TREE_LAST: &[u8] = b"identity_account_tree/last/";
+pub fn upkeep_account_tree_said<H: Host>(h: &mut H, m: &[u8; KEY_LEN], said: &str) {
+    let w = upkeep_wakeups(h);
+    h.set_secret(&of(ACCOUNT_TREE_LAST, m), format!("wake-up {w}: {said}").as_bytes());
 }
 
 /// UPKEEP's ACCOUNT MLS STATE (K8.5): the account's group as kept here for the member — its signer is this device's
