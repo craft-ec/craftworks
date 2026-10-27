@@ -3177,6 +3177,8 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               another — the credential named neither, the device was never placed, the upkeep job (needs writable) never
               ran, the DM never accepted. Fix: the hand-over unlocks the earlier build and asks its `DeviceMember`, kept
               here by `DeviceSeedKeep` (appended LAST; another seed refused) BEFORE this build mints one. Test + control.
+- [x] 10-27 v451 — K8.6 6b SPACES OFF MLS LIVE (90cac6c; manifest bb211bf5db0a; gates 3/3 + frames; identity changed:
+  one PIN entry). Carries the device-seed hand-over fix for accounts made on v450. NEXT: 6c (MLS code removed).
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows
 
