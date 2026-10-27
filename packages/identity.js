@@ -240,10 +240,20 @@ export async function start(ctx) {
       };
       const k = (await askPrior(prior, core.frames_handover_keys_from(prior, pin), "the member's keys"))?.handedKeys;
       if (k) await keepGroup(k.mls, k.epochs, NONE);
+      // THIS DEVICE's MEMBER SEED (K8.6: the seed its credential names, kept by that build's delegate) — carried FIRST,
+      // before this build mints one (10-27: an account made on v450 lost its seed at the upgrade and was never placed in
+      // its tree again). Not from an older build gathered (`epochsOnly`): only the one the member moved from.
+      let seed = null;
+      if (!epochsOnly) {
+        // (Its session there first — `DeviceMember` answers the session's member; the PIN opens it, as a retirement does.)
+        await askPrior(prior, core.frames_unlock_from(prior, pin), "a session");
+        const d = (await askPrior(prior, core.frames_device_member_from(prior, crypto.getRandomValues(new Uint8Array(32))), "this device's member"))?.deviceMember;
+        if (d?.seed) seed = (await call(core.frames_device_seed_keep(bytes(d.seed)), "keeping this device's member"))?.deviceMember ? "kept" : "refused";
+      }
       const sp = (await askPrior(prior, core.frames_handover_spaces_from(prior, pin), "the member's spaces"))?.handedSpaces ?? [];
       // (A space's epochs only — K8.6: no MLS space group is kept; its tree's generations are among its epochs.)
       for (const x of sp) await keepGroup(null, x.epochs, bytes(x.space));
-      return { moved: k?.epochs.length ?? 0, group: !!k?.mls, spaces: sp.length };
+      return { moved: k?.epochs.length ?? 0, group: !!k?.mls, spaces: sp.length, seed };
     },
     // RETIRE an earlier build's upkeep for this member: its PIN there, then an empty mandate — a build the member left
     // still wakes every minute and would act on the last mandate it held. `{ retired }`, or why not (`silent`: it

@@ -960,3 +960,26 @@ fn the_rekey_round_reads_a_tree_only_spaces_members_from_its_kept_list() {
     let (roster, _) = crate::rekey_round::space_of(&h, &member, &m);
     assert_eq!(roster, vec!["did:craftec:owner".to_string(), "did:craftec:bob".to_string()], "the list kept");
 }
+
+/// K8.6 THIS DEVICE's MEMBER SEED CARRIED from an earlier build (`DeviceSeedKeep`): kept when none is, the same one
+/// again answered, ANOTHER refused (never a second member for one device); `DeviceMember` then answers the carried seed,
+/// never a fresh one. Control: without it, `DeviceMember` keeps the fresh seed the page drew.
+#[test]
+fn a_devices_member_seed_carried_from_an_earlier_build_is_kept() {
+    let fresh_world = || {
+        let mut h = crate::testhost::Map::default();
+        identity::serve(&mut h, identity::Request::Provision { seed: [0x31; 32], did: [0x32; 32], pin: "246810".into(), data: vec![0x33; 32] }, [9; 32]);
+        h
+    };
+    let seed_of = |a: identity::Answer| match a {
+        identity::Answer::DeviceMember { seed } => Some(seed),
+        _ => None,
+    };
+    let mut c = fresh_world();
+    assert_eq!(seed_of(identity::serve(&mut c, identity::Request::DeviceMember { fresh: [0xF1; 32] }, [9; 32])), Some([0xF1; 32]), "control: none carried — the fresh one kept");
+    let mut h = fresh_world();
+    assert_eq!(seed_of(identity::serve(&mut h, identity::Request::DeviceSeedKeep { seed: [0xC1; 32] }, [9; 32])), Some([0xC1; 32]), "carried: kept");
+    assert_eq!(seed_of(identity::serve(&mut h, identity::Request::DeviceSeedKeep { seed: [0xC1; 32] }, [9; 32])), Some([0xC1; 32]), "the same again: answered");
+    assert!(seed_of(identity::serve(&mut h, identity::Request::DeviceSeedKeep { seed: [0xC2; 32] }, [9; 32])).is_none(), "another: refused");
+    assert_eq!(seed_of(identity::serve(&mut h, identity::Request::DeviceMember { fresh: [0xF1; 32] }, [9; 32])), Some([0xC1; 32]), "the carried seed, not a fresh one");
+}

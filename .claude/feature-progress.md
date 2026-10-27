@@ -3172,6 +3172,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               Left for 6c: `logsOf`'s space parts, `provOf`/`keyEvents`, the identity's space MLS requests
               (MlsSave/Load space, HandoverSpaces state, UpkeepAck, upkeep groups/moved/stale), dead rules steps
               (UNLOADABLE, MOVED_MEANWHILE, LOG/COMMIT/NEXT_REFUSED, INFO_*), core `tail_replace`.
+        - 10-27 release v451 gates 0/3 "a read failed" (B's DM missing): an account REGISTERED ON v450 kept a fresh device
+              seed only that build's delegate held; the hand-over carried its keys, not the seed, so the next build minted
+              another — the credential named neither, the device was never placed, the upkeep job (needs writable) never
+              ran, the DM never accepted. Fix: the hand-over unlocks the earlier build and asks its `DeviceMember`, kept
+              here by `DeviceSeedKeep` (appended LAST; another seed refused) BEFORE this build mints one. Test + control.
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows
 

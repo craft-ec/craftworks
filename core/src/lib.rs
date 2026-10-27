@@ -221,6 +221,8 @@ impl Core {
                 // from that build left behind (10-18, v401 → v403: its handover walked only the numbers just below
                 // the latest — the MLS epochs stayed there).
                 | Request::EpochSecrets { .. }
+                // THIS DEVICE's MEMBER SEED there (read: the one it keeps; K8.6 — carried to this build).
+                | Request::DeviceMember { .. }
         ) && !matches!(req, Request::UpkeepMandate { spaces, .. } if spaces.is_empty())
         {
             return Err("an earlier build is asked only to hand a member over, to give a space's earlier keys, or to retire its upkeep".into());
@@ -1139,6 +1141,16 @@ mod js {
         /// The DID's member for spaces (the home site only): its MLS seed, keys and credential.
         pub fn frames_device_member(&mut self, fresh: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::DeviceMember { fresh: b32(fresh)? })
+        }
+        /// THIS DEVICE's MEMBER SEED carried from an earlier build (`DeviceSeedKeep`).
+        pub fn frames_device_seed_keep(&mut self, seed: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::DeviceSeedKeep { seed: b32(seed)? })
+        }
+        /// `[id, frames]` of a DeviceMember asked of an EARLIER build (its session opened there by the PIN first): the
+        /// member seed it keeps for this device (`fresh`: kept there only if it had none — a build from before K8.6).
+        pub fn frames_device_member_from(&mut self, prior: &str, fresh: &[u8]) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::DeviceMember { fresh: b32(fresh)? }).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         pub fn frames_space_member(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::SpaceMember)

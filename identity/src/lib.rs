@@ -317,6 +317,11 @@ pub enum Request {
     /// THIS DEVICE's MEMBER in the account's BeeKEM tree (K8.6): its seed — kept here; `fresh`, bytes the page drew, kept
     /// as it the first time (a device with an account MLS state keeps its signer's: its credential names that key).
     DeviceMember { fresh: [u8; 32] },
+    /// THIS DEVICE's MEMBER SEED carried from the EARLIER build it moved from (its `DeviceMember`, asked there at the
+    /// handover): kept as this device's — the seed its credential names — unless another is kept here already (10-27: an
+    /// account registered on v450 held a fresh seed only that build's delegate kept; the next build minted another, the
+    /// credential named neither, and the device was never placed again). Answered `DeviceMember` with the seed kept.
+    DeviceSeedKeep { seed: [u8; 32] },
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`): the codes' hashes
@@ -1510,6 +1515,18 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             }
             match device_seed(h, &a.public(), Some(fresh)) {
                 Some(seed) => DeviceMember { seed },
+                None => Refused(Why::NotSaved),
+            }
+        }
+        Request::DeviceSeedKeep { seed } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            match h.get_secret(&of(DEVICE, &a.public())).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
+                Some(kept) if kept != seed => Refused(Why::NotThisKey),
+                Some(kept) => DeviceMember { seed: kept },
+                None if h.set_secret(&of(DEVICE, &a.public()), &seed) => DeviceMember { seed },
                 None => Refused(Why::NotSaved),
             }
         }
