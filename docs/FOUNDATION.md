@@ -443,12 +443,22 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      so the node-wide one). fx/fy 10-27: a device back with every page of the account closed was placed by the node in 320 s. REQUIRED BEFORE K8.6 (MLS removed): a device that comes back after another
      made the tree reads through `m/` meanwhile, but is placed only once a placed device reconciles.
    MLS REMOVED (K8.6, design 10-27), in three phases, each through the gates:
-   (6a) THE ACCOUNT ON ITS TREE ALONE — a device may write for the account when the tree PLACES it (`keys.writable`); its
-   member SEED kept by the delegate itself (`identity` keeps it per member; a device with an MLS state keeps the seed its
-   credential already names); a registration or a words login writes the new device's CREDENTIAL (its node, its member
-   key, signed by the owner key the words give) — no MLS group made or joined; a device REMOVED rotates the key log and
-   credentials again the devices the devices LIST holds (never the MLS group's members); the channel takes no more MLS
-   rows; the node's round takes the seed from the delegate; `m/` copies go on under the account's LAST MLS epoch (frozen).
+   (6a) THE ACCOUNT ON ITS TREE ALONE — WHO ITS DEVICES ARE is the devices LIST (`keys.ready`: credentials on the key
+   log's current key, `account_devices_now` — no MLS group loaded; `epoch` the key log's `seq`); this device is the
+   account's (`MEMBER`, the session `OPEN`) when its node holds one, and WRITES for it once the tree PLACES it
+   (`keys.writable`); the list is read again whenever the account's card moves (a device added or removed elsewhere). A
+   DEVICE FROM BEFORE THE TREE whose node is not in the list carries the credentials its MLS group holds into the devices
+   contract once (fx/fy 10-27: a v446 device had none there — never current, never placed). Its member SEED is kept by the delegate (`identity_device/`: a device with an MLS state keeps the
+   seed its credential already names). A REGISTRATION or a WORDS LOGIN opens the generations' escrows (a words login),
+   then writes this device's CREDENTIAL (`account::device_credential`: its node, its member, signed by the current owner
+   key the words give) — no MLS group made or joined, no `info`/`e/` rows. The tree places it: the root's maker, a placed
+   device's reconcile, or it ENTERS BY ITSELF — a current device the tree does not place adds its own leaf and changes
+   the key (a words login with every placed device gone; added meanwhile by another too, both adds converge: `groups`
+   tests). A device REMOVED: the key log rotated with the words and the kept devices credentialed again (as before),
+   then the tree takes it out on its next reconcile — no MLS commit; a device whose node held a credential once and holds
+   none on the current key forgets everything. The node's round takes the seed from the delegate; `m/` copies go on
+   under the account's LAST MLS epoch (frozen: `keys.mlsNow` loads a device's MLS state read-only and catches it up,
+   never commits). The 10-13 repair (`repairAccount`: MLS group info re-pointed) is gone with it.
    (6b) SPACES OFF MLS — a space's tables seal and read with its generations alone; the MLS space group, its bridge and
    alternates go (an MLS-era space is not shown: K8.4's rule).
    (6c) THE MLS CODE GOES — the delegate's MLS requests and dead catch-up, the `mls` crate, the wasm package. KEPT, named

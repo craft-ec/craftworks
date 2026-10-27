@@ -93,6 +93,7 @@ pub const ALL: &[(&str, bool)] = &[
     (OUT_NOT_MY_TURN, false),
     (OUT_NOT_BUILT, false),
     ("keys-tree-made", false),
+    ("keys-tree-entered", false),
     (KEYS_RECONCILED, false),
     (KEYS_IN_STEP, true),
     (KEYS_SHORT, false),

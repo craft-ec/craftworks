@@ -439,9 +439,6 @@ export async function start(ctx) {
       // WRITTEN OUT NOW (what is waiting in the tail, into the tree): before an EDIT, so the version it replaces is
       // in a tree — and its root logged — and every edit leaves the one before in its history.
       flushNow: () => (queue = ctx.background("storage: queue", queue).then(() => core.tail_pending(id) > 0 && flush())),
-      // REPLACED with exactly `rows` (`[[key, value]]`, text) — a REPAIR only (`keys.repairAccount`): for a table no key
-      // held here opens any more (another branch of the group sealed it over). What it held is not read; it is gone.
-      replaceWith: list => (queue = ctx.background("storage: queue", queue).then(() => replace(list))),
       // ITS HISTORY of one row: its value at each root the table had (`[{ at, root, value }]`, oldest first; `at`: when
       // that tree was replaced, `value`: bytes, or null — no such row then, or sealed with a key not held here). The old
       // trees' blocks on the row's path fetched as any read's.
@@ -887,17 +884,6 @@ export async function start(ctx) {
         const l = core.tail_log_root(id, prior, was, now, now - days * 86400e3, days ? HISTORY.roots : 0);
         if (l) await step(l, "keeping its history").catch(e => ctx.failed("history", e, `${app}: its history not logged: ${e.message}`));
       }
-    }
-
-    // REPLACE (see `replaceWith`): a new tree of `list` alone under the key writes use — its blocks put first, then the
-    // step, as a flush.
-    async function replace(list) {
-      const given = list.map(([k, v]) => [enc.encode(k), typeof v === "string" ? enc.encode(v) : v]);
-      const f = await treeStep(() => core.tail_replace(id, given), "replacing");
-      ctx.log("replaced", { what: `${app}: replaced with ${list.length} row(s) (repair), seq ${f.seq}` });
-      st = { s: "present" };
-      waiting.delete(idHex);
-      await view();
     }
 
     return ready;
@@ -1843,37 +1829,6 @@ export async function start(ctx) {
     return [...live.values()].filter(t => mine.has(t.owner) && !t.absent);
   }
 
-  // REPAIR (`keys.repairAccount`, 10-13: an account whose directory a SECOND group sealed over — the owner's, 10-12):
-  // THE DIRECTORY made again, from what is known without reading it: this node (its feeds), the card, every public
-  // table the card lists (they are found by name: not listed would read as never made), the directory's own row.
-  // Upkeep's marks in that row start again (each is a "done already" a page re-checks).
-  async function repairDirectory(groupNodes = []) {
-    const sp = await space.account.strict();
-    const d = await directory();
-    const card = await cardOf(sp.shared);
-    const at = Date.now();
-    const names = new Set([CARD, ...PUBLIC, ...card.rows().filter(r => r.value).map(r => r.key)]);
-    // EVERY node of the group (`groupNodes`, from its credentials) and this one: each one's feeds listed.
-    const nodes = new Set([sp.self, ...groupNodes]);
-    const rows = [[CATALOG, JSON.stringify({ at })], ...[...nodes].map(k => [`node:${k}`, JSON.stringify({ at, b: 1 })]), ...[...names].map(n => [n, JSON.stringify({ at, b: 1 })])];
-    await d.replaceWith(rows);
-    directoryOpen = null;
-    directoryTail = null;
-    return rows.map(([k]) => k);
-  }
-  // …or, where it reads, every node of the group listed in it (each one's feeds found).
-  async function listNodes(groupNodes = []) {
-    const sp = await space.account.strict();
-    const keys = [...new Set([sp.self, ...groupNodes])];
-    for (const k of keys) await listInDirectory(`node:${k}`);
-    return keys;
-  }
-  // The directory's read STATE here (`unreadable`: sealed with a key this login does not hold — a forked account's
-  // original login; `keys.repairAccount` runs only there).
-  async function directoryState() {
-    const d = await directory();
-    return (await d.decided?.()) ?? d.state ?? { s: "unknown" };
-  }
   // …and EVERY table this node writes, opened: rows under an older key sealed over, a tree under another built again,
   // all under the group's CURRENT epoch (a node joining with the words from that epoch reads them). Waited for.
   async function resealOwn() {
@@ -1909,5 +1864,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), repairDirectory, listNodes, resealOwn, directoryState, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), resealOwn, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

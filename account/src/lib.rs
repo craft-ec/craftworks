@@ -266,6 +266,14 @@ pub fn reissue(did: &[u8; 32], log: &Log, words: &[u8], creds: &[Vec<u8>]) -> Op
     creds.iter().map(|c| read_credential(c).filter(|(d, ..)| d == did).map(|(_, _, node, mls)| credential(did, &node, &mls, &owner))).collect()
 }
 
+/// A DEVICE's CREDENTIAL (K8.6: a registration or a words login writes it — no MLS group): its node key and its member
+/// in the account's tree (`groups::Account::of` of the seed its delegate keeps), signed by the log's CURRENT owner key
+/// (the words hold it). `None` if the words are not the current ones.
+pub fn device_credential(did: &[u8; 32], log: &Log, words: &[u8], node: &[u8; 32], member: &[u8; 32]) -> Option<Vec<u8>> {
+    let j = position(words, log)?;
+    Some(credential(did, node, member, &owner_seed_at(words, j)?))
+}
+
 /// The key event log's contract for a DID: its PUT (with a state) or its address (without).
 #[cfg(feature = "puts")]
 pub fn idlog_put(code: &[u8], did: &[u8; 32], log: Option<&Log>) -> Put {
@@ -595,6 +603,23 @@ mod tests {
         let all: Vec<Vec<u8>> = creds.iter().chain(&again).cloned().collect();
         assert_eq!(device_members(&did, &rotated, &all), vec![ka], "B removed: its key is not current");
         assert_eq!(device_members_ever(&did, &rotated, &all), vec![ka, kb], "…but it was: its operations stay authored");
+    }
+
+    /// K8.6 A DEVICE's CREDENTIAL from the words: on the log's CURRENT key, so its member is current — after a rotation
+    /// too. Control: the same words before the rotation's key do not make it current; other words make none.
+    #[test]
+    fn a_devices_credential_from_the_words_is_on_the_current_key() {
+        let words = [0x61u8; 16];
+        let log0 = Log { events: vec![inception(&words).unwrap()] };
+        let did = log0.events[0].id();
+        let m = [0xC6u8; 32];
+        let c0 = device_credential(&did, &log0, &words, &[0x0C; 32], &m).unwrap();
+        assert_eq!(device_members(&did, &log0, &[c0.clone()]), vec![m], "current on the first key");
+        let rotated = rotate(&log0, &words).unwrap();
+        assert!(device_members(&did, &rotated, &[c0]).is_empty(), "control: the first key's credential is not current after a rotation");
+        let c1 = device_credential(&did, &rotated, &words, &[0x0C; 32], &m).unwrap();
+        assert_eq!(device_members(&did, &rotated, &[c1]), vec![m], "written after the rotation: current");
+        assert!(device_credential(&did, &rotated, &[0x62u8; 16], &[0x0C; 32], &m).is_none(), "other words: none");
     }
 
     /// THE ONE DEVICES STEP (page and node): the devices contract asked ONLY where the card says it exists — an unread

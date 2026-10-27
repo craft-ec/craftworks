@@ -165,11 +165,11 @@ export async function mount(ctx, el) {
       const sec = document.createElement("section");
       sec.innerHTML = `<ul class="facts"><li>Reading…</li></ul>`;
       box.append(sec);
-      // THE FACTS: a VIEW (`ctx.view`) — read, drawn, drawn again when the keys change. The repair: drawn once.
+      // THE FACTS: a VIEW (`ctx.view`) — read, drawn, drawn again when the keys change.
       const factsOf = ({ log, st, escrowed }) => [
           log ? `Recovery words changed ${log.changes} time${log.changes === 1 ? "" : "s"} (your key log has ${log.events} event${log.events === 1 ? "" : "s"}).` : "Your key log is not on the network yet.",
           st?.removed ? "This node was removed from your account: it holds no keys for anything written since." :
-          st ? `Your data is sealed with the keys of epoch ${st.epoch}; ${st.members.length} ${st.members.length === 1 ? "node holds" : "nodes hold"} them.` : "This site does not hold your account's keys.",
+          st ? `${st.members.length} ${st.members.length === 1 ? "device holds" : "devices hold"} your account's keys (key log event ${st.epoch}).` : "This site does not hold your account's keys.",
           escrowed === null ? null : `${escrowed} epoch${escrowed === 1 ? "" : "s"} kept in escrow for your recovery words: with the words alone, every one of them opens again.`,
         ].filter(Boolean);
       ctx.view(sec.querySelector(".facts"), {
@@ -184,39 +184,6 @@ export async function mount(ctx, el) {
           return frag;
         },
       });
-      async function drawSecurity() {
-        const st = await keys.ready();
-        // REPAIR (owner 10-13): where this login HOLDS the account's keys — the one to run it on when a recovery on
-        // another device started a second set of keys (that device's spaces and tables then read empty).
-        sec.querySelector(".repair")?.remove();
-        if (!st || st.removed) return;
-        const repair = Object.assign(document.createElement("div"), { className: "repair" });
-        const said = Object.assign(document.createElement("ul"), { className: "facts" });
-        const btn = Object.assign(document.createElement("button"), { type: "button", textContent: "Repair account keys" });
-        repair.append(
-          Object.assign(document.createElement("p"), {
-            className: "note",
-            textContent:
-              "Another device of yours shows no spaces after logging in with your recovery words? An earlier recovery may have started a second set of keys. Repair makes THIS login's keys the account's again: your other devices then log in with the recovery words once more and see everything.",
-          }),
-          btn,
-          said,
-        );
-        btn.onclick = async () => {
-          if (!(await (await ctx.require("theme")).ask(btn, { text: "Run this on your ORIGINAL login only — the one that still has your spaces. It makes this login's keys the account's again; your other devices then log in with the recovery words once more.", ok: "Run it" }))) return;
-          btn.disabled = true;
-          const line = t => said.append(Object.assign(document.createElement("li"), { textContent: t }));
-          try {
-            const r = await keys.repairAccount(line);
-            line(`Done: the account's keys are this login's (epoch ${r.epoch}). Log in with your recovery words on your other devices.`);
-          } catch (e) {
-            line(`Not repaired: ${ctx.say(e)}`);
-            btn.disabled = false;
-          }
-        };
-        sec.append(repair);
-      }
-      ctx.background("account: repair", drawSecurity());
 
     },
 

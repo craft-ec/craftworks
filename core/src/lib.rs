@@ -1548,6 +1548,15 @@ mod js {
             Ok(o)
         }
 
+        /// THIS DEVICE's CREDENTIAL (K8.6, `craftworks_account::device_credential`): its node key and its member in the
+        /// account's tree, signed with the key log's current owner key from the words. The key log read first.
+        pub fn device_credential(&self, idlog_code: &[u8], did: &[u8], words: &[u8], node: &[u8], member: &[u8]) -> Result<js_sys::Uint8Array, JsValue> {
+            let did = b32(did)?;
+            let log = self.log_of(idlog_code, &did, words)?;
+            let c = account::device_credential(&did, &log, words, &b32(node)?, &b32(member)?).ok_or_else(|| err("these are not this account's current recovery words".into()))?;
+            Ok(js_sys::Uint8Array::from(&c[..]))
+        }
+
         /// The account's DEVICES contract with these credentials (each device puts its own: the node keeps the union).
         pub fn devices_put(&mut self, devices_code: &[u8], idlog_code: &[u8], did: &[u8], creds: js_sys::Array) -> Result<JsValue, JsValue> {
             let did = b32(did)?;
@@ -1600,6 +1609,23 @@ mod js {
             let Some(st) = self.0.got(&dev) else { return Ok(js_sys::Array::new()) };
             let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
             Ok(account::device_members(&did, &log, &creds).iter().map(|n| JsValue::from(hex(n))).collect())
+        }
+        /// THE ACCOUNT's DEVICES NOW (K8.6: the account's status, no MLS group): each credential on the key log's CURRENT
+        /// key — `{ node, member, cred }` (hex), by node — and the log's `seq` (it moves with every removal). `null`
+        /// until the key log and the devices contract are both read here.
+        pub fn account_devices_now(&self, devices_code: &[u8], idlog_code: &[u8], did: &[u8]) -> Result<JsValue, JsValue> {
+            let did = b32(did)?;
+            let lid = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let Some(lst) = self.0.got(&lid) else { return Ok(JsValue::NULL) };
+            let log = craftworks_idlog_contract::read(&did, lst).ok_or_else(|| err("the account's key log does not read".into()))?;
+            let dev = account::devices_put(devices_code, idlog_code, &did, &[]).id_bytes;
+            let Some(st) = self.0.got(&dev) else { return Ok(JsValue::NULL) };
+            let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
+            let devices: Vec<serde_json::Value> = craftworks_devices_contract::current(&did, &log, &creds)
+                .into_iter()
+                .filter_map(|(node, c)| craftworks_identity::read_credential(&c).map(|(_, _, _, member)| serde_json::json!({ "node": hex(&node), "member": hex(&member), "cred": hex(&c) })))
+                .collect();
+            Ok(JsValue::from(serde_json::json!({ "seq": log.head().seq, "devices": devices }).to_string()))
         }
         /// EVERY DEVICE THE ACCOUNT TREE EVER HAD (`craftworks_account::device_members_ever`): whose operations count as
         /// authored. → `[member hex…]`.

@@ -6,11 +6,12 @@
 // (`account::members` in the core: credentials checked against the key log; removals by nodes still in, in epoch
 // order). No single writer can hide a node or take a removal back.
 //
-// The account's MLS group (`keys`) is where the nodes are added and removed; this capability tells everyone.
+// The account's DEVICES LIST (`keys`: credentials on the key log's current key — K8.6) is where the nodes are added and
+// removed; this capability tells everyone.
 //
 //   const membership = await ctx.require("membership");
 //   await membership.writers() // the node keys (hex) whose feeds count
-//   await membership.nodes()   // [{ index, key, me }] from the group — null where it is not kept (not the home site)
+//   await membership.nodes()   // [{ index, key, me }] from the devices list — null where it is not kept (not the home site)
 //   await membership.remove(index)
 export async function start(ctx) {
   const keys = await ctx.require("keys");
@@ -74,10 +75,12 @@ export async function start(ctx) {
   async function tell(st) {
     if (!st || st.removed || !st.members?.length) return;
     const t = await storage.table(MEMBERS);
-    const have = new Set(t.rows().map(r => r.key));
+    const have = new Map(t.rows().map(r => [r.key, r.value]));
     let n = 0;
     for (const m of st.members) {
-      if (have.has(`n/${m.key}`) || !m.cred) continue;
+      // (A credential issued AGAIN — the key rotated at a removal — replaces the one told: fx/fy 10-27, the old one
+      // stayed and the device that stayed counted as no writer.)
+      if (!m.cred || have.get(`n/${m.key}`) === m.cred) continue;
       await t.put(`n/${m.key}`, m.cred);
       n += 1;
     }
@@ -96,7 +99,7 @@ export async function start(ctx) {
     return st.members.map(m => ({ index: m.index, key: m.key, me: m.index === st.me }));
   }
 
-  // The account's devices' CREDENTIALS (bytes), as its group holds them — but `except` (a group index).
+  // The account's devices' CREDENTIALS (bytes), as its devices list holds them — but `except` (an index in it).
   async function credentials(except = null) {
     const st = await keys.ready.strict();
     return (st?.members ?? []).filter(m => m.cred && m.index !== except).map(m => bytes(m.cred));
@@ -104,12 +107,12 @@ export async function start(ctx) {
 
   // REMOVE a node (by its index in the group) — with the account's recovery WORDS (owner 10-09: a removed or stolen
   // device cut off for real): the key ROTATES and the devices that stay are credentialed again (the removed one stops
-  // counting everywhere, and nothing it holds credentials it again); then out of the group (a new epoch: it reads
-  // nothing written after), its current rows adopted into this node's feeds, its removal told.
+  // counting everywhere, and nothing it holds credentials it again); then out of the account's tree (a new generation:
+  // it reads nothing written after), its current rows adopted into this node's feeds, its removal told.
   async function remove(index, words) {
     const before = await keys.ready.strict();
     const node = before?.members.find(m => m.index === index)?.key;
-    if (!node) throw new Error("no such node in the account's group");
+    if (!node) throw new Error("no such node among the account's devices");
     if (!words) throw new Error("removing a device needs the account's recovery words");
     const me = await auth.check.strict();
     await auth.identity.removeDevice(me.didBytes, words, await credentials(index));

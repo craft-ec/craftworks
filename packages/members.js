@@ -346,6 +346,19 @@ export async function start(ctx) {
         said.made = true;
         life().then(l => l.transition("group", sp.id, "keys-tree-made", { why: myDid === c.owner ? "the owner placed itself" : "a listed member placed itself (naming its act)" }));
       }
+      // THE ACCOUNT's TREE: a CURRENT device it does not place ENTERS BY ITSELF (K8.6 — a words login with every placed
+      // device gone): its own add, then a key change. Added meanwhile by another device too, both adds converge
+      // (`groups` test `a_device_added_while_it_enters_by_itself_converges`).
+      if (A && !g.placed() && g.members().length && c.listedNow.includes(myDid)) {
+        const [leaf] = G.beekem_signed_leaf(m.seed);
+        const add = g.add(bytes(myDid), leaf, new Uint8Array(32));
+        if (add) await send(add);
+        const [rot] = g.rotate();
+        await send(rot);
+        await save();
+        said.entered = true;
+        life().then(l => l.transition("group", sp.id, "keys-tree-entered", { why: "this device, current in the devices list, entered the account's tree by itself" }));
+      }
       // NOT PLACED in a tree that exists: nothing this page can add — said once per change, with the tree's members.
       if (!g.placed() && (await feed()).rows().some(x => x.value)) {
         const placed = [...g.members()];
@@ -536,10 +549,10 @@ export async function start(ctx) {
       }
     };
     const ZERO = new Uint8Array(32);
-    // UNTIL K8.6, EVERY CURRENT DEVICE IS IN THE ACCOUNT's MLS GROUP: each generation is also sealed with a key from the
-    // group's CURRENT MLS epoch (`m/<n>/<epoch>`: written by whoever reconciles, for the epoch it is at), so a device that
-    // comes back unplaced (offline while another made the tree; it has no words) opens the generations with the MLS epoch
-    // it catches up to, and reads everything, before anyone places it.
+    // A DEVICE FROM BEFORE THE TREE (it holds the account's MLS state): each generation is also sealed with a key from the
+    // account's LAST MLS epoch (`m/<n>/<epoch>`: frozen since K8.6 — written by whoever reconciles and holds it), so such a
+    // device that comes back unplaced (offline while another made the tree; it has no words) opens the generations with
+    // the MLS epoch it catches up to, and reads everything, before anyone places it.
     const MLS_SEALED = new TextEncoder().encode("craftworks 2026-10-26 account generation, mls-sealed");
     const mlsKey = async secret => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array([...MLS_SEALED, ...(typeof secret === "string" ? bytes(secret) : secret)]))));
     const mlsNow = () => ctx.optional("members: the account's MLS epoch", keys.mlsNow(), () => null);
@@ -653,5 +666,7 @@ export async function start(ctx) {
   }
   (await ctx.require("lifecycle")).job("members reconcile", { every: 600e3, delay: 30e3, needs: async () => !!(await space.account()) || "nobody is logged in", run: () => reconcileAll() });
 
-  return { group, account, me, memberOf, reconcileAll };
+  // A DEVICE's MEMBER in the account's tree, of the seed its delegate keeps (hex): what its credential names (K8.6).
+  const deviceMember = seed => String(G.beekem_member(seed)[0]).toLowerCase();
+  return { group, account, me, memberOf, reconcileAll, deviceMember };
 }

@@ -53,12 +53,14 @@ export async function start(ctx) {
         walk: {
           from: ["CONFIRMING_CHANNEL"],
           to: "WALKING",
-          guard: d => (!d.fresh && d.channel === "present" && d.info) || "a words login walks only a channel read with its group info",
+          // (K8.6: a words login opens the generations' escrows the channel holds, then writes its credential — no group
+          // joined, so nothing it reads can make a second one.)
+          guard: d => !d.fresh || "only a words login opens the account's escrows",
         },
         create: {
           from: ["CONFIRMING_CHANNEL"],
           to: "CREATING",
-          guard: d => (d.fresh && d.channel === "absent") || `only a registration makes the account's group, on a channel the node answered is not there (fresh ${!!d.fresh}, channel ${d.channel})`,
+          guard: d => !!d.fresh || "only a registration credentials a new account's first device",
         },
         join: { from: ["WALKING"], to: "JOINING" },
         joined: { from: ["JOINING"], to: "MEMBER" },

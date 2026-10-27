@@ -485,3 +485,61 @@ fn a_removed_devices_history_still_counts() {
     assert!(matches!(Group::empty(&SPACE, d2.clone()).merge(&root, &current_only), Merged::Refused(_)), "judged by now alone");
 }
 
+
+/// K8.6 A DEVICE ENTERS THE ACCOUNT's TREE BY ITSELF (a words login, every placed device gone): current, unplaced, it adds
+/// its own leaf and changes the key; the old device's tree takes both, and reads what the new one seals.
+#[test]
+fn a_current_device_enters_the_accounts_tree_by_itself() {
+    let mut rng = StdRng::seed_from_u64(11);
+    let (d1, d3) = (account(0x41), account(0x43));
+    let chk = AccountCheck { ever: vec![], current: vec![id(&d1), id(&d3)], writers: vec![id(&d1)] };
+    let (mut g1, root) = Group::create(&SPACE, d1.clone()).unwrap();
+    let mut g3 = Group::empty(&SPACE, d3.clone());
+    assert_eq!(g3.merge(&root, &chk), Merged::Applied);
+    assert!(!g3.placed(), "control: not placed before");
+    let add = g3.add_member(&id(&d3), &d3.leaf_key(), &[0; 32]).unwrap().expect("its own add");
+    let (rot, _) = g3.rotate(&mut rng).unwrap();
+    assert!(g3.placed(), "placed by itself");
+    assert_eq!(g1.merge(&add, &chk), Merged::Applied, "its add taken: it is current");
+    assert_eq!(g1.merge(&rot, &chk), Merged::Applied, "its key change taken");
+    let (sealed, op) = g3.seal([3; 32], b"written by the new device", &mut rng).unwrap();
+    if let Some(op) = op {
+        g1.merge(&op, &chk);
+    }
+    assert_eq!(g1.open(&sealed).unwrap(), b"written by the new device");
+    // CONTROL: a device NOT current cannot enter.
+    let (d4, not) = (account(0x44), AccountCheck { ever: vec![], current: vec![id(&d1)], writers: vec![id(&d1)] });
+    let mut g4 = Group::empty(&SPACE, d4.clone());
+    g4.merge(&root, &not);
+    let add4 = g4.add_member(&id(&d4), &d4.leaf_key(), &[0; 32]).unwrap().expect("an add");
+    assert!(matches!(Group::load(&g1.save().unwrap(), d1.clone()).unwrap().merge(&add4, &not), Merged::Refused(_)), "not current: refused");
+}
+
+/// K8.6 THE RACE: a placed device adds a device while it enters by itself — two adds of one member, concurrent. Both
+/// trees take both, the new device is placed, and each reads what the other seals.
+#[test]
+fn a_device_added_while_it_enters_by_itself_converges() {
+    let mut rng = StdRng::seed_from_u64(12);
+    let (d1, d3) = (account(0x51), account(0x53));
+    let chk = AccountCheck { ever: vec![], current: vec![id(&d1), id(&d3)], writers: vec![id(&d1)] };
+    let (mut g1, root) = Group::create(&SPACE, d1.clone()).unwrap();
+    let mut g3 = Group::empty(&SPACE, d3.clone());
+    g3.merge(&root, &chk);
+    let by1 = g1.add_member(&id(&d3), &d3.leaf_key(), &[0; 32]).unwrap().expect("d1's add");
+    let self_add = g3.add_member(&id(&d3), &d3.leaf_key(), &[0; 32]).unwrap().expect("its own add");
+    let (rot, _) = g3.rotate(&mut rng).unwrap();
+    let a = g1.merge_all(&[self_add.clone(), rot.clone()], &chk);
+    let b = g3.merge_all(&[by1.clone()], &chk);
+    eprintln!("d1 took {a:?}; d3 took {b:?}; members d1 {} d3 {}", g1.members().len(), g3.members().len());
+    assert!(g3.placed());
+    let (s3, op3) = g3.seal([4; 32], b"from d3", &mut rng).unwrap();
+    if let Some(op) = op3 {
+        g1.merge(&op, &chk);
+    }
+    assert_eq!(g1.open(&s3).unwrap(), b"from d3", "d1 reads d3");
+    let (s1, op1) = g1.seal([5; 32], b"from d1", &mut rng).unwrap();
+    if let Some(op) = op1 {
+        g3.merge(&op, &chk);
+    }
+    assert_eq!(g3.open(&s1).unwrap(), b"from d1", "d3 reads d1");
+}

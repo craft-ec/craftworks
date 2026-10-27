@@ -67,25 +67,6 @@ export async function start(ctx) {
   };
   let busy = Promise.resolve();
 
-  // Keep the state and the epoch's secret (the delegate); make this epoch's log (its first row: the group info), so
-  // every node reading it finds it; a new group's first epoch is pointed to from the channel.
-  async function keep(channel, { made = false } = {}) {
-    readyShared = null; // the group moved here: the next read checks it again
-    const st = mls.status();
-    const r = await auth.identity.mlsSave(st.state, st.epoch, st.secret);
-    if (!r.mlsSaved) throw new Error(`the identity would not keep the account's keys: ${r.refused ?? JSON.stringify(r)}`);
-    // The group's FIRST escrow and info: written only while this device is CREATING the group (a registration) —
-    // never because the channel, as read here, happens to lack them.
-    if (st.epoch === 0 && lifeIs("CREATING") && !channel.rows().some(x => x.key === escrowKey(0))) {
-      await channel.put(escrowKey(0), hexOf(st.escrow));
-      await channel.put("info", hexOf(st.info));
-    }
-    await ensureLog(st, made);
-    status = { epoch: st.epoch, me: st.me, members: st.members, removed: st.removed };
-    told(status);
-    return status;
-  }
-
   // A GROUP's LOGS — the account's, or a space's; one set of rules for both. `g`: `mls()` (the group here), `space`
   // (its id bytes; undefined: the account), `channel` (its logs' table), `seal(epoch)` (a space's logs are sealed with that
   // epoch's own key; the account's with its channel's: undefined), `label` (for the trace).
@@ -307,49 +288,47 @@ export async function start(ctx) {
   // THE ACCOUNT's group.
   // (No space: the account's group is the account's own — every identity call and tail defaults to it.)
   const account = logsOf({ mls: () => mls, space: undefined, channel: CHANNEL, seal: async () => undefined, label: "account keys" });
-  const { commitFrom, commitAt } = account;
-  const ensureLog = account.ensure;
+  const { commitFrom } = account;
   const catchUp = () =>
     account.catchUp(async st => {
       const s = await auth.check.strict();
       mls.load(s.didBytes, await keyLog(s.didBytes), st.state);
     });
 
-  // MADE or JOINED with the words. A join whose epoch someone else moved first is refused by the channel's order:
-  // read again and join from the newer group info.
+  // ENROLLED with the words (K8.6 — no MLS group made or joined): a REGISTRATION or a WORDS LOGIN opens every generation
+  // of the account's tree from its escrow (a words login), then writes THIS DEVICE's CREDENTIAL — its node key and its
+  // member in the tree (the seed its delegate keeps), signed by the key log's current owner key — into the account's
+  // devices contract. The tree then places it: the maker of the root (a registration), a placed device's reconcile, or
+  // it enters by itself (`members.account`).
   auth.onJoined(({ entropy, did, node, fresh }) =>
     (busy = busy.then(async () => {
-      // Only the home site keeps the account's keys: anywhere else, nothing to do (and no table to ask for).
-      const home = await auth.identity.mlsLoad();
-      if (home.refused) return;
+      // Only the home site keeps this device's member: anywhere else, nothing to do.
+      const home = await auth.identity.deviceMember(crypto.getRandomValues(new Uint8Array(32))).catch(e => ({ refused: e?.message ?? String(e) }));
+      if (!home?.deviceMember) return;
       life.transition("account", ME, "login", { fresh: !!fresh });
       try {
-        await joinOrMake({ entropy, did, node, fresh });
+        await enroll({ entropy, did, node, fresh, seed: bytes(home.deviceMember.seed) });
       } catch (e) {
-        if (["CONFIRMING_CHANNEL", "WALKING", "JOINING", "CREATING"].includes(life.state("account", ME).s)) life.transition("account", ME, "fail", { why: String(e?.message ?? e).slice(0, 120) });
+        if (COMING.some(lifeIs)) life.transition("account", ME, "fail", { why: String(e?.message ?? e).slice(0, 120) });
         throw e;
       }
     })));
-  async function joinOrMake({ entropy, did, node, fresh }) {
+  async function enroll({ entropy, did, node, fresh, seed }) {
     const channel = await storage.table(CHANNEL);
-    // The CHANNEL as the NETWORK has it, before anything is decided (10-12, the owner's node: its rows were read before
-    // the node had fetched them — 0 rows — and the page made a SECOND group for the account): its first read awaited,
-    // and for a words login (an account that exists) read again for up to a minute while it still shows nothing.
-    // DECIDED first (FOUNDATION.md §2: asked again with the long wait while the node is silent).
-    let chState = (await channel.decided?.())?.s ?? "unknown";
-    // (A words login, the channel still empty: read again — the fault policy's `not-yet` tries, 10 s apart, a minute.)
+    // The CHANNEL as the NETWORK has it (a words login: its escrows), read to a decision first — for a words login read
+    // again for up to a minute while it still shows nothing.
+    const chState = (await channel.decided?.())?.s ?? "unknown";
     if (!fresh && !channel.rows().length)
-      await ctx.background("keys: attempt", attempt(
+      await ctx.optional("keys: attempt", attempt(
         "account keys",
         "reading the account's key channel",
         async n => {
           if (n) await ctx.background("keys: channel.reread", channel.reread?.());
-          chState = channel.state?.s ?? chState;
-          if (!channel.rows().length) throw new Fault("not-yet", "the account's key channel still empty", { d: { state: chState } });
+          if (!channel.rows().length) throw new Fault("not-yet", "the account's key channel still empty", { d: { state: channel.state?.s ?? chState } });
         },
         { policy: { "not-yet": { tries: 7, report: "never" } } },
-      ));
-    const kept = new Set();
+      ), () => null);
+    life.transition("account", ME, fresh ? "create" : "walk", { fresh: !!fresh, channel: chState });
     // THE ACCOUNT TREE's GENERATIONS FROM THE WORDS (K8.5): every escrow in the channel (`g/<n>`, sealed to the
     // account's encryption key) opened with the words and kept as the account's epochs — BEFORE the walk, so every table
     // a device sealed with a generation reads here at once (fx 10-26: a second device joined by MLS held only epoch 0, and
@@ -371,134 +350,22 @@ export async function start(ctx) {
       }
       if (n) (ctx.log("account keys", { what: `${n} generation(s) of the account's tree recovered from their escrows` }), dispatchEvent(new CustomEvent("craftworks:keys")));
     }
-    // How the walk went — reported whatever the outcome (`account-recovery`, to the health bag: the account's own
-    // tables may still be sealed here): where it started, how far it got, why it stopped (10-12: the owner's node
-    // recovered the account but not its storage, and nothing said how far the walk had come).
-    const walked = { channelRows: channel.rows().length, fresh: !!fresh, info: false, escrow0: false, epochs: 0, stop: null };
-    const recovery = (k, why, d = {}) =>
-      ctx.background("keys: ctx.require", ctx.require("index").then(ix => ix.health({ k, s: "", e: walked.epochs, why: String(why).slice(0, 160), d: { ...walked, ...d } })));
-    // The WALK, with the words: from the channel's pointer, every epoch's commit and escrowed next secret, to the
-    // present — each epoch's secret kept here on the way (this node then reads what was written before it joined).
-    async function walk() {
-      // From the channel's START (an account repaired after a second group sealed over its first epoch's pointer: the
-      // epoch its keys were made the account's again — every table sealed under it since), else the first epoch.
-      let e = Math.max(0, Number(channel.rows().find(x => x.key === "start")?.value ?? 0) || 0);
-      let info = channel.rows().find(x => x.key === "info")?.value;
-      walked.info = !!info;
-      const first = channel.rows().find(x => x.key === escrowKey(e))?.value;
-      walked.escrow0 = !!first;
-      walked.start = e;
-      if (!first) return ((walked.stop = `no escrow for epoch ${e} in the channel`), { e, info, secret: null });
-      let secret = mlsGlue.Mls.open_escrow(entropy, bytes(first));
-      for (;;) {
-        if (!kept.has(e) && (await auth.identity.epochKeep(e, secret)).mlsSaved) kept.add(e);
-        walked.epochs = e;
-        // Each epoch's log read FROM THE NETWORK (not as this new node happens to hold it: nothing yet), and an empty
-        // one asked twice more before it counts as the newest — a walk cut short joins at an old epoch.
-        let entry = await commitFrom(e, secret, true);
-        if (!entry)
-          entry = await ctx.optional("keys: attempt", attempt(
-            "account keys",
-            "reading an epoch's log",
-            async () => (await commitFrom(e, secret, true)) ?? Promise.reject(new Fault("not-yet", "an epoch's log still empty", { d: { epoch: e } })),
-            { policy: { "not-yet": { tries: 2, wait: () => 5000, report: "never" } } },
-          ), () => null);
-        if (!entry) return ((walked.stop = `no commit after epoch ${e} (the newest)`), { e, info, secret });
-        const c = parse(entry);
-        info = c.info ?? info;
-        // A commit without its escrowed next secret (made before escrows, or by a build that did not write one):
-        // the chain of keys breaks here — said, never a bare throw.
-        if (!c.next) return ((walked.stop = `the commit after epoch ${e} carries no escrowed secret: later epochs not recoverable from the words`), { e, info, secret, broken: true });
-        secret = mlsGlue.Mls.open_escrow(entropy, bytes(c.next));
-        e += 1;
-      }
-    }
-    // THE LIFECYCLE decides which way (its guards): a REGISTRATION makes the group, only on a channel the node
-    // answered is not there; a WORDS LOGIN walks, only a channel read with its group info — never a second group.
-    if (fresh) life.transition("account", ME, "create", { fresh: true, channel: chState });
-    else {
-      const info = channel.rows().some(x => x.key === "info");
-      try {
-        life.transition("account", ME, "walk", { fresh: false, channel: chState, info });
-      } catch (e) {
-        const why = `the account's key channel read ${channel.rows().length} row(s) (${chState}), no group info: not joined (never a second group)`;
-        await recovery("account-recovery", `failed: ${why}`, { kind: "refused" });
-        throw e;
-      }
-    }
-    for (let round = 0; round < 4; round++) {
-      const at = await walk();
-      if (!fresh && !at.info) {
-        const why = `the account's key channel read ${walked.channelRows} row(s), no group info: not joined (never a second group)`;
-        await recovery("account-recovery", `failed: ${why}`, { kind: "refused" });
-        throw new Error(why);
-      }
-      const [kind, commit] = mls.with_words(did, await keyLog(did), entropy, node, at.info ? bytes(at.info) : new Uint8Array(0));
-      if (kind === "joined") {
-        // The join's commit, in the log of the epoch it moved from: if another node moved the group first, walk on.
-        if (!at.secret) throw new Error("the account's group has no escrow to join from");
-        if (lifeIs("WALKING")) life.transition("account", ME, "join", { epoch: at.e });
-        const r = await commitAt(at.e, at.secret, commit, "join (words)");
-        if (!r.ok) continue;
-      } else if (!fresh) throw new Error(`a words login was answered "${kind}", not joined: never a second group`);
-      const st = await keep(channel, { made: true });
-      life.transition("account", ME, kind === "joined" ? "joined" : "made", { epoch: st.epoch, nodes: st.members.length, recovered: kept.size });
-      ctx.log("account keys", { what: `this node ${kind} the account's group: epoch ${st.epoch}, ${st.members.length} node(s)` });
-      await recovery("account-recovery", `${kind}: group epoch ${st.epoch}, ${st.members.length} node(s), ${kept.size} earlier epoch(s) recovered; walk: ${walked.stop ?? "?"}`, { kind, groupEpoch: st.epoch, nodes: st.members.length, recovered: kept.size, broken: !!at.broken });
-      if (kept.size) ctx.log("account keys", { what: `${kept.size} earlier epoch(s) recovered from escrow` });
-      // JOINED with the words (a node new to the account): every table this page opened before the keys were here
-      // read sealed — the name, the spaces. A FULL recovery, never half a page (10-12: the name and the spaces stayed
-      // empty until a reload): they open again, and the page shows itself again, with the keys in place.
-      if (kind === "joined") {
-        // No reload (FOUNDATION.md §2, R3): the account turning MEMBER reopens every table that did not read here, and
-        // the page shows itself again with the keys in place.
-        ctx.log("account keys", { what: "recovered: every table that did not read here opens again with this node's keys in place" });
-        dispatchEvent(new CustomEvent("craftworks:keys"));
-      }
-      // Every account has a CARD from the start (its inbox, its devices): nobody who wants to write to it ever waits on
-      // one that does not exist. After this turn of the queue.
-      setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`)));
-      return;
-    }
-    throw new Error("the account's group kept moving: joining it again next time");
-  }
-
-  // REPAIR (owner 10-13): THIS LOGIN's keys made the account's again. 10-12 a words login on a slow node read the
-  // account's channel empty and made a SECOND group: it wrote its own first escrow and group info over the channel's,
-  // so every words login since joins that second group — and it sealed the account's directory over with its own key,
-  // so not even the first group reads it. Run where the first group's keys are (the original login, its own PIN):
-  // the directory made again (`storage.repairDirectory`), every table this node writes sealed under the current epoch
-  // (`storage.resealOwn`), and the channel pointed at this group from that epoch (`start`, its escrow, its group
-  // info) — a words login anywhere then joins this group and reads everything. `say(line)`: each step, as it goes.
-  async function repairAccount(say = () => {}) {
-    const held = await ready();
-    if (!held) throw new Error("this login holds no keys of the account's group here: log in where its keys are (the original login, its own PIN)");
-    // ONLY on the login that HOLDS THE ACCOUNT'S DATA — its spaces read here (a second group's logins read none of
-    // them). Whether the directory reads does not tell them apart (the owner's account, 10-13: its original login
-    // reads it, the second group's do not; a fork that sealed it over the other way round on fx).
-    const list = await (await ctx.require("space")).mine.strict();
-    if (list.complete === false) throw new Error("your spaces are still being read here: try again in a moment");
-    if (!list.some(s => s.kind === "server")) throw new Error("no space of yours reads on this login: run it on the login where your spaces show (the original one)");
-    const st = mls.status();
-    say(`this login's group: epoch ${st.epoch}, ${st.members.length} node(s); ${list.filter(s => s.kind === "server").length} space(s) read here`);
-    // Every node of this group keeps its feeds listed (a node's key is in its credential: did ‖ owner ‖ node).
-    const nodes = st.members.map(m => (m.cred ? JSON.parse(glue.credential_parts(bytes(m.cred)) ?? "null")?.node : null)).filter(Boolean);
-    // THE DIRECTORY: made again only where it does not read here (sealed over by the other group); where it reads, kept,
-    // and every node of this group listed in it.
-    const dir = await storage.directoryState();
-    if (dir.s === "unreadable") say(`the directory made again: ${(await storage.repairDirectory(nodes)).length} row(s)`);
-    else if (dir.s === "present") say(`the directory reads here: kept (${(await storage.listNodes(nodes)).length} node(s) listed)`);
-    else throw new Error("your account's directory is not read yet here: try again in a moment");
-    const sealed = await storage.resealOwn();
-    say(`${sealed.length} table(s) of this node sealed under epoch ${st.epoch}`);
-    const channel = await storage.table(CHANNEL);
-    await channel.put(escrowKey(st.epoch), hexOf(st.escrow));
-    await channel.put("info", hexOf(st.info));
-    await channel.put("start", String(st.epoch));
-    say(`the account's channel points at this group from epoch ${st.epoch}: a words login now joins it`);
-    await keyEvent("repaired", { epoch: st.epoch, tables: sealed.length });
-    dispatchEvent(new CustomEvent("craftworks:keys"));
-    return { epoch: st.epoch, tables: sealed.length };
+    // THIS DEVICE's CREDENTIAL, signed with the words.
+    if (!fresh) life.transition("account", ME, "join", { channel: chState });
+    await keyLog(did);
+    const member = (await ctx.require("members")).deviceMember(seed);
+    const cred = core.device_credential(idlogCode, did, entropy, typeof node === "string" ? bytes(node) : node, bytes(String(member)));
+    await auth.identity.addDevices(did, [cred]);
+    readyShared = null;
+    dispatchEvent(new CustomEvent("craftworks:devices"));
+    life.transition("account", ME, fresh ? "made" : "joined", { member: String(member).slice(0, 12) });
+    ctx.log("account keys", { what: `this device's credential written (member ${String(member).slice(0, 12)}…): the account's tree places it` });
+    ctx.background("keys: ctx.require", ctx.require("index").then(ix => ix.health({ k: "account-recovery", s: "", e: 0, why: `${fresh ? "registered" : "credentialed"}: member ${String(member).slice(0, 12)}`, d: { fresh: !!fresh, channelRows: channel.rows().length } })));
+    // PLACED by the account's tree (after this turn of the queue): its reconcile.
+    setTimeout(() => ctx.require("members").then(m => m.account()).then(t => t.reconcile()).catch(e => ctx.failed("account keys", e, `placing this device: ${e.message}`)));
+    if (!fresh) dispatchEvent(new CustomEvent("craftworks:keys"));
+    // Every account has a CARD from the start (its inbox, its devices).
+    setTimeout(() => ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`)));
   }
 
   // NEW WORDS: every escrow sealed again for them (the old words open nothing after the change), and from now on escrows
@@ -536,35 +403,65 @@ export async function start(ctx) {
       ctx.log("account keys", { what: `${n} escrow(s) sealed again for the new words` });
     })));
 
-  // Loaded (after a PIN login) and brought current.
-  // READY, SHARED as a space's group's is: one check, every read waiting on it, until the group moves (its current
-  // epoch's log changes, or this page changes it: `keep`).
+  // THE ACCOUNT ON ITS TREE (K8.6 — no MLS group): WHO ITS DEVICES ARE is the DEVICES LIST (credentials on the key
+  // log's CURRENT key: `account_devices_now`); this device is the account's when its node holds one, and WRITES for it
+  // once the account's tree places it (`writable`). REMOVED: its node held a credential once and holds none on the
+  // current key (the key rotated without it) — it forgets everything. Only the home site holds this device's member
+  // (`deviceMember` refuses elsewhere). `epoch`: the key log's `seq` (it moves with every removal).
+  const devicesCode = await ctx.require("devices-wasm");
+  const COMING = ["CONFIRMING_CHANNEL", "WALKING", "JOINING", "CREATING"];
+  async function devicesNow(didB) {
+    if (!(await auth.identity.readKeyLog(didB))) return null;
+    if (!(await auth.identity.readDevices(didB))) return null;
+    const r = core.account_devices_now(devicesCode, idlogCode, didB);
+    return r ? JSON.parse(r) : null;
+  }
+  // READY, SHARED: one check, every read waiting on it, until the devices list changes (`craftworks:keys`, a login).
   let readyShared = null;
-  let readyLog = null;
+  let toldAs = "";
+  let followed = null;
+  const carried = new Set(); // nodes whose MLS group's credentials were carried into the devices list (once a page)
   function ready() {
     if (readyShared) return readyShared;
     const p = (busy = busy.then(async () => {
       const s = await auth.check.strict();
       if (!s) return null;
-      if (!status) {
-        const r = await auth.identity.mlsLoad();
-        // Not joined here (logged in, the keys not held): the session is KEYLESS — said, never left looking logged in.
-        if (!r.mlsState && !r.refused && !lifeIs("CONFIRMING_CHANNEL") && !lifeIs("WALKING") && !lifeIs("JOINING") && !lifeIs("CREATING"))
-          if (life.state("session", ME).s !== "OPEN_KEYLESS") life.transition("session", ME, "keyless", { why: "the account's keys are not held on this node" });
-        if (!r.mlsState) return null; // not the home site, or this node has not joined yet
-        mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
+      const home = await auth.identity.deviceMember(crypto.getRandomValues(new Uint8Array(32))).catch(e => ({ refused: e?.message ?? String(e) }));
+      if (!home?.deviceMember) return null; // not the home site
+      // READ AGAIN when the account's devices change (another device credentialed or removed: its card moves) — fx/fy
+      // 10-27, a device added after this page read the list was never a writer here, and its rows were never merged.
+      if (followed !== s.did) {
+        followed = s.did;
+        ctx.background("keys: devices followed", ctx.require("directory").then(d => d.onDevices(s.did, () => ((readyShared = null), ctx.background("keys: devices changed", ready())))));
       }
-      if (!lifeIs("MEMBER") && !lifeIs("REMOVED")) life.transition("account", ME, "loaded", { epoch: mls.status().epoch });
-      const channel = await storage.table(CHANNEL);
-      const applied = await catchUp();
-      if (mls.status().removed) return forget();
-      if (applied) await keep(channel);
-      else {
-        const st = mls.status();
-        const log = await ensureLog(st, false);
-        if (log && readyLog !== log) (readyLog = log), log.onChange?.(() => readyLog === log && (readyShared = null));
-        status ??= (({ epoch, me, members, removed }) => ({ epoch, me, members, removed }))(st);
+      const d = await devicesNow(s.didBytes);
+      if (!d) return null; // the devices list not read here yet: asked again on the next read
+      const node = String(s.member).toLowerCase();
+      let me = d.devices.findIndex(x => x.node === node);
+      // A DEVICE FROM BEFORE THE TREE: its credential is in the account's MLS group (made at its join), maybe never put
+      // in the devices contract (fx/fy 10-27, a v446 device: no credential there, so never current, never placed) —
+      // every credential its group holds carried there once (the contract counts only those on the current key).
+      if (me < 0 && !carried.has(node) && (await mlsNow())) {
+        carried.add(node);
+        const creds = mls.status().members.map(m => m.cred).filter(Boolean);
+        if (creds.length) {
+          await auth.identity.addDevices(s.didBytes, creds.map(bytes));
+          ctx.log("account keys", { what: `${creds.length} credential(s) of the account's MLS group carried into its devices list` });
+          const again = await devicesNow(s.didBytes);
+          if (again) (d.devices = again.devices), (d.seq = again.seq), (me = d.devices.findIndex(x => x.node === node));
+        }
       }
+      if (me < 0) {
+        const ever = [...core.account_devices_ever(devicesCode, idlogCode, s.didBytes)].map(x => String(x).toLowerCase());
+        if (ever.includes(node)) return forget();
+        // Not credentialed here (yet): the session KEYLESS — said, never left looking logged in.
+        if (!COMING.some(lifeIs) && life.state("session", ME).s !== "OPEN_KEYLESS") life.transition("session", ME, "keyless", { why: "this device holds no credential of the account" });
+        return null;
+      }
+      if (!COMING.some(lifeIs) && !lifeIs("MEMBER")) life.transition("account", ME, "loaded", { epoch: d.seq });
+      status = { epoch: d.seq, me, members: d.devices.map((x, index) => ({ index, key: x.node, member: x.member, cred: x.cred })), removed: false };
+      const as = JSON.stringify(status);
+      if (as !== toldAs) (toldAs = as), told(status);
       return status;
     }));
     readyShared = p;
@@ -572,6 +469,7 @@ export async function start(ctx) {
     ctx.optional("keys: p.then", p.then(s => !s && readyShared === p && (readyShared = null)), () => readyShared === p && (readyShared = null));
     return p;
   }
+  addEventListener("craftworks:devices", () => (readyShared = null));
 
   // WRITES FOR THE ACCOUNT — its card, its acts, its entries into spaces — only from a device whose
   // session is OPEN and whose account group is a MEMBER (FOUNDATION.md §3: a KEYLESS session writes none of them; on
@@ -583,6 +481,10 @@ export async function start(ctx) {
     const a = life.state("account", ME).s;
     const s = life.state("session", ME).s;
     if (a !== "MEMBER" || s === "OPEN_KEYLESS") return `the account's keys are not held on this device (account ${a}, session ${s})`;
+    // PLACED by the account's tree (K8.6): a device credentialed but not yet placed reads, and writes nothing.
+    const tree = await ctx.optional("keys: the account's tree", ctx.require("members").then(m => m.account()), () => null);
+    if (tree && !tree.placed()) await ctx.optional("keys: the account's tree read", tree.sync(), () => null);
+    if (!tree?.placed()) return "this device is not yet placed in the account's tree";
     return true;
   }
   async function mustWrite(what) {
@@ -602,7 +504,7 @@ export async function start(ctx) {
     storage.refuse("this node was removed from your account: it cannot change it");
     const r = await auth.identity.forget().catch(e => ({ refused: e?.message ?? String(e) }));
     ctx.log("account keys", { what: r.loggedOut ? "this node was removed from the account: it has forgotten everything it held" : `this node was removed, and could not forget: ${r.refused ?? JSON.stringify(r)}` });
-    status = { removed: true, members: [], epoch: mls.status().epoch };
+    status = { removed: true, members: [], epoch: status?.epoch ?? 0 };
     if (r.loggedOut) {
       await (await ctx.require("theme")).ask(null, { text: "This node was removed from your account, so it has forgotten your account's keys. To use it again, log in with your recovery words.", ok: "Log out" });
       await auth.logout();
@@ -610,43 +512,36 @@ export async function start(ctx) {
     return status;
   }
 
-  // REMOVE a node (lost, stolen, retired): an MLS removal, committed in the group's order. The group moves to a new
-  // epoch; the removed node reads nothing written from then on. If another node moved the group first, this node's
-  // view is taken back to what it kept and brought current, and the removal must be asked again.
-  // (Through the DELETE machine: a device removed is gone from the account's group.)
+  // REMOVE a node (lost, stolen, retired), after `membership` rotated the key log with the words and credentialed the
+  // devices that stay (K8.6 — no MLS commit): the devices list read again (it no longer holds the removed one), and the
+  // account's tree takes it out with one key change (its reconcile) — it reads nothing written after.
+  // (Through the DELETE machine: a device removed is gone from the account's tree.)
   const remove = index => life.deleting("device", `account#${index}`, () => removeNow(index));
   async function removeNow(index) {
-    return (busy = busy.then(async () => {
-      if (!status) throw new Error("the account's keys are not held on this site");
-      const channel = await storage.table(CHANNEL);
-      const from = mls.status();
-      const commit = mls.remove(Uint32Array.from([index]));
-      const r = await commitAt(from.epoch, from.secret, commit, "remove (device)");
-      if (!r.ok) {
-        const kept = await auth.identity.mlsLoad();
-        const s = await auth.check.strict();
-        mls.load(s.didBytes, await keyLog(s.didBytes), bytes(kept.mlsState));
-        await catchUp();
-        await keep(channel);
-        throw new Error("the account's group moved meanwhile: look again and remove it again");
+    const before = await ready();
+    if (!before) throw new Error("the account's keys are not held on this site");
+    const gone = before.members.find(m => m.index === index);
+    readyShared = null;
+    dispatchEvent(new CustomEvent("craftworks:devices"));
+    const st = await ready();
+    if (!st) throw new Error("the account's devices did not read after the removal");
+    const tree = await (await ctx.require("members")).account();
+    await tree.reconcile();
+    ctx.log("account keys", { what: `a node removed (${String(gone?.key ?? "?").slice(0, 12)}…): key log at ${st.epoch}, ${st.members.length} node(s); the account's tree took it out` });
+    // Every space this account is in: its member's keys refreshed, so the removed node — which held them — follows
+    // nothing there from now on (after this turn: each space's queue, not the account's).
+    setTimeout(async () => {
+      // Writes onto the newest generation first (the removed node holds the old ones), then the card: the removed node
+      // no longer listed as the account's (what it writes counts for nothing).
+      await ctx.background("keys: storage.sealNewest", storage.sealNewest());
+      await ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
+      for (const sp of await space.mine()) {
+        const g = group(sp);
+        if (!(await g.ready())) continue;
+        await g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refreshing after the removal: ${e.message}` }));
       }
-      const st = await keep(channel, { made: true });
-      ctx.log("account keys", { what: `a node removed: epoch ${st.epoch}, ${st.members.length} node(s)` });
-      // Every space this account is in: its member's keys refreshed, so the removed node — which held them — follows
-      // nothing there from now on (after this turn: each space's queue, not the account's).
-      setTimeout(async () => {
-        // Writes onto the new epoch first (the removed node holds the old ones), then the card: the removed node no
-        // longer listed as the account's (what it writes counts for nothing).
-        await ctx.background("keys: storage.sealNewest", storage.sealNewest());
-        await ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
-        for (const sp of await space.mine()) {
-          const g = group(sp);
-          if (!(await g.ready())) continue;
-          await g.refresh().catch(e => ctx.log(`${sp.name ?? "space"} keys`, { what: `refreshing after the removal: ${e.message}` }));
-        }
-      });
-      return st;
-    }));
+    });
+    return st;
   }
 
   // THE DID's MEMBER in spaces (ARCHITECTURE: a DID is the member, a device only signs in): its keys from the identity
@@ -1253,20 +1148,27 @@ export async function start(ctx) {
   // THIS DEVICE's ACCOUNT-TREE MEMBER SEED (K8.6): kept by the identity — its MLS signer's where it has one (the key its
   // credential names), else one drawn here once.
   const deviceSeed = async () => {
-    // (Not before the account's group is held here: until its credential is written from this seed (K8.6), a device's
-    // credential names its MLS signer's key — a seed minted before the MLS join saved its signer named a key no
-    // credential holds, and the device was never added (fx/fy 10-27).)
-    if (!(await ready())) throw new Error("the account's group is not held here yet");
     const r = await auth.identity.deviceMember(crypto.getRandomValues(new Uint8Array(32)));
     if (!r?.deviceMember) throw new Error(`this device has no member in the account's tree: ${r?.refused ?? JSON.stringify(r)}`);
     return bytes(r.deviceMember.seed);
   };
-  // THE ACCOUNT's CURRENT MLS EPOCH and its secret (caught up first): what a generation of the account's tree is also
-  // sealed with until K8.6 (`members.account`), so a device without the words opens it.
+  // THE ACCOUNT's LAST MLS EPOCH and its secret (K8.6: frozen — no device commits to the MLS group any more): what each
+  // generation of the account's tree is also sealed with (`m/`, `members.account`), so a device from before the tree,
+  // without the words, opens it. Only where this device holds the account's MLS state: loaded once, brought to the last
+  // commit any device made (read only — nothing written), never saved.
+  let mlsLoaded = null;
   const mlsNow = async () => {
-    if (!(await ready())) return null;
+    mlsLoaded ??= (async () => {
+      const s = await auth.check.strict();
+      const r = s && (await auth.identity.mlsLoad());
+      if (!r?.mlsState) return false;
+      mls.load(s.didBytes, await keyLog(s.didBytes), bytes(r.mlsState));
+      await catchUp();
+      return !mls.status().removed;
+    })().catch(e => (ctx.log("account keys", { what: `the account's MLS epoch: ${e?.message ?? e}` }), (mlsLoaded = null), false));
+    if (!(await mlsLoaded)) return null;
     const st = mls.status();
     return { epoch: st.epoch, secret: st.secret };
   };
-  return { repairAccount, deviceSeed, mlsNow, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
+  return { deviceSeed, mlsNow, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), group, setList, onChange: f => watchers.push(f) };
 }

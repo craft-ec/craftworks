@@ -3132,6 +3132,16 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               after publish — the node-wide duty budget spent by 46 woken builds (freenet 0.2.146 `duty_available`;
               its own bucket was full). Owner node: v448 (AD1L28KH) skipped ~15/h on its own budget. fx: k85-two PASS,
               k85-node PASS on the first run after publish; delegate 35/35 (retired test killed both mutants).
+        - [x] piece 2 (10-27): the account on its tree alone — `keys.ready` from the devices list
+              (`account_devices_now`), writable = placed, registration/words login write the device credential
+              (`account::device_credential`), a current unplaced device ENTERS BY ITSELF (groups tests: self-entry, and
+              a concurrent add converges), removal = rotation + the tree's reconcile (no MLS commit), `mlsNow` frozen
+              read-only, `repairAccount` + storage repair helpers removed, MLS-era credentials carried into the devices
+              list. Found on fx: a device added later was never a writer (status not re-read → `onDevices`); a
+              re-issued credential never replaced the told one (`membership.tell`). fx: k86-reg PASS (no MLS rows),
+              k85-two PASS (words login, placed, both read, removal), k86-mls PASS (v446 → new: fy without words reads,
+              carried, enters, writable), k85-node PASS (now trivially: fy enters by itself).
+              Left for 6c: core `tail_replace`/`data::Open::replace` (dead now).
   - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows
