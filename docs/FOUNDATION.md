@@ -435,6 +435,21 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
      (`identity::CHANNEL`); every member whose page handed the node its inbox watch is served (an account in no space
      too). fx/fy 10-27: a device back with every page of the account closed was placed by the node in 320 s. REQUIRED BEFORE K8.6 (MLS removed): a device that comes back after another
      made the tree reads through `m/` meanwhile, but is placed only once a placed device reconciles.
+   MLS REMOVED (K8.6, design 10-27), in three phases, each through the gates:
+   (6a) THE ACCOUNT ON ITS TREE ALONE — a device may write for the account when the tree PLACES it (`keys.writable`); its
+   member SEED kept by the delegate itself (`identity` keeps it per member; a device with an MLS state keeps the seed its
+   credential already names); a registration or a words login writes the new device's CREDENTIAL (its node, its member
+   key, signed by the owner key the words give) — no MLS group made or joined; a device REMOVED rotates the key log and
+   credentials again the devices the devices LIST holds (never the MLS group's members); the channel takes no more MLS
+   rows; the node's round takes the seed from the delegate; `m/` copies go on under the account's LAST MLS epoch (frozen).
+   (6b) SPACES OFF MLS — a space's tables seal and read with its generations alone; the MLS space group, its bridge and
+   alternates go (an MLS-era space is not shown: K8.4's rule).
+   (6c) THE MLS CODE GOES — the delegate's MLS requests and dead catch-up, the `mls` crate, the wasm package. KEPT, named
+   for what they are — the account's PRE-TREE HISTORY, which migration needs and which needs no MLS code: the signer seed
+   read from a saved state (`signer_seed_of`), the epoch secrets the identity keeps, and the words walk over the
+   channel's escrow chain (`e/<epoch>`, each commit's escrowed next secret). An account none of whose devices ran K8.5
+   still migrates: its first device to load makes the tree from that seed, reads its tables with the kept epochs, and
+   reseals them.
    Phases (each through the gates): (1) the account's `Check`, signed leaves, the devices' members, in `groups`/
    `account`, tested alone; (2) the page makes or joins the tree beside MLS, seals new writes with the generation, reseals its own;
    (3) words login recovers from the escrows and is placed; (4) device removal and the writable gate by the tree; the

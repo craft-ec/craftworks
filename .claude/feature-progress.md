@@ -3122,7 +3122,13 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
           channel is `identity::CHANNEL` ("mls"), not a space-style name; a member is enlisted for upkeep at its inbox
           watch (an account in no space was never served).
   - [ ] 5. K8.6 — MLS removed
-- [ ] K8.6 MLS code removed: keys.js space paths, mls wasm, delegate/identity MLS state and requests.
+- [ ] K8.6 MLS REMOVED — DESIGN 10-27 (FOUNDATION "MLS REMOVED (K8.6)"). Phases:
+  - [ ] 6a. the account on its tree alone: writable = placed; device seed kept by the delegate (MLS signer's if any);
+        registration/words login write the device credential, no MLS group; removal re-credentials from the devices
+        list; no MLS rows; node round seed from the delegate; `m/` under the last MLS epoch
+  - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed
+  - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
+        parse, kept epochs, the words walk over `e/` escrows
 
 ## 10-23: releases v422–v427 (K8.1 + BeeKEM repairs, all gate 3/3)
 - v422 K8.1 members/writers from the list (identity build change: owner re-entered PIN).
