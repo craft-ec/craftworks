@@ -3071,6 +3071,9 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   PIN entry). A removed device is taken out of the account's tree and reads nothing written after (fx/fy k85-two
   PASS); upgrade v447 → v448 with a device back without the words (k85-mls) PASS. NEXT: node reconcile of the account
   tree (before K8.6), writable gate by the tree.
+- [x] 10-27 v449 — THE NODE KEEPS THE ACCOUNT's TREE (17e0334; manifest cd0a77e7b80c; gates 3/3 + frames; the first
+  publish failed on "Network is unreachable" to the server, re-run after). fx/fy k85-node PASS (placed in 320 s with every
+  page closed). NEXT: writable gate by the tree; then K8.6 (MLS removed).
 - [ ] K8.5 The ACCOUNT group off MLS — DESIGN written 10-26 (FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"). Phases:
   - [x] 1. `groups::AccountCheck` (members = devices; listed = current; add only current, remove only not current;
         root = lowest current device that wrote) + `the_accounts_tree_follows_its_devices_list` (controls for each;
