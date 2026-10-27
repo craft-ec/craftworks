@@ -3142,6 +3142,10 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               k85-two PASS (words login, placed, both read, removal), k86-mls PASS (v446 → new: fy without words reads,
               carried, enters, writable), k85-node PASS (now trivially: fy enters by itself).
               Left for 6c: core `tail_replace`/`data::Open::replace` (dead now).
+        - [x] 10-27 release v450 gates 1–2 FAILED "an account did not retire the old build": `DeviceMember` had been put in
+              the MIDDLE of `Request` and `Answer` (bincode index = place), so every answer an earlier build gave the
+              handover/retirement read as another variant. Moved LAST; test pins the v449 indices of what an earlier
+              build is asked and answers (control: the committed order fails it).
   - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows

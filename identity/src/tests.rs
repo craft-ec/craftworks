@@ -979,3 +979,36 @@ fn hex_takes_whole_bytes_only() {
     assert!(unhex32("é".repeat(32)).is_none() && unhex32("00".repeat(31)).is_none());
     assert_eq!(unhex32("07".repeat(32)), Some([7; 32]));
 }
+
+/// THE WIRE AN EARLIER BUILD SPEAKS: what a new page asks an earlier identity build (handover, retirement) and what it
+/// answers keep their bincode index — the v449 indices, pinned. 10-27: `DeviceMember` put in the middle of both enums had
+/// every handover answer read as another variant, and no build retired (upgrade gate). A new variant goes LAST.
+#[test]
+fn the_requests_and_answers_an_earlier_build_speaks_keep_their_index() {
+    let idx = |b: Vec<u8>| u32::from_le_bytes(b[..4].try_into().unwrap());
+    let pin = || "1".to_string();
+    let reqs = [
+        (Request::Unlock { pin: pin() }, 1),
+        (Request::Handover { pin: pin() }, 5),
+        (Request::HandoverKeys { pin: pin() }, 15),
+        (Request::HandoverSpaces { pin: pin() }, 18),
+        (Request::UpkeepMandate { me: String::new(), spaces: vec![], spent: vec![] }, 23),
+        (Request::EpochSecrets { space: [0; 32], below: 0 }, 25),
+        (Request::HandoverWitnessed { pin: pin() }, 30),
+    ];
+    for (r, i) in reqs {
+        assert_eq!(idx(bincode::serialize(&r).unwrap()), i, "{r:?}");
+    }
+    let answers = [
+        (Answer::Unlocked { public: [0; KEY_LEN], did: [0; 32], data: None }, 0),
+        (Answer::Handed { seed: [0; 32], did: [0; 32], data: None }, 5),
+        (Answer::Refused(Why::NotSaved), 9),
+        (Answer::HandedKeys { mls: None, epochs: vec![] }, 14),
+        (Answer::HandedSpaces { spaces: vec![] }, 17),
+        (Answer::EpochSecrets { epochs: vec![] }, 20),
+        (Answer::HandedWitnessed { places: vec![] }, 23),
+    ];
+    for (a, i) in answers {
+        assert_eq!(idx(bincode::serialize(&a).unwrap()), i, "{a:?}");
+    }
+}

@@ -261,9 +261,6 @@ pub enum Request {
     /// The DID's MEMBER for spaces (the same on every device): its MLS signing key's seed and public key, its
     /// credential (signed by the data key), and its feed key. The home site only.
     SpaceMember,
-    /// THIS DEVICE's MEMBER in the account's BeeKEM tree (K8.6): its seed — kept here; `fresh`, bytes the page drew, kept
-    /// as it the first time (a device with an account MLS state keeps its signer's: its credential names that key).
-    DeviceMember { fresh: [u8; 32] },
     /// UPKEEP with no page open (the node wakes this delegate: its manifest's `upkeep`): the contract the session
     /// account's INBOX is (a bag's instance id, the page computes it) — watched and read at each wake-up; with the
     /// page's RANDOMNESS (stirred into upkeep's pool) and TIME in seconds (upkeep's clock). Home only.
@@ -317,6 +314,9 @@ pub enum Request {
     /// time (seconds) — the delegate has no clock of its own: an MLS key made "now" by another device is checked against
     /// it (10-16 on fx: a clock left at login time refused every fresh key, "not valid yet").
     FollowNow { now: u64 },
+    /// THIS DEVICE's MEMBER in the account's BeeKEM tree (K8.6): its seed — kept here; `fresh`, bytes the page drew, kept
+    /// as it the first time (a device with an account MLS state keeps its signer's: its credential names that key).
+    DeviceMember { fresh: [u8; 32] },
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`): the codes' hashes
@@ -406,8 +406,6 @@ pub enum Answer {
     /// A member's spaces, handed to the next build: `(space id, its group state, its epochs' secrets)`.
     HandedSpaces { spaces: Vec<([u8; 32], Option<Vec<u8>>, Vec<(u64, [u8; 32])>)> },
     SpaceMember { seed: [u8; 32], public: [u8; 32], credential: Vec<u8> },
-    /// This device's member seed in the account's tree (`Request::DeviceMember`).
-    DeviceMember { seed: [u8; 32] },
     /// Upkeep so far: wake-ups run, the watched inbox (if set) and its state's length when last read.
     Upkeep {
         wakeups: u64,
@@ -440,6 +438,9 @@ pub enum Answer {
     HandedWitnessed { places: Vec<([u8; 32], u64, [u8; 32])> },
     /// Places kept (`WitnessedKeep`): how many were new here.
     WitnessedKept { kept: u32 },
+    // (NEW VARIANTS GO LAST — see `Request`.)
+    /// This device's member seed in the account's tree (`Request::DeviceMember`).
+    DeviceMember { seed: [u8; 32] },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
