@@ -50,7 +50,7 @@
 // ACTS NEVER MADE PUBLIC, whatever the space: an invite's code is a bearer secret.
 const SECRET_ACTS = new Set(["invite", "revoke-invite"]);
 export async function start(ctx) {
-  const [space, storage, keys, node, directory, K, S] = await Promise.all(["space", "storage", "keys", "node", "directory", "kinds", "signals"].map(n => ctx.require(n)));
+  const [space, storage, node, directory, K, S] = await Promise.all(["space", "storage", "node", "directory", "kinds", "signals"].map(n => ctx.require(n)));
 
   // THE REPLAY and its rules are the core's (`Governance`, the one implementation: the identity delegate reads a
   // space by it too). What is gathered here: the acts' rows, the group's members, each member's devices.
@@ -138,7 +138,6 @@ export async function start(ctx) {
       },
       decided: async () => (await Promise.all([sealedActs?.decided?.(), pubActs.decided?.()]), t.state),
     };
-    const g = out ? null : keys.group(sp);
     // THE ACTS' DAG — what a new act names and when it is timed, which named acts are not here — is the replay's
     // (`Gov::stamp` / `Gov::missing`: the node writes acts by the same stamp).
     const stamp = a => JSON.parse(gv.stamp(JSON.stringify(a), Date.now()));
@@ -168,18 +167,7 @@ export async function start(ctx) {
     let gone = new Set();
     // Whether the list was read WHOLE at the last replay (no act named and not here; the acts decided — I6).
     let listWhole = false;
-    // MLS (until K8.6): only who is still in its group by key — to take a person's nodes out (`nodesOf`). WHO IS IN is
-    // the LIST (K8.1): `group` below; REMOVED is the list's word too (K8.2, the replay).
-    let mlsMembers = [];
-    const glue_did = cred => {
-      try {
-        return node.glue.credential_did(node.bytes(cred)) ?? null;
-      } catch {
-        return null;
-      }
-    };
-    const learn = async st => {
-      mlsMembers = (st?.members ?? []).filter(m => m.cred).map(m => ({ ...m, did: glue_did(m.cred) })).filter(m => m.did);
+    const learn = async () => {
       // THE LIST tells the storage whose devices write (`storage.setRoster`): their feeds gathered, the list widened.
       storage.setRoster(sp.id, [...roster]);
       // (Who wrote each act — the acts' writers: a self-joiner's device, named in the writers bag, authors its own `join`.)
@@ -191,7 +179,7 @@ export async function start(ctx) {
       devicesUnread = [...new Set(group.map(m => m.did))].map(d => [d, directory.devicesWhy(d)]).filter(([, why]) => why).map(([d, why]) => `${d}: ${why}`);
       (await ctx.require("lifecycle")).logOnce("roles", sp.id, `${sp.name ?? sp.id.slice(0, 8)}: its list — ${group.length} listed, ${w.byNode.size} writer device(s)${left ? " (this node removed)" : ""}`);
     };
-    if (!out) await learn(await g.ready());
+    if (!out) await learn();
     const author = row => (row?.id ? (writers.get(row.id.slice(0, 64)) ?? null) : null);
 
     // THE REPLAY: the acts in order, each kept only if its signer could (the core's `Governance`).
@@ -218,25 +206,10 @@ export async function start(ctx) {
         const said = `acts ${rows.length} (${causal} naming what they saw), ${counted.length} counted; ${miss.length ? `${miss.length} named by others NOT HERE yet (${miss.slice(0, 3).join(", ")})` : "none missing"}`;
         if (said !== missSaid) ctx.log("roles", { what: `${sp.name ?? sp.id.slice(0, 8)}: ${said}` });
         missSaid = said;
-        // THE LIST every entry of the space's keys is checked against (`keys`: `mls::entry_ok` — the node's `GovList`):
-        // the acts' answers that never change as more are read (EVER listed, a proof's entry rule, who may be taken
-        // out). WHOLE only when no act is named that is not here and the acts read decided (I6).
-        const text = h => new TextDecoder().decode(node.bytes(h));
         // THE ONE RULE (`guards::list_whole`, the node's too): no act named and not here, no listed member's devices
         // unread, the list's own tables read.
         const feeds = t.state?.s === "present" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];
         listWhole = !node.glue.guard_list_whole(JSON.stringify(devicesUnread), JSON.stringify(feeds), miss.length);
-        keys.setList(sp.id, {
-          roster: [...roster],
-          owner,
-          whole: listWhole,
-          gen: counted.length,
-          check: {
-            listed: did => gv.entry_listed(did),
-            admits: (did, aadHex) => gv.entry_admits(did, text(aadHex), Date.now()),
-            mayTakeOut: did => gv.may_be_taken_out(did),
-          },
-        });
       }
     }
     let missSaid = null;
@@ -290,7 +263,7 @@ export async function start(ctx) {
         try {
           if (out) return;
           const before = sig();
-          await learn(await g.ready());
+          await learn();
           if (sig() !== before) {
             replay();
             for (const f of changed) f();
@@ -468,14 +441,12 @@ export async function start(ctx) {
       },
       // The people of the space now: its group's accounts, with their roles.
       members: () => [...new Set(group.map(m => m.did))].map(did => ({ did, role: role(did) })).filter(m => m.role),
-      // A person's member in the group (to remove them): one per DID.
-      nodesOf: did => mlsMembers.filter(m => m.did === did),
       // Brought current with the group (a member added or removed).
       // THE LIST READ WHOLE (I6): what reconciling the space's keys waits for (`members`).
       whole: () => listWhole,
       refresh: async () => {
         if (out) return widen();
-        await learn(await g.ready());
+        await learn();
         replay();
       },
       isPublic,

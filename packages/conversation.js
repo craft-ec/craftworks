@@ -38,15 +38,15 @@
 //     await sm.fetch()  await sm.list("in" | "sent")  sm.onChange(fn)
 //   (`to` may name a space: `space:<id>` — of a space this person knows, or one whose mail they had.)
 export async function start(ctx) {
-  const [space, keys, directory, index, content, storage, node] = await Promise.all(["space", "keys", "directory", "index", "content", "storage", "node"].map(n => ctx.require(n)));
+  const [space, directory, index, content, storage, node] = await Promise.all(["space", "directory", "index", "content", "storage", "node"].map(n => ctx.require(n)));
   // The core: the one place each rule and guard is (`rules`, through the core).
   const glueOf = () => node.glue;
   const bytesOf = node.bytes;
   const short = did => `${did.replace(/^did:craftec:/, "").slice(0, 8)}…`;
 
   // ─── MEMBERSHIP (FOUNDATION "Members and keys", the design of 10-17) ───
-  // Being IN a space is being ON ITS LIST — its acts, replayed alike on every node; a listed device ENTERS the space's
-  // keys BY ITSELF (`keys.group(sp).enter`: an MLS external commit — nobody answers, nobody else need be online). The
+  // Being IN a space is being ON ITS LIST — its acts, replayed alike on every node; its BeeKEM tree follows the list
+  // (`members`: whoever reconciles — any member's page, or a node with every page closed — places a listed account). The
   // ways onto a list: PUT ON IT by one who may (an invite, a conversation's people, Let in — `listIn`, then TOLD in
   // their inbox); by a CODE, the OPEN door or a LEVEL (their own entry carries the proof — `Gov::admits` — then their
   // own `join` act); or a REQUEST where the space asks for one: asked, cancelled, let in or rejected — never hanging.
@@ -194,76 +194,43 @@ export async function start(ctx) {
     await index.send(did, { kind: "friend-yes", from: (await space.me.strict()), at: Date.now() });
   }
 
-  // A SPACE's OWNER's branch, as its devices announced it in the space's writers list (`keys`: `{ w, epoch, branch }`):
-  // the newest — the branch every member's diff is against.
-  async function ownerBranches(sp) {
-    const r = await (await ctx.require("roles")).of.strict(sp);
-    await r.settled;
-    // Its owner as its acts say — or, a member whose keys are behind (the acts unread), as the space's record says.
-    // Its devices NOW (the one map: `storage.writersOf`).
-    const devs = devicesNow(await storage.writersOf(sp), r.owner ?? sp.governance?.owner);
-    return (await index.spacePointers.strict(sp, "writers")).filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
-  }
-  const ownerBranch = async sp => (await ownerBranches(sp))[0] ?? null;
-  // ON THE OWNER's BRANCH — the one test, for this device and for what a page shows of another member: at or past the
-  // owner's newest epoch, by its fingerprint there; behind, by the owner's announcement at its OWN epoch; else not known
-  // (null). `fpAt(e)`: its fingerprint at epoch e (or null); `owns`: the owner's announcements, newest first.
-  async function onBranch(epoch, fpAt, owns) {
-    // The rule is `guards::on_branch` (through the core): here only its inputs — the owner's announcements and this
-    // one's fingerprints at the two epochs it may compare.
-    if (epoch == null || !owns.length) return null;
-    const fps = {};
-    for (const e of new Set([owns[0].epoch, epoch])) {
-      const fp = await fpAt(e);
-      if (fp != null) fps[e] = fp;
-    }
-    return glueOf().on_branch(epoch, JSON.stringify(owns.map(a => [a.epoch, a.branch])), JSON.stringify(fps)) ?? null;
-  }
-
-  // EVERY MEMBER's KEYS, as their devices announced them in the space's writers list (any member reads it): each one
-  // on the owner's keys now, BEHIND (an older epoch), on ANOTHER BRANCH, or not announced — and who caught them up.
-  // `Map did → { state, epoch, branch, devices, repairedBy }`, and the owner's own `{ epoch, branch }`.
+  // EVERY MEMBER's KEYS (K8.6: the space's BeeKEM tree — no MLS epoch, branch or announcement): each one IN the tree,
+  // NOT in it, or their devices not read here — and what their page reported it cannot read (`reportReads`).
+  // `Map did → { state, why, devs, unread, reported }`.
   async function keyStatus(sp) {
     const r = await (await ctx.require("roles")).of.strict(sp);
     await r.settled;
+    const members = await ctx.require("members");
+    const tree = members.group(sp);
+    await ctx.optional("conversation: the tree read", tree.sync(), () => null);
     const ptrs = await index.spacePointers(sp, "writers");
-    const owns = await ctx.optional("conversation: ownerBranches", ownerBranches(sp), () => []);
-    const own = owns[0] ?? null;
     const out = new Map();
     const w = await storage.writersOf(sp);
     for (const m of r.members()) {
       const devs = devicesNow(w, m.did);
-      const anns = ptrs.filter(p => p?.branch && devs.includes(p.w)).sort((a, b) => b.epoch - a.epoch);
-      const a = anns[0] ?? null;
-      // NO DEVICES READ here is not "not announced": what this page could not read, said as such.
+      // NO DEVICES READ here is not "not in the tree": what this page could not read, said as such.
       const unreadDevs = !devs.length ? directory.devicesWhy(m.did) : null;
-      // Their state by the ONE classification (`guards::group_state`) over what they announced, shown in the members' words.
-      const named = { held: "current", behind: "behind", "off-branch": "another branch", ahead: "ahead", unreadable: "current", "not-held": "not announced" };
-      const state = unreadDevs ? "devices not read" : !a ? "not announced" : !own ? "unknown" : named[glueOf().group_state(a.epoch, own.epoch, (await onBranch(a.epoch, async e => (e === a.epoch ? a.branch : null), owns)) ?? undefined, false, false)];
+      const holds = await ctx.optional("conversation: holds", tree.holds(m.did), () => false);
+      const state = unreadDevs ? "devices not read" : holds ? "current" : "not in the tree";
       // What their page REPORTED it cannot read here (`reportReads`): the newest report of each of their devices.
       const reports = devs.map(w => ptrs.filter(p => p?.reads && p.w === w).sort((x, y) => (y.reads.at ?? 0) - (x.reads.at ?? 0))[0]).filter(Boolean);
       const unread = [...new Set(reports.flatMap(p => (Array.isArray(p.reads.unread) ? p.reads.unread : []).map(String)))].slice(0, 6);
-      out.set(m.did, { state, why: unreadDevs, devs: devs.length, epoch: a?.epoch ?? null, branch: a?.branch ?? null, devices: anns.length, unread, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
+      out.set(m.did, { state, why: unreadDevs, devs: devs.length, unread, reported: Math.max(0, ...reports.map(p => p.reads.at ?? 0)) || null });
     }
-    return { owner: own ? { epoch: own.epoch, branch: own.branch } : null, writers: ptrs.length, members: out };
+    return { writers: ptrs.length, members: out };
   }
   // TELEMETRY (owner 10-11: "more telemetry so you can investigate and monitor our applications health throughout the
   // network"), into the day's public health bag — never content. THIS PAGE's own state in a space (the heartbeat's
-  // line): `{ s, e, oe, on, u }` — its keys' epoch, the owner's, whether it is on the owner's branch, what it cannot read.
+  // line): `{ s, placed, e, u }` — whether its tree places this account, its newest generation, what it cannot read.
   async function selfState(sp) {
-    const g = keys.group(sp);
-    const st = await g.ready();
-    // NOT HELD only when the device's key table, read again, says so (still arriving: `why` — no state, no ask).
-    if (!st && (await ctx.optional("conversation: g.holds", g.holds(), () => null)) !== false) return { s: sp.id.slice(0, 6), e: null, why: "its keys not read yet" };
-    const owns = await ctx.optional("conversation: ownerBranches", ownerBranches(sp), () => []);
-    const own = owns[0] ?? null;
-    const on = await onBranch(st?.epoch ?? null, e => g.fingerprint(e), owns);
+    const tree = (await ctx.require("members")).group(sp);
+    const gens = tree.generationNumbers().map(Number);
     // UNREADABLE: this device's own key gaps only (another member's feed failing is theirs).
     const u = (await ctx.require("storage")).keyGapsIn(sp.id);
-    return { s: sp.id.slice(0, 6), e: st?.epoch ?? null, oe: own?.epoch ?? null, on, u };
+    return { s: sp.id.slice(0, 6), placed: tree.placed(), e: gens.length ? Math.max(...gens) : null, u };
   }
-  // …and what this page SEES of the other members (hourly a space): each one not current reported (`member-keys`) with
-  // what settles why — devices read here or why not, their announcements found, the writers list's size.
+  // …and what this page SEES of the other members (hourly a space): each one not in the tree reported (`member-keys`)
+  // with what settles why — devices read here or why not, the writers list's size.
   const observedAt = new Map();
   async function observe(sp) {
     if (Date.now() - (observedAt.get(sp.id) ?? 0) < 3600e3) return 0;
@@ -275,7 +242,7 @@ export async function start(ctx) {
       // (This page's own state is its heartbeat's.)
       if (k.state === "current" || did === me) continue;
       n++;
-      await index.health({ k: "member-keys", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), st: k.state, e: k.epoch, oe: ks.owner?.epoch ?? null, d: { devs: k.devs, why: k.why, anns: k.devices, writers: ks.writers, unread: k.unread } });
+      await index.health({ k: "member-keys", s: sp.id.slice(0, 6), to: did.replace(/^did:craftec:/, "").slice(0, 6), st: k.state, d: { devs: k.devs, why: k.why, writers: ks.writers, unread: k.unread } });
     }
     return n;
   }
@@ -323,8 +290,9 @@ export async function start(ctx) {
     const sp = (await space.mine.strict()).find(s => s.id === detail.space);
     if (!me || !sp) return;
     const r = await ctx.optional("conversation: of", (await ctx.require("roles")).of(sp), () => null);
-    const now = (await keys.group(sp).ready())?.epoch ?? 0;
-    const below = Math.max(Number(detail.below) + 1 || 0, now);
+    // (Up to the newest generation its tree reaches here — K8.6: no MLS epoch.)
+    const gens = (await ctx.require("members")).group(sp).generationNumbers().map(Number);
+    const below = Math.max(Number(detail.below) + 1 || 0, gens.length ? Math.max(...gens) + 1 : 0);
     const ranked = (r?.members() ?? []).sort((a, b) => r.isAdmin(b.did) - r.isAdmin(a.did)).map(m => m.did);
     // THIS ACCOUNT FIRST (its other devices hold the space's whole history — 10-13: the owner's recovered device asked
     // only the other members, who joined after the epochs it lacked; its own original device was never asked), then
@@ -333,18 +301,6 @@ export async function start(ctx) {
     for (const did of to) await ctx.background("conversation: index.send", index.send(did, { kind: "history-ask", space: sp.id, from: me.id, below, at: Date.now() }));
     ctx.log("conversation", { what: `${sp.name}: its history (epochs below ${below}) asked of ${to.length} member(s)` });
   });
-  // ENTER BY ITSELF — the `group` machine's REACTION (FOUNDATION "Members and keys" 1): entering a state reading the
-  // logs cannot fix (`guards::cannot_read`: never held, another branch, unreadable, stuck — never behind), this device
-  // enters again by itself. Every reader checks it against the list; one not listed is skipped by all.
-  (await ctx.require("lifecycle")).on("group", async (key, to, from) => {
-    const { glue } = await ctx.require("node");
-    const state = String(to).toLowerCase().replace(/_/g, "-");
-    if (to === from || !glue.group_cannot_read(state)) return;
-    const sp = (await space.mine.strict()).find(s => s.id === key);
-    // (Only a space with an MLS group — migrating, K8.3.)
-    if (sp && (await ctx.optional("conversation: keys.group", keys.group(sp).snapshot(), () => null))) await keys.group(sp).enter(state).catch(e => ctx.log("conversation", { what: `${sp.name ?? "a space"}: entering by itself (${state}): ${e?.message ?? e}` }));
-  });
-
   // TOLD and HANDED OVER, from this account's inbox — ONE AT A TIME (the chat page and upkeep both ask): each space it
   // is TOLD it is in, entered by this device (`enterSpace`); a REJECTION of its request, ended; history asks answered;
   // history handed over, kept. What it entered.

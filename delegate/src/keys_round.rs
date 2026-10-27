@@ -360,7 +360,7 @@ pub(super) fn file_put<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, 
 
 /// The space's `files` table read, to list the files written in it.
 pub(super) fn list_files<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate) -> Vec<Io> {
-    let Some((epochs, dids)) = crate::upkeep::readers(h, &r.member, m) else { return next_space(h, c, r) };
+    let (epochs, dids) = crate::upkeep::readers(h, &r.member, m);
     let (reading, io) = crate::upkeep::members_read(h, &c.codes(), r.space, epochs, &dids, &["files"]);
     r.reading = reading;
     r.step = Step::ListFiles;

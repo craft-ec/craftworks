@@ -59,8 +59,8 @@ export async function start(ctx) {
 
   async function of(sp) {
     const r = await roles.of.strict(sp);
-    // STILL IN THE KEYS (K8.2): the BeeKEM tree holds them — or, migrating (until K8.6), the MLS group.
-    const holdsKeys = async did => (await (await ctx.require("members")).group(r.space).holds(did)) || r.nodesOf(did).length > 0;
+    // STILL IN THE KEYS (K8.2): the BeeKEM tree holds them.
+    const holdsKeys = async did => await (await ctx.require("members")).group(r.space).holds(did);
     // OUT: the act — naming their devices, so what they wrote stays theirs after they leave — and where their feeds
     // stand recorded; the KEYS FOLLOW the list (FOUNDATION "Members and keys": the node's follower takes their entries
     // out — asked to run now). A ban of someone already out is the act alone.

@@ -1,10 +1,8 @@
-// GROUP CHECK (the build's): KEYS FOLLOW THE LIST ONE WAY (FOUNDATION "Members and keys", the design of 10-17). Every MLS
-// group — the account's, a space, an audience, a circle, a conversation, a level group — is ENTERED by the listed
-// device itself (an MLS external commit: `keys` `enterNow`, the one `enter` in the Rust core), and only its node's
-// follower takes anyone out (`rules::members::follow`, the one `Account::remove` it calls). NOBODY ADDS ANYONE: no key
-// package, no welcome, no request for keys — the ask/answer layer that ran ~60 fixes (10-03 → 10-16) cannot come back.
-// One turn (`rules::admission::turn`), one order of a position's entries (`rules::ordering`). Fails the build, naming
-// each site.
+// GROUP CHECK (the build's): KEYS FOLLOW THE LIST ONE WAY (FOUNDATION "Members and keys", the design of 10-17). A space's
+// keys are its BeeKEM tree (`members`), which follows its list — K8.6: there is NO MLS space group, so no MLS entry and no
+// entry checked against the list exist on a page any more (banned below). NOBODY ADDS ANYONE by asking: no key package,
+// no welcome, no request for keys — the ask/answer layer that ran ~60 fixes (10-03 → 10-16) cannot come back. One turn
+// (`rules::admission::turn`), one order of a position's entries (`rules::ordering`). Fails the build, naming each site.
 //
 //   node tools/group-check.mjs [repo dir]
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -16,12 +14,11 @@ const bad = [];
 const lineOf = (src, i) => src.slice(0, i).split("\n").length;
 // [pattern, the one file it may be in, how many times there, what it is]
 const ONE = [
-  [/\.enter\(sp\.idBytes,/g, "keys.js", 1, "an MLS entry: only `keys` `enterNow` (the device's own, from the published info)"],
-  [/\.apply_checked\(/g, "keys.js", 1, "an entry checked against the list: only `keys` (the space's `apply`)"],
   [/\bglue\.ordering_entries\(/g, "ordering.js", 1, "a position's entries in the one order: `ordering` (`rules::ordering::order`)"],
 ];
 // The PAGE never adds, welcomes, asks for keys or takes anyone out of a space's group.
 const BANNED = [
+  [/\.enter\(sp\.idBytes,|\.apply_checked\(/g, "an MLS space entry: K8.6 — a space's keys are its BeeKEM tree (`members`), which follows its list"],
   [/2166136261/g, "a turn ranking of its own: `ordering.turn` (the core's `rules::admission::turn`)"],
   [/\.key_package\(|\bkeyPackages\(|SpaceMember\([^)]*,[^)]*,[^)]*\)/g, "a key package: nobody adds anyone — a listed device enters by itself"],
   [/\bjoin_space\(|\bwelcome_message\(|kind:\s*"welcome"/g, "a welcome: nobody adds anyone — a listed device enters by itself"],

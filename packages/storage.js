@@ -103,10 +103,21 @@ export async function start(ctx) {
   // arrives (`craftworks:keys`: the identity kept an epoch — this node caught up, or joined, or another device of the
   // account moved the group), they are given it and read again: a device added while this page is open is read.
   const unkeyed = new Map();
-  // A space table's ALTERNATE keys: each epoch secret of a group branch this node left (`keys.group(sp).lost()`),
-  // as this table's key in that epoch.
+  // A space table's ALTERNATE keys: another branch's key of a FORKED epoch (MLS, before the tree), as this table's key in
+  // that epoch — kept HERE (K8.6: no MLS group holds them), handed over from the space's `keys-history` by its members
+  // (`members` crossBridge → `keepAlternates`), so what was written on any branch reads.
+  const alternateKeys = new Map(); // space id → [{ epoch, secret }]
+  function keepAlternates(sp, list) {
+    const had = alternateKeys.get(sp.id) ?? [];
+    const seen = new Set(had.map(a => `${a.epoch}~${a.secret}`));
+    const add = list.filter(a => !seen.has(`${a.epoch}~${a.secret}`));
+    if (!add.length) return 0;
+    alternateKeys.set(sp.id, [...had, ...add]);
+    dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } }));
+    return add.length;
+  }
   async function alternates(id, app, sp) {
-    const lost = await (await ctx.require("keys")).group(sp).lost();
+    const lost = alternateKeys.get(sp.id) ?? [];
     for (const l of lost) core.tail_epoch_key_also(id, l.epoch, bytes(glue.epoch_table_key(bytes(l.secret), app)));
     return lost.length;
   }
@@ -117,18 +128,17 @@ export async function start(ctx) {
   const problemKinds = new Map(); // `${space}|${what}` → its kind
   const spaceKey = x => (!x ? null : typeof x === "string" ? x : hex(x));
   // What settles WHY a read fails (into the report, so it can be resolved from the report alone — never a key, never
-  // content): the epoch the failure names; whether this page holds that epoch's key for the table; the group's epoch
-  // here and whether removed; the other branches' epochs it keeps keys of.
+  // content): the epoch the failure names; whether this page holds that epoch's key for the table; the tree's newest
+  // generation here and whether it places this account; the other branches' epochs it keeps keys of.
   async function diagnose(spObj, table, why) {
     const e = Number((/epoch (\d+)/.exec(why) ?? [])[1]);
     const d = { ep: Number.isFinite(e) ? e : null };
     if (!spObj) return d;
-    const g = (await ctx.require("keys")).group(spObj);
-    const st = await g.ready();
-    d.at = st?.epoch ?? null;
-    d.removed = !!st?.removed;
-    const lost = await ctx.optional("storage: g.lost", g.lost(), () => []);
-    d.lost = lost.map(l => l.epoch).slice(-8);
+    const tree = (await ctx.require("members")).group(spObj);
+    const gens = tree.generationNumbers().map(Number);
+    d.at = gens.length ? Math.max(...gens) : null;
+    d.placed = tree.placed();
+    d.lost = (alternateKeys.get(spObj.id) ?? []).map(l => l.epoch).slice(-8);
     if (d.ep != null && table) {
       const k = await (await ctx.require("access")).keyAt(table, d.ep, { space: spObj.id }).catch(e => ({ why: e?.message ?? String(e) }));
       d.held = !!k?.key;
@@ -524,9 +534,9 @@ export async function start(ctx) {
       // after): the group brought current first. Not a channel (a node reads the MLS channel before it has any epoch),
       // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
       if (k.key && !sealWith && !CHANNELS.has(app)) {
-        const keys = await ctx.require("keys");
-        if (inSpace?.id) await keys.group(inSpace).ready();
-        else if (!catalogKey) await keys.ready();
+        // (A space's: its tree's generations reach the identity as it reconciles — `members.keepGenerations` — and
+        // writes move onto a newer one as it arrives: `sealNewest`. K8.6: nothing waits on an MLS group.)
+        if (!inSpace?.id && !catalogKey) await (await ctx.require("keys")).ready();
         mark("group");
         const e = await access.keyAt(app, -1, { catalog: catalogKey, space: spaceId });
         mark("epoch");
@@ -1093,16 +1103,8 @@ export async function start(ctx) {
       const ok = await Promise.all(named.map(async d => (await directory.devices(d)).some(w => b.dids.get(w) === d)));
       listed = [...listed, ...named.filter((_, i) => ok[i])];
     }
-    // MIGRATING (K8.4, removed at K8.6): a member the MLS group holds and no act lists yet (a space made before the list
-    // acts, its creator not yet back to list them) — still read, so their items do not vanish meanwhile.
-    const mls = await ctx.optional("storage: MLS members while migrating", (async () => {
-      const st = await (await ctx.require("keys")).group(sp).ready();
-      const all = (st?.members ?? []).filter(m => m.cred).map(m => JSON.parse(glue.credential_parts(bytes(m.cred)) ?? "null")).filter(Boolean);
-      const real = await Promise.all(all.map(async c => (await directory.dataKey(c.did)) === c.owner));
-      return all.filter((_, i) => real[i]).map(c => c.did).filter(d => !listed.includes(d));
-    })(), () => []);
     // WHOSE DEVICES are read (`account::reading_dids`, the node's too): the listed, the owner.
-    const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify([...listed, ...mls]), sp.governance?.owner ?? undefined));
+    const dids = JSON.parse(glue.CraftworksCore.reading_dids(JSON.stringify(listed), sp.governance?.owner ?? undefined));
     const sets = await Promise.all(dids.map(d => directory.devices.strict(d)));
     const devices = dids.map((d, i) => [d, sets[i]]);
     return { members: dids.map(did => ({ did })), devices, nodes: [...new Set(sets.flat())] };
@@ -1864,5 +1866,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), resealOwn, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), resealOwn, keepAlternates, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

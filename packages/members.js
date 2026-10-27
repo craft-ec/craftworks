@@ -257,42 +257,28 @@ export async function start(ctx) {
       return said;
     }
 
-    // THE BRIDGE (K7): every MLS epoch secret this device holds of the space, into its table `keys-history` (sealed with
-    // the newest epoch — a generation once the tree has one): whoever the tree places reads them and keeps them, so what
-    // was written before the move reads for a newcomer too. Each epoch once.
-    // A FORKED epoch (MLS, before BeeKEM) has a key per branch: each one this device holds that the bridge does not
-    // carry yet goes as `a<epoch>~<its hash>` beside the `e<epoch>` row — what was written on any branch reads for
-    // everyone (10-18, live: rows on Ivvor's space sealed with "another branch's" key at epoch 143, unreadable to every
-    // member on the other branch, because the bridge carried one key per epoch).
+    // THE BRIDGE (K7), the space's table `keys-history` (sealed with its newest generation): what was written before
+    // a member's keys reach reads for them too. It holds the MLS epochs carried before K8.6 (`e<epoch>`, and a forked
+    // epoch's other branches `a<epoch>~<its hash>`: 10-18, rows on Ivvor's space sealed with "another branch's" key) —
+    // nothing more is carried from MLS — and the GENERATIONS of a tree the space no longer has (`a<n>~`, 2^24 and up).
     const BELOW = 2 ** 24;
     const tagOf = async secret => hexOf(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes(String(secret)))).slice(0, 6));
     async function bridge() {
-      const held = await ctx.optional("members: epochSecrets", auth.identity.epochSecrets(sp.idBytes, BELOW), () => []);
-      const lost = await ctx.optional("members: lost", ctx.require("keys").then(k => k.group(sp).lost()), () => []);
       const t = await storage.table(space.tableOf(sp, "keys-history"), sp);
       await t.settled;
       const rows = new Map(t.rows().filter(x => x.value).map(x => [x.key, x.value]));
       let n = 0;
-      const carryLost = async (e, secret) => {
-        const s = String(secret);
-        const k = `a${e}~${await tagOf(s)}`;
-        if (!rows.has(k)) (await t.put(k, s), rows.set(k, s), (n += 1));
-      };
-      const carry = async (e, secret) => {
-        if (typeof e !== "number" || e >= BELOW || !secret) return;
-        const s = String(secret);
-        if (!rows.has(`e${e}`)) return (await t.put(`e${e}`, s), rows.set(`e${e}`, s), (n += 1));
-        if (rows.get(`e${e}`) === s) return;
-        const k = `a${e}~${await tagOf(s)}`;
-        if (!rows.has(k)) (await t.put(k, s), rows.set(k, s), (n += 1));
-      };
-      for (const [e, secret] of held) await carry(e, secret);
-      for (const l of lost) await carry(Number(l.epoch), l.secret);
       // GENERATIONS of a tree this space no longer has (a member's own root refused, 10-19): what it sealed with them goes
-      // as alternates (`a<n>~`), so every member still reads it.
+      // over (`a<n>~`), so every member still reads it. (No MLS epoch is carried any more — K8.6: what the bridge holds
+      // from before stays, read by `crossBridge`.)
       const reached = new Set(g.generations().map(([n]) => Number(n)));
       const gens = await ctx.optional("members: generations held", auth.identity.epochSecrets(sp.idBytes, 2 ** 62), () => []);
-      for (const [e, secret] of gens) if (typeof e === "number" && e >= BELOW && !reached.has(e)) await carryLost(e, secret);
+      for (const [e, secret] of gens) {
+        if (typeof e !== "number" || e < BELOW || reached.has(e)) continue;
+        const s = String(secret);
+        const k = `a${e}~${await tagOf(s)}`;
+        if (!rows.has(k)) (await t.put(k, s), rows.set(k, s), (n += 1));
+      }
       return n;
     }
     // …and READ: the epochs the bridge carries, kept (`epochKeep`) — the storage reads the space's history with them.
@@ -302,11 +288,14 @@ export async function start(ctx) {
       let n = 0;
       const alt = [];
       for (const x of t.rows()) {
-        // ANOTHER BRANCH's key of a forked epoch: kept as lost (an alternate to read with), never as the epoch's key.
+        // ANOTHER BRANCH's key of a forked MLS epoch: an ALTERNATE to read with (`storage.keepAlternates`), never the
+        // epoch's key. A dropped tree GENERATION (2^24 and up: its number its own) is kept as the epoch it is.
         if (x.value && x.key.startsWith("a") && !kept.has(x.key)) {
           const e = Number(x.key.slice(1).split("~")[0]);
-          if (Number.isInteger(e)) alt.push({ epoch: e, secret: String(x.value) });
           kept.add(x.key);
+          if (!Number.isInteger(e)) continue;
+          if (e >= BELOW && !kept.has(`m${e}`)) (await auth.identity.epochKeep(e, bytes(x.value), sp.idBytes), kept.add(`m${e}`), (n += 1));
+          else if (e < BELOW) alt.push({ epoch: e, secret: String(x.value) });
           continue;
         }
         const e = Number(x.key.slice(1));
@@ -315,10 +304,7 @@ export async function start(ctx) {
         kept.add(`m${e}`);
         n += 1;
       }
-      if (alt.length) {
-        await (await ctx.require("keys")).group(sp).keepLost(alt);
-        n += alt.length;
-      }
+      if (alt.length) n += storage.keepAlternates(sp, alt);
       if (n) dispatchEvent(new CustomEvent("craftworks:keys", { detail: { space: sp.id } }));
       return n;
     }

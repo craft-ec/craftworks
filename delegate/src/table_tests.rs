@@ -944,3 +944,19 @@ fn a_devices_member_seed_is_kept_once_or_its_mls_signers() {
     };
     assert_eq!(mine, [0x5E; 32], "its MLS signer's seed");
 }
+
+/// THE NODE's FILE RE-KEY, a TREE-ONLY space (no MLS state — every space since K8.3): its members are the list the
+/// follower kept, and its owner — never "its group does not load" (10-27: every such space was UNLOADABLE, its files
+/// never re-keyed with the pages closed). Control: no list kept yet — the owner alone.
+#[test]
+fn the_rekey_round_reads_a_tree_only_spaces_members_from_its_kept_list() {
+    use identity::Host;
+    let mut h = crate::testhost::Map::default();
+    let (member, space) = ([0x21; 32], [0x5A; 32]);
+    let m = identity::Mandate { space, name: "tree only".into(), kind: "server".into(), owner: "did:craftec:owner".into(), nonce: None, channel: "ch".into(), epoch: 0, state: Vec::new() };
+    let (alone, _) = crate::rekey_round::space_of(&h, &member, &m);
+    assert_eq!(alone, vec!["did:craftec:owner".to_string()], "control: no list kept — the owner alone");
+    h.set_secret(&crate::upkeep::roster_key(&member, &space), &serde_json::to_vec(&["did:craftec:owner", "did:craftec:bob"]).unwrap());
+    let (roster, _) = crate::rekey_round::space_of(&h, &member, &m);
+    assert_eq!(roster, vec!["did:craftec:owner".to_string(), "did:craftec:bob".to_string()], "the list kept");
+}

@@ -2,11 +2,9 @@
 // current without any one page open — every 30 s (and at once): spaces this person was TOLD they are in, entered (they
 // appear in the spaces panel), and each space's state here watched.
 //
-// MEMBERS AND KEYS (FOUNDATION "Members and keys", the design of 10-17): a listed device ENTERS a space's keys BY ITSELF
-// whenever it cannot read (`keys.group(sp).enter`: the `group` machine's reaction, and again here while it still cannot,
-// at most every few minutes); whoever the list no longer names is taken out by the account's node (the identity
-// delegate's follower: removals only, by turn), asked to run now when that changes. Nobody is ever let in by another's
-// page or node: the list says who is in.
+// MEMBERS AND KEYS (FOUNDATION "Members and keys"): a space's BeeKEM tree follows its list — whoever reconciles places a
+// listed account and takes out whom the list no longer names (`members`; the account's node too, with every page closed:
+// asked to run now when that changes). The list says who is in.
 export async function start(ctx) {
   const [space, conversation, roles, keys, auth, index] = await Promise.all(["space", "conversation", "roles", "keys", "auth", "index"].map(n => ctx.require(n)));
   // (Its jobs started with the page's upkeep: devices dropped from this account recorded in its spaces, `retire`.)
@@ -65,22 +63,11 @@ export async function start(ctx) {
         await conversation.reportReads(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: reporting reads: ${e.message}`));
         const self = await conversation.selfState(sp).catch(e => ({ s: sp.id.slice(0, 6), why: String(e?.message ?? e).slice(0, 80) }));
         seen.push(self);
-        // ITS GROUP HERE, as a lifecycle state (FOUNDATION.md §3: `group`).
+        // ITS GROUP HERE, as a lifecycle state (FOUNDATION.md §3: `group`): HELD when its tree places this account and
+        // nothing here is unreadable, UNREADABLE when something is, NOT_HELD when the tree does not place it (K8.6: the
+        // tree's word — no MLS epoch, branch or self-entry).
         const life = await ctx.require("lifecycle");
-        // (The state by the one rule — `guards::group_state`; entering one it cannot read from, this device enters by
-        // itself: the machine's reaction, `conversation`.)
-        const { glue } = await ctx.require("node");
-        const ev = glue.group_state(self.e ?? undefined, self.oe ?? undefined, self.on ?? undefined, !!self.u, !!self.why);
-        // (UNKNOWN — its state could not be told — is no move: a passing read error is never a reason to ask.)
-        if (ev !== "unknown") life.become("group", sp.id, ev, { e: self.e, oe: self.oe, u: self.u });
-        // STILL CANNOT READ (no state change, so no reaction — its entry not published yet, or not taken): entered again,
-        // at most every ENTER_AGAIN.
-        // (Only a space that has an MLS group — migrating, K8.3: one made since has none to enter.)
-        const hasMls = !!(await ctx.optional("upkeep: keys.group", keys.group(sp).snapshot(), () => null));
-        if (hasMls && glue.group_cannot_read(ev) && life.state("group", sp.id).s !== "UNKNOWN" && Date.now() - (enteredAt.get(sp.id) ?? 0) >= ENTER_AGAIN) {
-          enteredAt.set(sp.id, Date.now());
-          await keys.group(sp).enter(ev).catch(e => ctx.log("upkeep", { what: `${sp.name}: entering by itself: ${e.message}` }));
-        }
+        if (!self.why) life.become("group", sp.id, !self.placed ? "not-held" : self.u?.length ? "unreadable" : "held", { e: self.e, u: self.u });
         await conversation.observe(sp).catch(e => ctx.failed("upkeep", e, `${sp.name}: observing members: ${e.message}`));
         const r = await roles.of(sp);
         // AN OPEN SPACE's roster public (the owner, once a page): who is in, seen from outside.
@@ -127,9 +114,6 @@ export async function start(ctx) {
     if (!st) return;
     const mine = await space.mine.strict();
     const of = id => mine.find(s => s.id === id);
-    const loaded = [];
-    for (const g of st.groups ?? []) if (of(g.space)) (await keys.group(of(g.space)).adopt(g.epoch, g.state), loaded.push(g.space));
-    if (loaded.length) await auth.identity.upkeepAck(loaded);
     // ITS DECISIONS: moves of the `group` machine (by the node), reported like a page's — ONCE each: those past the newest
     // of the node's this journal holds, by the node's SEQUENCE (I5: never its clock).
     const life = await ctx.require("lifecycle");
@@ -152,26 +136,18 @@ export async function start(ctx) {
       }
     }
   }
-  // A device that still cannot read enters again at most this often (each try one door item; an entry not taken is
-  // skipped by every reader).
-  const ENTER_AGAIN = 5 * 60 * 1000;
-  const enteredAt = new Map();
   const lastOut = new Map(); // space → how many the acts put out still held an entry last tick (the same)
-  // THE MANDATE: every shared space this person is in, NAMED (its id, name, owner, channel) with its group as this page
-  // holds it — never its member list (the node reads that from the acts).
+  // THE MANDATE: every shared space this person is in, NAMED (its id, name, owner, channel) — never its member list (the
+  // node reads that from the acts), never an MLS group (K8.6: epoch 0, no state — the fields stay in the wire).
   async function mandate(me) {
     const spaces = [];
     // EVERY KIND (a server, a conversation, a level group, an audience, a circle): one follower for all.
     for (const sp of await space.mine.strict()) {
-      // (A space with no MLS group — made or joined since K8.3 — upkept too: its list and BeeKEM keys followed; an empty
-      // group, epoch 0, which the node never loads.)
-      const g = await ctx.optional("upkeep: keys.group", keys.group(sp).snapshot(), () => null);
-      spaces.push({ space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel, epoch: g?.epoch ?? 0, state: g?.state ?? "" });
+      spaces.push({ space: sp.id, name: sp.name, kind: sp.kind, owner: sp.governance.owner, nonce: sp.governance.nonce ?? null, channel: sp.tables.channel, epoch: 0, state: "" });
     }
     const r = await auth.identity.upkeepMandate(me.id, spaces);
     const said = spaces.map(x => x.name).join(", ");
     (await ctx.require("lifecycle")).logOnce("upkeep", "mandate", `the node upkeeps ${spaces.length} space(s): ${said}`);
-    if (r.upkeep?.stale?.length) ctx.log("upkeep", { what: `${r.upkeep.stale.length} space(s): the delegate's group is newer (loaded next tick)` });
   }
   // THE DELEGATE's upkeep (no page open: the node wakes it — node ≥ 0.2.139, with the Background grant): told which
   // contract the account's inbox is, once per login.

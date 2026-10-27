@@ -241,7 +241,8 @@ export async function start(ctx) {
       const k = (await askPrior(prior, core.frames_handover_keys_from(prior, pin), "the member's keys"))?.handedKeys;
       if (k) await keepGroup(k.mls, k.epochs, NONE);
       const sp = (await askPrior(prior, core.frames_handover_spaces_from(prior, pin), "the member's spaces"))?.handedSpaces ?? [];
-      for (const x of sp) await keepGroup(x.mls, x.epochs, bytes(x.space));
+      // (A space's epochs only — K8.6: no MLS space group is kept; its tree's generations are among its epochs.)
+      for (const x of sp) await keepGroup(null, x.epochs, bytes(x.space));
       return { moved: k?.epochs.length ?? 0, group: !!k?.mls, spaces: sp.length };
     },
     // RETIRE an earlier build's upkeep for this member: its PIN there, then an empty mandate — a build the member left

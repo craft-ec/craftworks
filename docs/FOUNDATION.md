@@ -459,8 +459,16 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    none on the current key forgets everything. The node's round takes the seed from the delegate; `m/` copies go on
    under the account's LAST MLS epoch (frozen: `keys.mlsNow` loads a device's MLS state read-only and catches it up,
    never commits). The 10-13 repair (`repairAccount`: MLS group info re-pointed) is gone with it.
-   (6b) SPACES OFF MLS — a space's tables seal and read with its generations alone; the MLS space group, its bridge and
-   alternates go (an MLS-era space is not shown: K8.4's rule).
+   (6b) SPACES OFF MLS — a space's tables seal and read with its tree's generations alone (nothing waits on an MLS group
+   before sealing; writes move onto a newer generation as it arrives); there is no MLS space group (`keys.group`,
+   `setList`, the `spacekeys` state, the self-entry and its retries, the node's moved groups adopted, the owner's
+   branch/epoch announcements all gone; the build bans an MLS space entry on a page). A member's keys are the TREE's
+   word (`keyStatus`, the `group` machine: held / not-held / unreadable). The bridge (`keys-history`) carries no MLS epoch
+   any more: what it holds from before is still read, a dropped tree generation kept as the epoch it is, a forked MLS
+   epoch's other branches as storage's own ALTERNATES (`storage.keepAlternates`). The NODE: its file re-key reads a
+   space's members from the list it kept (`rekey_round::space_of` — before, from the mandate's MLS group, so every space
+   since K8.3 was UNLOADABLE and never re-keyed with the pages closed); its dead MLS follower is gone; the mandate's
+   `epoch`/`state` stay in the wire, always empty. An MLS-era space is not shown (K8.4's rule).
    (6c) THE MLS CODE GOES — the delegate's MLS requests and dead catch-up, the `mls` crate, the wasm package. KEPT, named
    for what they are — the account's PRE-TREE HISTORY, which migration needs and which needs no MLS code: the signer seed
    read from a saved state (`signer_seed_of`), the epoch secrets the identity keeps, and the words walk over the

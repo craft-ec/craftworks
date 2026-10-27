@@ -16,7 +16,7 @@
 // and roles changing, a new epoch (`craftworks:keys`), and a takeover falling due. A row that failed is tried again on
 // the next trigger, not in a loop.
 export async function start(ctx) {
-  const [space, files, roles, keys, storage, driveStore] = await Promise.all(["space", "files", "roles", "keys", "storage", "drive-store"].map(n => ctx.require(n)));
+  const [space, files, roles, storage, driveStore] = await Promise.all(["space", "files", "roles", "storage", "drive-store"].map(n => ctx.require(n)));
   const shared = space.shared;
   const label = sp => (shared(sp) ? space.shown(sp) : "your files");
   const failed = new Map(); // row → the trigger count it failed at

@@ -51,12 +51,11 @@ export async function start(ctx) {
       c.onchange = () => (say(""), run(c.checked).then(() => r.refresh(), err => say(`Role: ${ctx.say(err)}`)));
       return h("label", { className: "chip", onclick: e => e.stopPropagation() }, c, label);
     };
-    // EACH MEMBER's KEYS (`conversation.keyStatus`: what their devices announced) — seen by any member, so nobody has
-    // to ask another for a log: on the owner's keys, behind, or on another branch, and who caught them up.
-    // DIAGNOSTICS only (debugging: `edge.prefs` "diagnostics", Settings → Content).
+    // WHAT EACH MEMBER's PAGE REPORTED IT CANNOT READ here (`conversation.keyStatus`) — seen by any member, so nobody has
+    // to ask another for a log. DIAGNOSTICS only (debugging: `edge.prefs` "diagnostics", Settings → Content).
     let keyState = null;
-    // …and WHETHER EACH IS IN THE SPACE's KEY TREE (BeeKEM: what its tables are sealed with now — the MLS epoch above
-    // says "current" for a member the tree never placed, 10-19), as this page's synced tree places them.
+    // …and WHETHER EACH IS IN THE SPACE's KEY TREE (BeeKEM: what its tables are sealed with), as this page's synced tree
+    // places them.
     let tree = null;
     ctx.background("members-list: edge", ctx
       .require("edge")
@@ -86,15 +85,10 @@ export async function start(ctx) {
     const keyChip = did => {
       const k = keyState?.members.get(did);
       if (!k) return null;
-      const o = keyState.owner;
-      const text = k.state === "current" ? "🔑 keys current" : k.state === "behind" ? `🔑 behind: epoch ${k.epoch} of ${o?.epoch}` : k.state === "another branch" ? `🔑 on another branch (epoch ${k.epoch})` : k.state === "not announced" ? "🔑 keys not announced" : k.state === "devices not read" ? `🔑 devices not read here (${k.why})` : `🔑 ${k.state}`;
-      const chip = h("span", { className: `chip key ${k.state === "current" ? "ok" : "warn"}`, textContent: text });
+      // (In the tree or not: `treeChip`. Here what is NOT read: their devices, or what their page reported.)
+      if (k.state === "devices not read") return h("span", { className: "chip key warn", textContent: `🔑 devices not read here (${k.why})` });
       // What their page reported it cannot read here — shown in full (no hover on a touch screen).
-      const warns = [
-        ...(k.unread?.length ? [h("span", { className: "chip key warn", textContent: `⚠ can't read: ${k.unread.join(" · ")}` })] : []),
-      ];
-      if (!warns.length) return chip;
-      return h("span", { className: "reads" }, chip, ...warns);
+      return k.unread?.length ? h("span", { className: "chip key warn", textContent: `⚠ can't read: ${k.unread.join(" · ")}` }) : null;
     };
     const draw = () => {
       const people = r.members().filter(m => !who || r.passes(who, m.did));

@@ -65,7 +65,7 @@ struct Round {
     name: String,
     owner: String,
     /// The group's members (DIDs): who takes turns. Their DEVICES write the space (`reading.writer_dids`).
-    roster: Vec<([u8; 32], String)>,
+    roster: Vec<String>,
     reading: Reading,
     step: Step,
     /// Rows still due this pass (turn now).
@@ -142,35 +142,29 @@ impl Held {
     }
 }
 
-/// A space's ROSTER (writer key → DID) from the mandate's group, and the epoch secrets the member holds.
-pub(crate) fn space_of<H: Host>(h: &H, member: &[u8; 32], m: &identity::Mandate) -> Option<(Vec<([u8; 32], String)>, std::collections::BTreeMap<u64, [u8; 32]>)> {
-    let g = craftworks_mls::Account::load(craftworks_mls::Rule::Space(m.space), &m.state).ok()?;
-    let roster = g
-        .members()
-        .into_iter()
-        .filter_map(|(_, node, cred)| {
-            let (did, ..) = identity::read_credential(&cred)?;
-            Some((node.try_into().ok()?, craftworks_account::did(&did)))
-        })
-        .collect();
+/// A space's MEMBERS (DIDs): its LIST as the follower last read it whole (`upkeep::roster_kept` — K8.1, the list is who
+/// is in a space) and its owner; and the epoch secrets the member holds. (Never the MLS group: a space made since K8.3
+/// has none — 10-27, every such space read UNLOADABLE here and its files were never re-keyed with the pages closed.)
+pub(crate) fn space_of<H: Host>(h: &H, member: &[u8; 32], m: &identity::Mandate) -> (Vec<String>, std::collections::BTreeMap<u64, [u8; 32]>) {
+    let mut roster = crate::upkeep::roster_kept(h, member, &m.space);
+    if !m.owner.is_empty() && !roster.contains(&m.owner) {
+        roster.push(m.owner.clone());
+    }
     // EVERY epoch held (the page keeps each one as the group moves, before any mandate names it): a row sealed with
     // an epoch newer than the mandate's group — a new salt after a removal — still reads.
     // (`identity::epochs_below`, the one walk of the kept epochs: counting up to the latest number walked millions with
     // BeeKEM's generation numbers, 2^24 and up — inventory #13, 10-19.)
     let epochs = identity::epochs_below(h, member, m.space, u64::MAX).into_iter().collect();
-    Some((roster, epochs))
+    (roster, epochs)
 }
 
 /// A space's round begun: its tables read.
 fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8; 32], rest: Vec<[u8; 32]>) -> Vec<Io> {
     let Some((_, spaces)) = identity::upkeep_mandate(h, &member) else { return Vec::new() };
     let Some(m) = spaces.iter().find(|m| m.space == space).cloned() else { return next_space(h, c, member, me, rest) };
-    let Some((roster, epochs)) = space_of(h, &member, &m) else {
-        crate::upkeep::followed(h, &member, &m.space, craftworks_rules::steps::UNLOADABLE, &format!("{}: its group does not load here: its files not re-keyed", m.name));
-        return next_space(h, c, member, me, rest);
-    };
+    let (roster, epochs) = space_of(h, &member, &m);
     // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
-    let dids: Vec<[u8; 32]> = roster.iter().filter_map(|(_, d)| craftworks_account::did_bytes(d)).collect();
+    let dids: Vec<[u8; 32]> = roster.iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
     let (reading, io) = crate::upkeep::members_read(h, &c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
     let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: identity::upkeep_wakeups(h), moved_ms: identity::upkeep_now_ms(h), salt: None };
     keep(h, Some(&r));
@@ -368,8 +362,7 @@ fn old_key_of(d: &Task) -> [u8; 32] {
 fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
     // Whose acts are whose: each device read → its member's DID.
     let g = rekey::governance(&r.reading, &r.reading.writer_dids, &r.owner, now_ms);
-    let members: Vec<String> = r.roster.iter().map(|(_, d)| d.clone()).collect();
-    let p = rekey::plan(&r.reading, &g, &members, &r.me, now_ms);
+    let p = rekey::plan(&r.reading, &g, &r.roster, &r.me, now_ms);
     let st = rekey::salt(&r.reading.rows("files"));
     if let (Some(removals), Some(was)) = (p.rotate, st.clone()) {
         let Some(new) = identity::upkeep_random(h) else { return next_space(h, c, r.member, r.me.clone(), r.rest.clone()) };

@@ -3149,7 +3149,29 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
 - [x] 10-27 v450 — K8.6 6a THE ACCOUNT ON ITS TREE ALONE LIVE (702e43e; manifest 503a5ac9f764; gates 3/3 + frames;
   identity changed: one PIN entry). Gate note: "holds epoch 0 again" (a space's MLS epoch 0) timed out in gate 1 without
   failing it — spaces made on v449 are on the tree; content checks all passed. NEXT: 6b (spaces off MLS).
-  - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed
+  - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed. PLAN (map 10-27):
+        - [x] b1 node: `rekey_round::space_of` builds its roster from the mandate's MLS state — a tree-only space (every
+              space since K8.3) is UNLOADABLE, its files never re-keyed with pages closed (LIVE BUG): roster from the list
+              kept (`roster_kept`) and the tree; the dead MLS follower in `upkeep.rs` (catch_up…follow_out, Moved,
+              held, door/epoch log, mls_owed) and `readers`' MLS leaves removed; mandate state unused
+        - [x] b2 page: the tree's dropped generations kept as epochs (`epochKeep`); `storage.alternates` reads forked
+              MLS keys from `keys-history` (`a<e>~`) — no `keys.group(sp).lost/keepLost`; `bridge` writes no MLS rows
+        - [x] b3 page: every other `keys.group(sp)` caller onto the tree or removed (storage seal wait, currentWriters,
+              upkeep enter/adopt/mandate state, conversation selfState/keyStatus/enter/history-gap, roles learn/
+              nodesOf/setList, moderation holdsKeys, removeNow's space refresh); `keys.group`/`setList`/`logsOf`'s space
+              parts/`auditChains` deleted
+        - [x] b4 (page part) identity: MlsSave/MlsLoad space form, HandoverSpaces MLS state, UpkeepAck, upkeep groups/moved/stale —
+              answers kept decodable (variants stay, NEW LAST); then fx/fy probes + gates → v451
+        - 10-27 6b built: keys.js 1173 → 593 lines (no `group`/`setList`/`spacekeys`/`auditChains`); upkeep, conversation
+              (`keyStatus`/`selfState` on the tree, MLS self-entry gone), roles (no `learn` of MLS, no `setList`/`nodesOf`),
+              moderation, storage (no seal wait, no MLS writers, own alternates), members (bridge/crossBridge without
+              MLS), identity hand-over (space epochs only), group-check (MLS space entry BANNED; positive control fires).
+              Node: re-key roster from the kept list (test with control), dead MLS follower deleted (36/36). fx:
+              remove-control-bk PASS (out of the tree 15 s after the act; B reads nothing after), k85-two PASS, upgrade
+              gate v450 → new PASS. NOT probed: the node's file re-key with every page closed (unit test only).
+              Left for 6c: `logsOf`'s space parts, `provOf`/`keyEvents`, the identity's space MLS requests
+              (MlsSave/Load space, HandoverSpaces state, UpkeepAck, upkeep groups/moved/stale), dead rules steps
+              (UNLOADABLE, MOVED_MEANWHILE, LOG/COMMIT/NEXT_REFUSED, INFO_*), core `tail_replace`.
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows
 
