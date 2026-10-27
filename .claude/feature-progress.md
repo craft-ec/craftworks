@@ -3146,6 +3146,9 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               the MIDDLE of `Request` and `Answer` (bincode index = place), so every answer an earlier build gave the
               handover/retirement read as another variant. Moved LAST; test pins the v449 indices of what an earlier
               build is asked and answers (control: the committed order fails it).
+- [x] 10-27 v450 — K8.6 6a THE ACCOUNT ON ITS TREE ALONE LIVE (702e43e; manifest 503a5ac9f764; gates 3/3 + frames;
+  identity changed: one PIN entry). Gate note: "holds epoch 0 again" (a space's MLS epoch 0) timed out in gate 1 without
+  failing it — spaces made on v449 are on the tree; content checks all passed. NEXT: 6b (spaces off MLS).
   - [ ] 6b. spaces off MLS: sealing/reading by generations only; MLS space group, bridge, alternates removed
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
         parse, kept epochs, the words walk over `e/` escrows
