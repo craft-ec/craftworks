@@ -3240,7 +3240,13 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               waits on (page trace `keys-waiting`); the rotation says each step and its outcome; the gate publishes
               only what is not up. Probes pin every page to its own node's manifest (tmp/pw).
               TESTING (decided 10-29): on the private nodes, not an offline harness (a fake node is only as correct as
-              itself); every state that writes covered by a probe there before a release.
+              itself); every state that writes covered by a probe there before a release. 10-29 set, all PASS on this
+              build: k86-reg (registration), k85-two (second device by words, writes both ways, removal), k87-rot /
+              k87-resume / k87-three (rotation, interrupted, three devices), remove-control-bk (removed device),
+              k86-mls (v446 pre-tree device upgraded, no words), k88-join-kick (NEW: two accounts, invite join, writes
+              both ways, kick — the kicked one reads nothing after, its writes not read), upgrade gate v451→candidate.
+              Every probe page is pinned to the build just published (k86-mls had registered its "old" phase on the
+              newer build — its earlier pass/fail said nothing about v446).
         - [ ] OPEN: a member→account binding the member cannot erase (fresh devices wait on a card-dropping kicked
               member's history; saved trees + node cache handle it)
         - [ ] R6 probes: removed device writes nothing read, reads nothing after (account + spaces); stayers go on;
