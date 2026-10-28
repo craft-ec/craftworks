@@ -165,7 +165,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
     let (roster, epochs) = space_of(h, &member, &m);
     // Its WRITERS: each member's devices (a page writes a space under its member key, one per device).
     let dids: Vec<[u8; 32]> = roster.iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
-    let (reading, io) = crate::upkeep::members_read(h, &c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
+    let (reading, io) = crate::upkeep::members_read(h, &member, &c.codes(), space, epochs, &dids, &["files", "acts", "pub-acts"]);
     let r = Round { member, me, rest, space, name: m.name.clone(), owner: m.owner.clone(), roster, reading, step: Step::Reading, queue: Vec::new(), moved: identity::upkeep_wakeups(h), moved_ms: identity::upkeep_now_ms(h), salt: None };
     keep(h, Some(&r));
     io
@@ -365,6 +365,14 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
     let p = rekey::plan(&r.reading, &g, &r.roster, &r.me, now_ms);
     let st = rekey::salt(&r.reading.rows("files"));
     if let (Some(removals), Some(was)) = (p.rotate, st.clone()) {
+        // (THE KEY TREE CLEAN FIRST — the page's gate too: the new salt sealed with the generation written with only once
+        // the tree found clean at THAT mark placed no account off the list now; else the keys round goes first — 10-28
+        // review: the salt was sealed with a generation the one removed held.)
+        let clean = crate::account_round::clean_at(h, &r.member, &r.space).is_some_and(|(n, placed)| identity::latest_epoch(h, &r.member, r.space) == Some(n) && placed.iter().all(|d| r.roster.contains(d)));
+        if !clean {
+            crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: a member removed — the new salt waits for the key tree to be clean", r.name));
+            return next_space(h, c, r.member, r.me.clone(), r.rest.clone());
+        }
         let Some(new) = identity::upkeep_random(h) else { return next_space(h, c, r.member, r.me.clone(), r.rest.clone()) };
         crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::FILES_NEW_SALT, &format!("{}: a member removed: a new salt (the space's files re-key)", r.name));
         let rows = rekey::rotation(&r.reading.rows("files"), &was, new, removals);

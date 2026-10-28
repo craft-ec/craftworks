@@ -132,20 +132,48 @@ fn vault_key(enc_seed: &[u8; 32]) -> [u8; 32] {
     blake3::derive_key("craftworks 2026-09-28 idlog vault key", enc_seed)
 }
 
-pub fn vault_seal(enc_seed: &[u8; 32], data_seed: &[u8; 32]) -> Vec<u8> {
+/// THE ACCOUNT's TWO SEEDS (K8.7): `names` — the inception's data seed, never changing: what only NAMES and FINDS (every
+/// private table's blinded label and base key, the account check); `data` — the DATA key's seed, which a removal
+/// ROTATES: write authority over everything addressed by the data key, the account's member in every space, the inbox.
+/// Until the first rotation they are the same seed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seeds {
+    pub names: [u8; 32],
+    pub data: [u8; 32],
+}
+impl Seeds {
+    pub fn one(seed: [u8; 32]) -> Seeds {
+        Seeds { names: seed, data: seed }
+    }
+    /// As handed between builds and to the identity: `names ‖ data` (64 bytes), or the one seed (32) while they are one.
+    pub fn bytes(&self) -> Vec<u8> {
+        if self.names == self.data { self.data.to_vec() } else { [&self.names[..], &self.data[..]].concat() }
+    }
+    pub fn of(b: &[u8]) -> Option<Seeds> {
+        match b.len() {
+            32 => Some(Seeds::one(b.try_into().ok()?)),
+            64 => Some(Seeds { names: b[..32].try_into().ok()?, data: b[32..].try_into().ok()? }),
+            _ => None,
+        }
+    }
+}
+
+pub fn vault_seal(enc_seed: &[u8; 32], seeds: &Seeds) -> Vec<u8> {
     use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
     let key = vault_key(enc_seed);
-    let n = blake3::keyed_hash(&key, data_seed);
+    // (One seed sealed as before — an inception's vault, and so its DID, stays a function of the words alone.)
+    let pt = seeds.bytes();
+    let n = blake3::keyed_hash(&key, &pt);
     let nonce = XNonce::from_slice(&n.as_bytes()[..24]);
-    let ct = XChaCha20Poly1305::new((&key).into()).encrypt(nonce, data_seed.as_slice()).expect("sealing 32 bytes cannot fail");
+    let ct = XChaCha20Poly1305::new((&key).into()).encrypt(nonce, pt.as_slice()).expect("sealing 64 bytes cannot fail");
     [&n.as_bytes()[..24], &ct[..]].concat()
 }
 
-pub fn vault_open(enc_seed: &[u8; 32], vault: &[u8]) -> Option<[u8; 32]> {
+pub fn vault_open(enc_seed: &[u8; 32], vault: &[u8]) -> Option<Seeds> {
     use chacha20poly1305::{aead::Aead, KeyInit, XChaCha20Poly1305, XNonce};
     let (n, ct) = vault.split_at_checked(24)?;
     let pt = XChaCha20Poly1305::new((&vault_key(enc_seed)).into()).decrypt(XNonce::from_slice(n), ct).ok()?;
-    pt.try_into().ok()
+    Seeds::of(&pt)
 }
 
 /// RECOVERY BY PASSPHRASE: the words' entropy sealed under a key stretched from a passphrase (Argon2id, 64 MiB, 3
@@ -207,7 +235,7 @@ pub fn inception(entropy: &[u8]) -> Option<Event> {
         commit(&public_of(&owner_seed_at(entropy, 1)?)),
         public_of(&data),
         enc_public_of(&enc),
-        vault_seal(&enc, &data),
+        vault_seal(&enc, &Seeds::one(data)),
     )
 }
 
@@ -221,12 +249,12 @@ pub fn position(entropy: &[u8], log: &Log) -> Option<u32> {
 
 /// What words W hold in a verified log: their index, the current owner key's seed, and the data key's seed (from the
 /// vault). `None` if W are not the current words.
-pub fn open_log(entropy: &[u8], log: &Log) -> Option<(u32, [u8; 32], [u8; 32])> {
+pub fn open_log(entropy: &[u8], log: &Log) -> Option<(u32, [u8; 32], Seeds)> {
     let j = position(entropy, log)?;
     // The vault of the head is sealed to the encryption key of the words that hold it now: index 0 of those words
     // (they took over at their first key) — or, for the original words, that same index 0.
-    let data = vault_open(&enc_seed_at(entropy, 0)?, &log.head().vault)?;
-    Some((j, owner_seed_at(entropy, j)?, data))
+    let seeds = vault_open(&enc_seed_at(entropy, 0)?, &log.head().vault)?;
+    Some((j, owner_seed_at(entropy, j)?, seeds))
 }
 
 /// CHANGE THE WORDS: from `old` (current in `log`, at their index j) to `new`. Two events: old's committed key j+1
@@ -234,10 +262,10 @@ pub fn open_log(entropy: &[u8], log: &Log) -> Option<(u32, [u8; 32], [u8; 32])> 
 /// to the new words; the data key stays. Returns the longer log.
 pub fn change_words(log: &Log, old: &[u8], new: &[u8]) -> Option<Log> {
     let j = position(old, log)?;
-    let (_, _, data) = open_log(old, log)?;
+    let (_, _, seeds) = open_log(old, log)?;
     let head = log.head();
     let enc = enc_seed_at(new, 0)?;
-    let (enc_pub, vault) = (enc_public_of(&enc), vault_seal(&enc, &data));
+    let (enc_pub, vault) = (enc_public_of(&enc), vault_seal(&enc, &seeds));
     let new0 = owner_seed_at(new, 0)?;
     let a = Event::signed(head.seq + 1, head.id(), &owner_seed_at(old, j + 1)?, commit(&public_of(&new0)), head.data, enc_pub, vault.clone())?;
     let b = Event::signed(a.seq + 1, a.id(), &new0, commit(&public_of(&owner_seed_at(new, 1)?)), head.data, enc_pub, vault)?;
@@ -253,6 +281,20 @@ pub fn rotate(log: &Log, words: &[u8]) -> Option<Log> {
     let j = position(words, log)?;
     let head = log.head();
     let e = Event::signed(head.seq + 1, head.id(), &owner_seed_at(words, j + 1)?, commit(&public_of(&owner_seed_at(words, j + 2)?)), head.data, head.enc, head.vault.clone())?;
+    let mut out = log.clone();
+    out.events.push(e);
+    Some(out)
+}
+
+/// ROTATE AT A REMOVAL (K8.7): as `rotate`, and the DATA key with it — `new_data` (a fresh seed, the remover's
+/// randomness) in the event, both seeds in its vault for the current words (the names seed unchanged). A removed device
+/// keeps the old data seed: nothing addressed or signed by the new one is its. `None` if the words are not current.
+pub fn rotate_data(log: &Log, words: &[u8], new_data: &[u8; 32]) -> Option<Log> {
+    let j = position(words, log)?;
+    let (_, _, seeds) = open_log(words, log)?;
+    let head = log.head();
+    let vault = vault_seal(&enc_seed_at(words, 0)?, &Seeds { names: seeds.names, data: *new_data });
+    let e = Event::signed(head.seq + 1, head.id(), &owner_seed_at(words, j + 1)?, commit(&public_of(&owner_seed_at(words, j + 2)?)), public_of(new_data), head.enc, vault)?;
     let mut out = log.clone();
     out.events.push(e);
     Some(out)
@@ -436,6 +478,16 @@ pub fn device_members_ever(did: &[u8; 32], log: &Log, contract: &[Vec<u8>]) -> V
     out
 }
 
+/// THE MLS BRIDGE IS OPEN (K8.6 `m/` rows: a generation sealed with the account's last MLS epoch secret, for a device
+/// from before the tree): only while every device the account EVER credentialed is CURRENT — the MLS secret is held by
+/// every device that was in its group, and one removed since still holds it (10-28 review: through `m/` a removed
+/// device opened the generation after its removal, then the new data seed sealed with it). Closed for good once one is
+/// out: a device from before the tree enters by itself instead.
+pub fn mls_bridge_open(did: &[u8; 32], log: &Log, contract: &[Vec<u8>]) -> bool {
+    let current = device_members(did, log, contract);
+    device_members_ever(did, log, contract).iter().all(|d| current.contains(d))
+}
+
 /// A member's DEVICES, STEP BY STEP — the one resolution's order and failures, page and node (each only fetches): their
 /// key log, then their card, then their devices contract ONLY where the card says they have one (owner 10-25: a read
 /// goes only where something lists it — the contract asked "in case" when the card did not read or named no device was
@@ -526,6 +578,14 @@ pub fn beekem_member(did: &[u8; 32], data_key: &[u8; 32], value: &[u8]) -> Resul
         return Err("its credential is not signed by its data key".into());
     }
     Ok((member.try_into().map_err(|_| "its member id does not read")?, leaf.try_into().map_err(|_| "its leaf key does not read")?))
+}
+/// A card's SUPERSEDED member (K8.7: `beekem-was/<n>` — the member its account had before its data key rotated): its
+/// id and leaf, if its credential is the DID's and signed by a data key the key log HAD but no longer names (the head's
+/// is the current member's, `beekem_member`). Its history stays its account's; it is taken out with no act.
+pub fn beekem_superseded(did: &[u8; 32], log: &Log, value: &[u8]) -> Result<([u8; 32], [u8; 32]), String> {
+    let head = log.head().data;
+    let past = log.events.iter().map(|e| e.data).find(|k| *k != head && beekem_member(did, k, value).is_ok()).ok_or("not signed by a data key its key log had before")?;
+    beekem_member(did, &past, value)
 }
 fn did_short(d: &[u8; 32]) -> String {
     did(d).get(12..20).unwrap_or_default().to_string()
@@ -620,6 +680,26 @@ mod tests {
         let c1 = device_credential(&did, &rotated, &words, &[0x0C; 32], &m).unwrap();
         assert_eq!(device_members(&did, &rotated, &[c1]), vec![m], "written after the rotation: current");
         assert!(device_credential(&did, &rotated, &[0x62u8; 16], &[0x0C; 32], &m).is_none(), "other words: none");
+    }
+
+    /// K8.7 A REMOVAL ROTATES THE DATA KEY: the new event names the new data key, its vault opens to the unchanged names
+    /// seed and the new data seed (the same words), the DID stays. CONTROL: `rotate` keeps the data key.
+    #[test]
+    fn a_removal_rotates_the_data_key_and_keeps_the_names_seed() {
+        let words = [0x71u8; 16];
+        let log0 = Log { events: vec![inception(&words).unwrap()] };
+        let did = log0.events[0].id();
+        let names = data_seed(&words).unwrap();
+        let kept = rotate(&log0, &words).unwrap();
+        assert_eq!(kept.head().data, public_of(&names), "control: a rotation alone keeps the data key");
+        let new = [0x5E; 32];
+        let r = rotate_data(&log0, &words, &new).unwrap();
+        assert!(r.verify(&did), "the same DID");
+        assert_eq!(r.head().data, public_of(&new), "the new data key");
+        assert_eq!(open_log(&words, &r).unwrap().2, Seeds { names, data: new }, "names kept, data new");
+        // …and again (a second removal): names still the inception's.
+        let r2 = rotate_data(&r, &words, &[0x5F; 32]).unwrap();
+        assert_eq!(open_log(&words, &r2).unwrap().2, Seeds { names, data: [0x5F; 32] });
     }
 
     /// THE ONE DEVICES STEP (page and node): the devices contract asked ONLY where the card says it exists — an unread
@@ -721,8 +801,9 @@ mod tests {
         let e = inception(&old).unwrap();
         let did = e.id();
         let log = Log { events: vec![e] };
-        let (j, _, data) = open_log(&old, &log).unwrap();
-        assert_eq!((j, data), (0, data_seed(&old).unwrap()));
+        let (j, _, seeds) = open_log(&old, &log).unwrap();
+        let data = seeds.data;
+        assert_eq!((j, seeds), (0, Seeds::one(data_seed(&old).unwrap())));
         assert!(open_log(&new, &log).is_none(), "control: the new words hold nothing yet");
         let rotated = change_words(&log, &old, &new).unwrap();
         assert!(rotated.verify(&did), "the same DID");
@@ -730,13 +811,13 @@ mod tests {
         let (j, owner_now, data_now) = open_log(&new, &rotated).unwrap();
         assert_eq!(j, 0);
         assert_eq!(public_of(&owner_now), owner(&new).unwrap());
-        assert_eq!(data_now, data, "the same tables");
+        assert_eq!(data_now, Seeds::one(data), "the same tables");
         assert!(open_log(&old, &rotated).is_none(), "the old words hold nothing now");
         assert!(change_words(&rotated, &old, &[7; 16]).is_none(), "and cannot rotate again");
         // A second change, from the new words: the chain goes on.
         let again = change_words(&rotated, &new, &[7; 16]).unwrap();
         assert!(again.verify(&did));
-        assert_eq!(open_log(&[7; 16], &again).unwrap().2, data);
+        assert_eq!(open_log(&[7; 16], &again).unwrap().2, Seeds::one(data));
     }
 
     #[test]
@@ -764,8 +845,11 @@ mod tests {
         assert_eq!(whoami_did(&[6; 16], p.state.as_ref()), None, "another's words read nothing");
         assert_eq!(whoami_address(REG, &[5; 16]).unwrap().id, p.id);
         let (enc, data) = (enc_seed_at(&[3; 16], 0).unwrap(), [9u8; 32]);
-        let v = vault_seal(&enc, &data);
-        assert_eq!(vault_open(&enc, &v), Some(data));
+        let v = vault_seal(&enc, &Seeds::one(data));
+        assert_eq!(vault_open(&enc, &v), Some(Seeds::one(data)));
+        // TWO SEEDS (K8.7: after a rotation) sealed and opened as two.
+        let two = Seeds { names: data, data: [8; 32] };
+        assert_eq!(vault_open(&enc, &vault_seal(&enc, &two)), Some(two));
         assert_eq!(vault_open(&enc_seed_at(&[4; 16], 0).unwrap(), &v), None);
     }
 

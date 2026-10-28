@@ -241,6 +241,8 @@ fn apply(net: &mut Net, r: &Reading, sent: &write::Sent, me: &[u8; 32], name: &s
 fn read_files(net: &Net, writers: Vec<[u8; 32]>, epochs: &BTreeMap<u64, [u8; 32]>) -> (Reading, BTreeMap<String, String>) {
     let (mut r, first) = Reading::new(&codes(), SPACE, epochs.clone(), writers, &["files"]);
     run(&mut r, first, net);
+    // (The generation written with: the identity's mark — here the newest, a clean tree's current one.)
+    r.writing = epochs.keys().max().copied();
     let rows = r.rows("files").into_iter().map(|(k, v)| (String::from_utf8(k).unwrap(), String::from_utf8(v.value).unwrap())).collect();
     (r, rows)
 }
@@ -263,9 +265,10 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
     writers_bag(&mut net, &[0x10; 32], &[pubkey(&other)]);
     let writers = vec![pubkey(&other), me];
 
+    let rows = vec![(b"k/x".to_vec(), Some(b"mine over theirs".to_vec())), (b"k/y".to_vec(), Some(b"new".to_vec()))];
+    // (No generation to write with — the feed writes nothing, never with the table's key: `the_node_writes_with_the_marked_generation_not_the_newest_held`.)
     // FIRST WRITE: listed first (the bag, its catalog), then the feed made.
     let (mut r, _) = read_files(&net, writers.clone(), &epochs);
-    let rows = vec![(b"k/x".to_vec(), Some(b"mine over theirs".to_vec())), (b"k/y".to_vec(), Some(b"new".to_vec()))];
     let Next::More(listing) = write::rows(&mut h, &member, &codes(), &mut r, "files", &rows, [1; 12], false, true).unwrap() else { panic!("listed first") };
     let (bp, bag) = listing.io.iter().find_map(|io| match io { Io::Put { code: upkeep::Code::Bag, params, state } => Some((params.clone(), state.clone())), _ => None }).expect("in the writers bag before its catalog");
     // READ BY ANY MEMBER, whatever epochs it holds — none here (10-16: sealed with epoch 0's key, a member without it
@@ -611,6 +614,11 @@ fn round_after_a_removal(creates: bool) -> AfterRound {
 }
 /// …`strays`: before every answer, a STRAY of every kind (a contract no step asked for), checked to change no round (R2).
 fn round_after_a_removal_with(creates: bool, strays: bool) -> AfterRound {
+    round_after_a_removal_full(creates, strays, true)
+}
+/// …`clean`: the key tree found clean here at the generation written with, placing the owner alone (`clean_at` — the
+/// keys round's record; false: none — the salt waits).
+fn round_after_a_removal_full(creates: bool, strays: bool, clean: bool) -> AfterRound {
     use craftworks_identity::{Host, Mandate};
     upkeep::CREATES.with(|c| c.set(creates));
     // The member on this node: a real account (its DID, data seed), its MLS member, a space it owns.
@@ -634,6 +642,9 @@ fn round_after_a_removal_with(creates: bool, strays: bool) -> AfterRound {
     };
     identity::upkeep_set_mandate(&mut h, &member, &me_did, &[m]);
     identity::upkeep_set_tick(&mut h, &member);
+    if clean {
+        crate::account_round::set_clean_at(&mut h, &member, &SPACE, epoch, vec![me_did.clone()]);
+    }
     h.set_secret(identity::UPKEEP_WAKEUPS, &30u64.to_le_bytes()); // the page last ticked long ago
     identity::upkeep_stir(&mut h, &[7; 32]);
     for (k, v) in [(identity::UPKEEP_TAIL, TAIL), (identity::UPKEEP_BAG, BAG), (identity::UPKEEP_SEALED, SEALED), (identity::UPKEEP_PIECE, PIECE)] {
@@ -982,4 +993,29 @@ fn a_devices_member_seed_carried_from_an_earlier_build_is_kept() {
     assert_eq!(seed_of(identity::serve(&mut h, identity::Request::DeviceSeedKeep { seed: [0xC1; 32] }, [9; 32])), Some([0xC1; 32]), "the same again: answered");
     assert!(seed_of(identity::serve(&mut h, identity::Request::DeviceSeedKeep { seed: [0xC2; 32] }, [9; 32])).is_none(), "another: refused");
     assert_eq!(seed_of(identity::serve(&mut h, identity::Request::DeviceMember { fresh: [0xF1; 32] }, [9; 32])), Some([0xC1; 32]), "the carried seed, not a fresh one");
+}
+
+/// THE NODE WRITES WITH THE MARK (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS"): the identity's writing
+/// generation, below the newest held — never the newest held (10-28 review: it sealed with the highest epoch it held).
+#[test]
+fn the_node_writes_with_the_marked_generation_not_the_newest_held() {
+    let epochs: BTreeMap<u64, [u8; 32]> = [(1 << 24, [0x10; 32]), (1 << 25, [0x11; 32])].into_iter().collect();
+    let (mut r, _) = Reading::new(&codes(), SPACE, epochs, vec![], &["files"]);
+    r.writing = Some(1 << 24);
+    let me = pubkey(&writer(9));
+    let o = crate::write::feed_open(&codes(), &r, &me, "files", "files", None);
+    assert_eq!(o.writes, Some(data::KeyRef::Epoch(1 << 24)), "the marked one, below the newest held");
+    r.writing = None;
+    let o = crate::write::feed_open(&codes(), &r, &me, "files", "files", None);
+    assert_eq!(o.writes, None, "no mark: nothing written — never the table's key");
+}
+
+/// CONTROL of the salt's gate: the key tree NOT found clean at the generation written with (no record) — no new salt;
+/// it says it waits for the key tree.
+#[test]
+fn a_removal_waits_for_a_clean_key_tree_before_its_new_salt() {
+    let a = round_after_a_removal_full(true, false, false);
+    let files_rows = files_after(&a);
+    assert!(rekey::salt(&files_rows).is_none_or(|st| st.n == 0), "no new salt: {:?}", a.said);
+    assert!(a.said.iter().any(|l| l.contains("waits for the key tree to be clean")), "it says so: {:?}", a.said);
 }

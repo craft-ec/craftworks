@@ -128,14 +128,18 @@ export async function start(ctx) {
   }
   // REMOVE A DEVICE with the WORDS (owner 10-09): the key rotates and the devices that stay (`keep`: their
   // credentials) are credentialed again — the removed one stops counting everywhere.
-  async function removeDevice(did, words, keep) {
+  async function removeDevice(did, words, keep, newData) {
     const [idlogCode, , devicesCode] = await codes();
     if (!(await readKeyLog(did))) throw new Error("the account's key log is not on the network");
-    const c = core.remove_device(idlogCode, devicesCode, did, words, keep);
+    const c = core.remove_device(idlogCode, devicesCode, did, words, keep, newData);
+    // THE ROTATION BEGUN (K8.7), kept BEFORE the key log is put: a page stopped midway finishes it on its next load.
+    const pend = await call(core.frames_data_pending(newData, c.seq), "keeping the rotation begun");
+    if (!pend?.dataPending) throw new Error(`the identity would not keep the rotation: ${pend?.refused ?? JSON.stringify(pend)}`);
     // The LOG first (the re-issued credentials are signed by its new key), then the devices.
     await put(c.log, "the account's key log");
     await put(c.devices, "the account's devices");
-    ctx.log("device removed", { what: "the account's key rotated; the devices that stay credentialed again" });
+    ctx.log("device removed", { what: "the account's key and data key rotated; the devices that stay credentialed again" });
+    return { seq: c.seq };
   }
 
   // An epoch's key kept here (the account's group or a space's): `craftworks:keys`, so what was sealed with it and
@@ -199,6 +203,17 @@ export async function start(ctx) {
       call(core.frames_epoch_keep(epoch, secret, space), "keeping an earlier epoch's key").then(r =>
         r?.refused ? Promise.reject(Object.assign(new Error(`keeping epoch ${epoch}'s key: refused (${typeof r.refused === "string" ? r.refused : JSON.stringify(r.refused)})`), { kind: "refused" })) : keysChanged(space)(r),
       ),
+    // A GENERATION KEPT FOR READING only (the writing mark untouched), and THE ONE TO WRITE WITH (a clean tree's current
+    // one: `groups::Group::writable` — FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS").
+    epochHold: (epoch, secret, space = NONE) =>
+      call(core.frames_epoch_hold(epoch, secret, space), "keeping a generation's key to read").then(r =>
+        r?.refused ? Promise.reject(Object.assign(new Error(`holding epoch ${epoch}'s key: refused (${typeof r.refused === "string" ? r.refused : JSON.stringify(r.refused)})`), { kind: "refused" })) : r,
+      ),
+    // (`null`: CLEARED — the tree places one the list puts out: nothing written until it is clean.)
+    epochWrite: (epoch, space = NONE) =>
+      call(core.frames_epoch_write(epoch ?? -1, space), "the generation to write with").then(r =>
+        r?.refused ? Promise.reject(Object.assign(new Error(`writing with epoch ${epoch}: refused (${typeof r.refused === "string" ? r.refused : JSON.stringify(r.refused)})`), { kind: "refused" })) : keysChanged(space)(r),
+      ),
     // A table's key in an MLS epoch (-1: the newest this node holds).
     tableKeyAt: (table, epoch = -1, space = NONE) => call(core.frames_table_key_at(table, epoch, space), `the key of “${table}”`),
     revoke: (app, table) => call(core.frames_revoke(app, table), "removing an app's access"),
@@ -209,6 +224,10 @@ export async function start(ctx) {
     // THIS DEVICE's member in the account's tree (K8.6): its seed, kept by the identity (`fresh`: drawn here, kept the
     // first time; a device with an account MLS state keeps its signer's).
     deviceMember: fresh => call(core.frames_device_member(fresh), "this device's member in the account's tree"),
+    // A rotation begun here and not finished: `{ data, seq }` (hex seed), or null.
+    dataPendingRead: async () => (await call(core.frames_data_pending_read(), "a rotation begun here"))?.dataPending ?? null,
+    // THE ACCOUNT's NEW DATA SEED kept (K8.7: a removal rotated it): `{ unlocked }` with the new data key.
+    dataKeep: data => call(core.frames_data_keep(data), "keeping the account's new data key"),
     // UPKEEP with no page open: the inbox the delegate watches at each wake-up, and what it has done.
     // With it, the page's randomness and time: the delegate has neither of its own.
     upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox, crypto.getRandomValues(new Uint8Array(32)), Date.now()), "handing upkeep the inbox"),
@@ -233,9 +252,13 @@ export async function start(ctx) {
     moveKeysFrom: async (prior, pin, { epochsOnly = false } = {}) => {
       const bytes = node.bytes;
       // One group into this build: every epoch's secret, then its state with the newest one.
+      // (Each HELD — for reading: an earlier build's newest may be a generation reached while its tree placed one the
+      // list puts out; the generation to WRITE with is marked by this build's own clean tree, at its next reconcile or
+      // write — FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS". The MLS state with its newest MLS epoch:
+      // generations, 2^24 and up, are not its.)
       const keepGroup = async (mls, epochs, space) => {
-        for (const [e, secret] of epochs) await call(core.frames_epoch_keep(e, bytes(secret), space), "keeping an epoch's key");
-        const newest = epochs[epochs.length - 1];
+        for (const [e, secret] of epochs) await call(core.frames_epoch_hold(e, bytes(secret), space), "keeping an epoch's key");
+        const newest = epochs.filter(([e]) => e < 2 ** 24).reduce((a, x) => (!a || x[0] > a[0] ? x : a), null);
         if (mls && newest && !epochsOnly) await call(core.frames_mls_save(bytes(mls), newest[0], bytes(newest[1]), space), "keeping a group's keys");
       };
       const k = (await askPrior(prior, core.frames_handover_keys_from(prior, pin), "the member's keys"))?.handedKeys;
@@ -284,5 +307,17 @@ export async function start(ctx) {
       return { kept, there: e.length };
     },
     handoverFrom: async (prior, pin) => (await askPrior(prior, core.frames_handover_from(prior, pin), "the member")) ?? { missing: true },
+    // The account's NAMES seed an earlier build keeps (K8.7: not the data seed after a rotation), or null — a build from
+    // before answers nothing it can read, and holds one seed.
+    namesFrom: async (prior, pin) => {
+      const a = await askPrior(prior, core.frames_handover_names_from(prior, pin), "the account's names seed");
+      // (Not answered — a build still loading — is not "no names seed": said, so the login does not go on with the
+      // wrong one; 10-28 review.)
+      // (Refused by a build that KNOWS the request — the same PIN it just took: not "no names seed" either. A build from
+      // before answers only an unreadable request, under another id: null.)
+      return a?.silent ? { silent: true } : a?.refused ? { refused: a.refused } : (a?.handedNames ?? null);
+    },
+    // The data seeds an earlier build kept as replaced, kept here (what was sealed to them still opens).
+    dataOldKeep: old => call(core.frames_data_old_keep(old), "keeping the account's replaced data keys"),
   };
 }

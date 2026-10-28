@@ -271,7 +271,7 @@ export async function start(ctx) {
     if (!Array.isArray(history) || !history.length) return 0;
     const identity = (await ctx.require("auth")).identity;
     let n = 0;
-    for (const [e, s] of history) if (typeof e === "number" && typeof s === "string") await ctx.background("conversation: identity.epochKeep", identity.epochKeep(e, bytesOf(s), sp.idBytes).then(() => (n += 1)));
+    for (const [e, s] of history) if (typeof e === "number" && typeof s === "string") await ctx.background("conversation: identity.epochHold", identity.epochHold(e, bytesOf(s), sp.idBytes).then(() => (n += 1)));
     if (n) {
       (await ctx.require("lifecycle")).transition("group", sp.id, "history-received", { space: sp.id, epochs: n, from: history.length ? `${history[0][0]}..${history.at(-1)[0]}` : null });
       ctx.log("conversation", { what: `${sp.name ?? "a space"}: ${n} earlier epoch(s) of its history handed over` });

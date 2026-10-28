@@ -160,7 +160,9 @@ export async function start(ctx) {
         // epoch 15, so epoch 0 is never held and the check above never passed — 43 log reads, ~85 s, every load).
         if (!whole && e < st.epoch && (await held(e))) break;
         if (e < st.epoch) {
-          await auth.identity.epochKeep(e, secret, g.space);
+          // (HELD for reading: an MLS epoch is never written with once the account's tree exists — a device removed since
+          // K8.6 still holds it; the generation to write with is the clean tree's.)
+          await auth.identity.epochHold(e, secret, g.space);
           n += 1;
         }
         if (e === 0) break;
@@ -276,7 +278,7 @@ export async function start(ctx) {
           break;
         }
         const now = m.status();
-        await auth.identity.epochKeep(now.epoch, now.secret, g.space);
+        await auth.identity.epochHold(now.epoch, now.secret, g.space);
       }
       if (n) ctx.log(g.label, { what: `${n} commit(s) applied: epoch ${m.status().epoch}` });
       // Gone back (a lost commit undone) counts as a change: the group as it is now is saved.
@@ -345,7 +347,7 @@ export async function start(ctx) {
           ctx.log("account keys", { what: `the escrow of generation ${num} does not open with these words: ${String(e?.message ?? e).slice(0, 80)}` });
           continue;
         }
-        await auth.identity.epochKeep(num, s);
+        await auth.identity.epochHold(num, s);
         n += 1;
       }
       if (n) (ctx.log("account keys", { what: `${n} generation(s) of the account's tree recovered from their escrows` }), dispatchEvent(new CustomEvent("craftworks:keys")));
@@ -460,6 +462,10 @@ export async function start(ctx) {
       }
       if (!COMING.some(lifeIs) && !lifeIs("MEMBER")) life.transition("account", ME, "loaded", { epoch: d.seq });
       status = { epoch: d.seq, me, members: d.devices.map((x, index) => ({ index, key: x.node, member: x.member, cred: x.cred })), removed: false };
+      // THE DATA KEY ROTATED (K8.7: a removal elsewhere): this device stays — its new seed from the account's channel,
+      // sealed with a generation of the tree it reaches (in the background: the tree read first). Until then the old
+      // key reads what it always read and writes nowhere anyone reads.
+      if (s.data && d.data && String(s.data).toLowerCase() !== String(d.data).toLowerCase()) ctx.background("keys: the new data key", movedOn(d.since ?? d.seq, d.data));
       const as = JSON.stringify(status);
       if (as !== toldAs) (toldAs = as), told(status);
       return status;
@@ -512,6 +518,62 @@ export async function start(ctx) {
     return status;
   }
 
+  // THE KEY LOG NAMES ANOTHER DATA KEY: a rotation THIS device began and did not finish (its pending seed is the head's:
+  // finished now), else one elsewhere — adopted.
+  async function movedOn(seq, headData) {
+    const p = await ctx.optional("keys: a rotation begun here", auth.identity.dataPendingRead(), () => null);
+    if (p?.data && glue.data_public(bytes(p.data)) === String(headData).toLowerCase()) {
+      ctx.log("account keys", { what: `a rotation begun here (key log ${p.seq}) not finished: finishing it` });
+      return rotateData(p.seq, bytes(p.data));
+    }
+    return adoptData(seq, headData);
+  }
+  // A ROTATED DATA KEY (K8.7) adopted by a device that stays: the seed the key log's `seq` names, opened from the
+  // channel (`members.account().openData`), kept by the identity — its public key must be the head's — then the page
+  // loads again (its session's data key changed, as a login does). Once a page; said when it cannot yet.
+  let adopting = null;
+  function adoptData(seq, headData) {
+    return (adopting ??= (async () => {
+      const tree = await (await ctx.require("members")).account();
+      const seed = await tree.openData(seq, headData);
+      if (!seed) {
+        ctx.log("account keys", { what: `the account's data key moved (key log ${seq}): not opened here yet — this device's tree does not reach the removal's generation` });
+        return false;
+      }
+      if (glue.data_public(seed) !== String(headData).toLowerCase()) throw new Error("the data seed in the channel is not the key log's");
+      const r = await auth.identity.dataKeep(seed);
+      if (!r?.unlocked) throw new Error(`the identity would not keep the new data key: ${r?.refused ?? JSON.stringify(r)}`);
+      ctx.log("account keys", { what: `the account's new data key kept (key log ${seq}): the page loads again on it` });
+      location.reload();
+      return true;
+    })().finally(() => (adopting = null)));
+  }
+
+  // THE DATA KEY ROTATED HERE (K8.7: this page removed a device, the key log's new event naming `seed`'s key): the new
+  // seed sealed for the devices that STAY (`k/<seq>`, the tree's generation made by the removal's key change); every
+  // table the old key addressed READ, the new seed KEPT, the tables WRITTEN at their new addresses; then the page loads
+  // again on the new key. A removed device keeps the old key: what it writes there nobody reads.
+  async function rotateData(seq, seed) {
+    const tree = await (await ctx.require("members")).account();
+    // THE REMOVED DEVICE OUT OF THE TREE FIRST (10-28 review: a page stopped after the key log, before the tree's
+    // removal, resumed and sealed the new seed with a generation the removed device still reached): the tree
+    // reconciled to the devices list, and nothing sealed while it places a device the list no longer holds.
+    await tree.reconcile();
+    const st = await ready();
+    const current = new Set((st?.members ?? []).map(m => String(m.member).toLowerCase()));
+    const stray = tree.members().map(x => String(x).toLowerCase()).filter(m => !current.has(m));
+    if (!st || stray.length) throw new Error(`the account's tree still places ${stray.length} device(s) no longer the account's: the new key not sealed yet (asked again)`);
+    // (Written under the new key BEFORE it is kept — the identity signs with a rotation's pending key — so `DataKeep` is
+    // the one commit: a page stopped before it does all of this again on its next load, each step the same. The channel
+    // goes CLEANED, the new seed sealed in it for the devices that stay: `members.account().cleanChannel`.)
+    const move = await storage.moveShared();
+    const moved = await move.write(glue.data_public(seed), seq, rows => tree.cleanChannel(rows, seq, seed));
+    const r = await auth.identity.dataKeep(seed);
+    if (!r?.unlocked) throw new Error(`the identity would not keep the new data key: ${r?.refused ?? JSON.stringify(r)}`);
+    ctx.log("account keys", { what: `the account's data key rotated (key log ${seq}): its new seed sealed for the devices that stay; ${moved} table(s) moved to the new key (${move.tables.join(", ")})` });
+    location.reload();
+  }
+
   // REMOVE a node (lost, stolen, retired), after `membership` rotated the key log with the words and credentialed the
   // devices that stay (K8.6 — no MLS commit): the devices list read again (it no longer holds the removed one), and the
   // account's tree takes it out with one key change (its reconcile) — it reads nothing written after.
@@ -528,13 +590,8 @@ export async function start(ctx) {
     const tree = await (await ctx.require("members")).account();
     await tree.reconcile();
     ctx.log("account keys", { what: `a node removed (${String(gone?.key ?? "?").slice(0, 12)}…): key log at ${st.epoch}, ${st.members.length} node(s); the account's tree took it out` });
-    // Writes onto the newest generation first (the removed node holds the old ones), then the card: the removed node no
-    // longer listed as the account's (what it writes counts for nothing). (Its spaces' trees take it out as their lists
-    // say: the account's devices are its writers — K8.6, no MLS group to refresh.)
-    setTimeout(async () => {
-      await ctx.background("keys: storage.sealNewest", storage.sealNewest());
-      await ctx.require("directory").then(d => d.publish()).catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
-    });
+    // (The card and the account's tables move with the data key next — `rotateData` — and the page loads again: no
+    // card written here under the old key meanwhile, 10-28 review.)
     return st;
   }
 
@@ -552,6 +609,10 @@ export async function start(ctx) {
       .then(async d => {
         const me = await space.account.strict();
         if (me) await d.publish(); // writes only what is missing or changed: the inbox, the devices' credentials
+        // …and THIS ACCOUNT's MEMBER for groups (`members.me`: written when it changed — after a rotation, the new one
+        // at the card's new address, at once: 10-29 live, waiting for the first space to load, every space stayed
+        // unwritable until it did — its old member still placed, its new one on no card).
+        if (me) await (await ctx.require("members")).me();
       })
       .catch(e => ctx.failed("account keys", e, `the card: ${e.message}`));
   const start = () =>
@@ -589,5 +650,5 @@ export async function start(ctx) {
     const st = mls.status();
     return { epoch: st.epoch, secret: st.secret };
   };
-  return { deviceSeed, mlsNow, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), onChange: f => watchers.push(f) };
+  return { deviceSeed, mlsNow, rotateData, ready: ctx.total("keys.ready", () => null, ready), writable, mustWrite, remove, escrowed: ctx.total("keys.escrowed", () => null, escrowed), onChange: f => watchers.push(f) };
 }

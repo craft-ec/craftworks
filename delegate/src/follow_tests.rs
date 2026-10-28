@@ -447,6 +447,10 @@ impl groups::Check for Anyone {
     fn creator(&self) -> Option<String> {
         Some("x".into())
     }
+    // (Every person these tests make: each one's published leaf — an add is taken only with it.)
+    fn leaf_of(&self, m: &[u8; 32]) -> Option<[u8; 32]> {
+        [0x35, 0x36, 0x52, 0x53, 0x54, 0x55, 0x61].into_iter().map(|e| person(e).bee()).find(|a| a.id.0.to_bytes() == *m).map(|a| a.leaf_key().to_bytes())
+    }
 }
 fn merged(p: &Person, ops: &[Vec<u8>]) -> groups::Group {
     let mut g = groups::Group::empty(&SPACE, p.bee());

@@ -469,6 +469,50 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    space's members from the list it kept (`rekey_round::space_of` — before, from the mandate's MLS group, so every space
    since K8.3 was UNLOADABLE and never re-keyed with the pages closed); its dead MLS follower is gone; the mandate's
    `epoch`/`state` stay in the wire, always empty. An MLS-era space is not shown (K8.4's rule).
+   A REMOVAL TAKES BACK EVERYTHING (K8.7, design 10-27 — before 6c and before any new feature). THE CAUSE: one 32-byte
+   DATA SEED (`account::data_seed`, from the words; every device holds it) carries three powers, and a removal (the key
+   log rotated, the devices that stay credentialed again) revoked none of them — (1) WRITE authority over everything
+   addressed by the data key: the card, the account's directory, its channel (`mls`: the tree's operations, leaves,
+   escrows), its public tails (posts, mail, modlist, statements, write-credential tables, public items); (2) the
+   account's MEMBER in every space's tree (`space_member_seed(data)`; every later leaf `leaf_after(seed, heads)`), so a
+   removed device could derive the account's current leaf in every space and read every space's new content; (3) the
+   inbox's seal key (`inbox_seed(data)`). Operations are now also verified (above), but a power held is not a power
+   checked. THE FIX — a removal ROTATES the data seed:
+   - TWO SEEDS. The NAMES seed — the inception's data seed, never changing — keeps what only names and finds: every
+     table's blinded label and base key (`table_key` — the account's channel's too: what is secret in it is sealed row
+     by row, and a rotation must still open the channel it is moving), `ACCOUNT_CHECK`. The DATA seed rotates. The key log's
+     VAULT seals both (`names ‖ data`, 64 bytes; a 32-byte vault is both the same seed), so words entered after any
+     number of rotations reach both.
+   - THE ROTATION is the removal's own key-log event (`account::rotate_data`, the remover holds the words): its `data` a
+     fresh seed's public key, its vault both seeds for the current words. ONE COMMIT: the new seed is kept as PENDING
+     (`DataPending`) before the key log is put; its key signs the moved tables before it is kept; `DataKeep` — last —
+     commits and clears it. A page stopped midway finds its pending seed is the head's and does it all again (each step
+     the same twice) — never sealing while the tree still places a device the list no longer holds. The NEW SEED to the
+     devices that stay: a row of the NEW channel (`k/<seq>/<n>`, the rotation event's seq) sealed with the account
+     tree's generation made by the removal's key change — the new channel is at the head's key's address (anyone of
+     the account reads it: its table key is the names seed's) and only the new key writes it, so the removed device can
+     neither read the seed (it is out of that tree) nor overwrite it. A device that stays reads that channel, merges its
+     operations (behind by several rotations, it reaches the newest at once), opens the seed, checks it against the
+     head (the page and the node — the identity's `DataKeep` takes what they give it) and keeps it; the replaced seeds
+     stay kept (`DATA_OLD`) to open what was sealed to them.
+   - WHAT MOVES. Everything addressed by the data key is found through the key log's head (`directory.keysOf`, the
+     node's `log.head().data`): the remover copies the card, the directory, the public tails and the CHANNEL to their
+     new addresses, and the old ones are read by nobody. The channel goes CLEANED (the old one a removed device can
+     still write): ONLY what the remover can vouch for — every operation (each merge judges it), a leaf only signed by
+     its member, each generation's escrow and `m/` copy MADE AGAIN from what its tree reaches (under the account's last
+     MLS epoch, where it holds it), the pre-tree words escrows (`e/`, `info`, `start`) as they stood; anything else
+     dropped. A removed device can still READ the new channel (the names seed and the head are its): every secret there
+     is sealed row by row, so it sees the tree's shape and timing only — a row kind sealed with the table key alone
+     must never be added to it. The account's SPACE MEMBER is the new seed's: its card names the new member (credential signed by the new
+     data key), and every space's tree takes the account's OLD member out and the new one in (one member per account: a
+     placed member whose account's card names another is out). The inbox seals to the new key; the old seeds are kept
+     (`DATA_OLD`) to open what was sealed before.
+   - A TREE SAVED BY THE OLD MEMBER loads for the new one UNPLACED (`Group::load`: the operations kept, the owner the
+     new member with its own leaf — the old one's keys never used again), and it enters by itself (fx 10-28: the old
+     owner loaded with the new signer failed every change, "Identifier not found").
+   - PROVEN by probes: after a removal the removed device cannot write the card or the channel where anyone reads, does
+     not read anything written after in the account or in any space; the devices that stay go on; a device offline
+     during the removal catches up; a words login after it reaches everything.
    (6c) THE MLS CODE GOES — the delegate's MLS requests and dead catch-up, the `mls` crate, the wasm package. KEPT, named
    for what they are — the account's PRE-TREE HISTORY, which migration needs and which needs no MLS code: the signer seed
    read from a saved state (`signer_seed_of`), the epoch secrets the identity keeps, and the words walk over the
@@ -503,6 +547,62 @@ DCGKA, Weidner–Kleppmann 2021): keys never wait on another member answering.
    operation the check now refuses — a member's stray root taken before the creator rule) is dropped; the bridge carries
    what was sealed with its generations as lost alternates, so every member reads it (Craftworks: the owner's other
    device's catalog sealed with such a branch's generation, 104120349).
+   AN OPERATION IS TAKEN ONLY SIGNED BY THE MEMBER IT NAMES (10-27): the check judges the issuer an operation NAMES, so
+   its signature is verified first (`Group::merge`, page and node alike) — before, nothing verified it, and whoever could
+   write where an operation is read (a listed member's device; for the account's tree any holder of its data key, a
+   removed device too) could write a key change in another member's name. One already held is taken without a second
+   judgement: each operation is verified once per device.
+   WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS, NEVER BY WHAT AN OPERATION CLAIMS (10-28, after three reviews of
+   history-judged admission: every rule that judged an operation by its predecessors, or by what was offered with it,
+   read evidence its SENDER chooses — a kicked account built an add on its pre-kick view, a device never placed offered
+   a removal of itself that never merged — and every rule that judged by who is listed NOW refused history and forked
+   fresh merges; the walks cost O(N²) and stopped a 400-op tree converging). As MLS and Matrix: the sender of content
+   decides who it is for. TWO RULES:
+   (a) ADMISSION BY FIXED FACTS ONLY (`groups::admitted`, page and node): the signature verifies; the signer was EVER
+   let in (`Check::ever_in` — an act, the founder's first placement; the account's tree: a device ever credentialed);
+   an add names an act letting its target in (`Check::allows` — the account's tree: a device ever credentialed) and
+   carries the leaf its member published (unknown: it waits); a removal names an act putting it out (a member its
+   account replaced: none); one root, by the creator. With no current device (the key log moved, the devices that stay
+   not credentialed on its new key yet) the account's check judges nothing: all wait (`Check::whole`). Nothing judged
+   by who is listed now, nothing by an operation's own history: no fork, no stall.
+   (b) A GENERATION IS WRITTEN WITH ONLY FROM A CLEAN TREE (`Group::writable`): the tree places nobody the list puts
+   out NOW (`Check::in_now` — a space: its account on the roster, its member not one its account replaced; the
+   account's tree: a current device) — its current generation, then, is the one storage SEALS with (`EpochWrite`);
+   every other generation reached is kept for READING only (`EpochHold`; an MLS state saved, a build's handed keys:
+   held too — the mark moves ONLY by `EpochWrite`). A tree placing one out CLEARS the mark (`EpochWrite` none): nothing
+   is written — not even with the last clean generation, which a member just kicked held (10-28 review) — until the
+   tree is clean again: a WRITE first makes it so (`members.readyToWrite`: the reconcile takes them out — its removal,
+   then a key change; a removed member reads nothing after: BeeKEM, asserted — and the current generation marked, any
+   device resolving concurrent heads), within WAIT.answer, else it is REFUSED. A member placed by an operation it
+   should not have made (re-added by its own pre-removal view, a device taken off the list) reads nothing sealed:
+   nobody honest seals for it. Whose a placed member is stays known when its card stops naming it (`Group::known`,
+   recorded at every add offered, held ones too, and saved BESIDE the tree — the tree's own save stays what every build
+   reads; the node: the members a card named before, kept): it is still judged, and taken out by its account's act.
+   MARKED ONLY FROM A WHOLE MERGE (nothing waiting) and a list read whole: a tree stopped short, or a list read short,
+   leaves the mark as it is (page and node alike). A write from inside a group's own queue never waits on that queue
+   (`readyToWrite` answers at once: refused for now). The node's new SALT is sealed only once its tree was found clean at
+   the generation written with, placing no account off the list now (`clean_at`) — the page's gate too. Left by design:
+   a sealer acts on a kick once it has READ it — between the act reaching it and its reconcile, it seals as before.
+   THE KEY STORE (`identity::KEYSTORE`, `beekem`: the saved trees, their leaf secrets) is keyed by the DATA seed — not a
+   group's generation (a group's own state is saved there: waiting on it, a fresh registration's save waited on the
+   generation the save was making — 10-28 review), and not the names seed (a removed device holds that for ever). A
+   rotation moves its key: what was saved before reads no more, and the trees are merged afresh.
+   (c) A TABLE SEALED BY A GROUP IS NEVER WRITTEN WITH ITS TABLE KEY (`data::Open::group_sealed`, page and node): that
+   key — a space's from its id, the account's from the names seed — opens for anyone who names the space or ever held
+   the account: it READS what came before any generation, nothing more. The NODE writes with the identity's mark too
+   (`Reading::writing`), never the newest epoch it holds.
+   (d) THE MLS BRIDGE (`m/`: a generation sealed with the account's last MLS epoch secret, for a device from before the
+   tree) is written only while no device the account ever credentialed is out (`account::mls_bridge_open`, page and
+   node): every device that was in the MLS group holds that secret, a removed one too — through `m/` it opened the
+   generation after its removal, and the new data seed sealed with it (10-28 review). Closed, a device from before the
+   tree enters it by itself.
+   OPEN: a FRESH device's merge waits on a kicked member's history once that member's card stops naming it (a saved tree
+   and the node's learned members keep whose it was; a fresh one has nothing to judge it by) — the binding of a member
+   to its account must come from something the member cannot erase.
+   AN ADD CARRIES THE LEAF ITS MEMBER PUBLISHED (10-28): an add names the added member's leaf key, and it is taken only
+   if that is the leaf the member PUBLISHED (a space's: its card's, under the data key; the account's: its signed `d/`
+   leaf) — unknown, it waits (`Check::leaf_of`, page and node). Before, an add carried any leaf: a listed member could
+   plant a leaf it held in another's place and read on after its own removal.
 
 6. **THROUGH THE LIFECYCLE**: `group` (HELD, BEHIND, OFF_BRANCH, NOT_HELD, STUCK; the `enter` step), `request` (the table
    in 3), the follower's `commit` step. No ask, no answer, no window, no timer.

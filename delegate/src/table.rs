@@ -74,6 +74,10 @@ pub struct Reading {
     space: [u8; 32],
     /// The epoch secrets this member holds of the space (every table's epoch keys come from them).
     epochs: BTreeMap<u64, [u8; 32]>,
+    /// THE ONE WRITTEN WITH (the identity's writing mark: a clean tree's current generation — FOUNDATION "WHO RECEIVES
+    /// IS DECIDED BY THE ONE WHO SEALS"); none: nothing written. Every other epoch only reads.
+    #[serde(default)]
+    pub writing: Option<u64>,
     /// The roster's writers.
     writers: Vec<[u8; 32]>,
     /// The tables wanted (full names: `x<id12>-<name>`).
@@ -94,6 +98,10 @@ pub struct Reading {
     /// `(DID, member id, first leaf key)` — whom an operation's signer is, whom to add (K5).
     #[serde(default)]
     pub beekem: Vec<(String, [u8; 32], [u8; 32])>,
+    /// Members their accounts REPLACED (K8.7: a card's `beekem-was/<n>`, `account::beekem_superseded`): `(DID, member
+    /// id, leaf)` — still their history's authors, taken out with no act.
+    #[serde(default)]
+    pub superseded: Vec<(String, [u8; 32], [u8; 32])>,
     /// A member's CARD whose tree is being fetched (a card with many rows keeps them in blocks): `(DID, its state,
     /// the blocks got, the block contracts still out — with each one's cid)`.
     /// What cards SAID about their member that is not a failed read (none on it, one that does not check) — reported by
@@ -190,6 +198,7 @@ impl Reading {
         let r = Reading {
             space,
             epochs,
+            writing: None,
             writers,
             tables: tables.iter().map(|t| table_name(&space, t)).collect(),
             jobs: Vec::new(),
@@ -200,6 +209,7 @@ impl Reading {
             resolving: Vec::new(),
             writer_dids: Vec::new(),
             beekem: Vec::new(),
+            superseded: Vec::new(),
             card_says: Vec::new(),
             devices_unread: Vec::new(),
             feeds_unread: Vec::new(),
@@ -296,6 +306,13 @@ impl Reading {
                     _ => None,
                 };
                 let marked = rows.as_ref().and_then(|r| r.get(b"devices".as_slice())).is_some_and(|v| v.as_slice() == b"1");
+                for (k, v) in rows.iter().flat_map(|r| r.iter()) {
+                    if k.starts_with(b"beekem-was/") {
+                        if let Ok(m) = craftworks_account::beekem_superseded(&did, &log, v) {
+                            self.superseded.push((name.clone(), m.0, m.1));
+                        }
+                    }
+                }
                 match rows.as_ref().map(|r| r.get(b"beekem".as_slice())) {
                     // (`account::beekem_member`, the page's too.)
                     Some(Some(v)) => match craftworks_account::beekem_member(&did, &log.head().data, v) {

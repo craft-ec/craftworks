@@ -480,7 +480,10 @@ fn the_vault_keeps_mls_state_for_the_home_site_and_gives_epoch_table_keys_to_gra
     assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"s1".to_vec(), epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
     assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: b"s2".to_vec(), epoch: 2, secret: [2; 32] }, APP), Answer::MlsSaved);
     assert_eq!(serve(&mut m, Request::MlsLoad { space: None }, APP), Answer::MlsState { state: Some(b"s2".to_vec()) });
-    // The newest epoch by default; an older one by name (blocks sealed then).
+    // (The state saved, its epochs HELD: none written with until one is named — `EpochWrite`.)
+    assert_eq!(at(&mut m, APP, "notes", None), Answer::Refused(Why::NoEpoch), "saved: none to write with yet");
+    assert_eq!(serve(&mut m, Request::EpochWrite { space: None, epoch: Some(2) }, APP), Answer::MlsSaved);
+    // The one written with by default; an older one by name (blocks sealed then).
     assert_eq!(at(&mut m, APP, "notes", None), Answer::TableKeyAt { epoch: 2, key: epoch_table_key(&[2; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", Some(1)), Answer::TableKeyAt { epoch: 1, key: epoch_table_key(&[1; 32], "notes") });
     assert_eq!(at(&mut m, APP, "notes", Some(7)), Answer::Refused(Why::NoEpoch));
@@ -590,7 +593,9 @@ fn a_joiner_signs_the_log_of_an_epoch_it_kept_before_it_has_a_group() {
     assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 4, secret: [4; 32] }, APP), Answer::MlsSaved);
     assert!(matches!(sign(&mut m, APP, &log([4; 32]), 1, [1; 32]), Answer::Signed { .. }));
     assert!(matches!(sign(&mut m, APP, &log([3; 32]), 1, [1; 32]), Answer::Signed { .. }));
-    // Keeping an OLDER epoch later does not move the newest back.
+    // Kept, none written with until named (`EpochWrite`); an OLDER one kept later does not move it.
+    assert_eq!(serve(&mut m, Request::TableKeyAt { table: "mls".into(), epoch: None, space: None }, APP), Answer::Refused(Why::NoEpoch));
+    assert_eq!(serve(&mut m, Request::EpochWrite { space: None, epoch: Some(4) }, APP), Answer::MlsSaved);
     assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 1, secret: [1; 32] }, APP), Answer::MlsSaved);
     assert_eq!(serve(&mut m, Request::TableKeyAt { table: "mls".into(), epoch: None, space: None }, APP), Answer::TableKeyAt { epoch: 4, key: epoch_table_key(&[4; 32], "mls") });
 }
@@ -605,6 +610,10 @@ fn each_space_keeps_its_own_group_and_epochs_apart_and_forget_clears_them_all() 
     assert_eq!(save(&mut m, None, b"account", 4, [4; 32]), Answer::MlsSaved);
     assert_eq!(save(&mut m, x, b"server x", 1, [0x11; 32]), Answer::MlsSaved);
     assert_eq!(save(&mut m, y, b"server y", 7, [0x77; 32]), Answer::MlsSaved);
+    // (Each one's writing generation named — `EpochWrite`.)
+    for (sp, e) in [(None, 4), (x, 1), (y, 7)] {
+        assert_eq!(serve(&mut m, Request::EpochWrite { space: sp, epoch: Some(e) }, APP), Answer::MlsSaved);
+    }
     // Each its own state, newest epoch and keys.
     assert_eq!(load(&mut m, None), Answer::MlsState { state: Some(b"account".to_vec()) });
     assert_eq!(load(&mut m, x), Answer::MlsState { state: Some(b"server x".to_vec()) });
@@ -1011,4 +1020,169 @@ fn the_requests_and_answers_an_earlier_build_speaks_keep_their_index() {
     for (a, i) in answers {
         assert_eq!(idx(bincode::serialize(&a).unwrap()), i, "{a:?}");
     }
+}
+
+/// K8.7 TWO SEEDS (after a rotation): a member provisioned with `names ‖ data` keys every table from the NAMES seed
+/// (none moves — its channel's write authority moves with the data key, not its key); its member, kept and read back, keeps both; the
+/// next build is handed the names seed. CONTROL: one seed — every key from it, nothing handed apart.
+#[test]
+fn two_seeds_private_tables_by_the_names_seed_the_channel_by_the_data_seed() {
+    let key = |m: &mut Map, t: &str| match serve(m, Request::TableKey { table: t.into(), gen: 0 }, APP) {
+        Answer::TableKey { key } => key,
+        x => panic!("{x:?}"),
+    };
+    // CONTROL: one seed.
+    let mut one = provisioned(APP);
+    assert_eq!(key(&mut one, "notes"), table_key(&ALICE_DATA, "notes", 0));
+    assert_eq!(key(&mut one, CHANNEL), table_key(&ALICE_DATA, CHANNEL, 0));
+    assert_eq!(serve(&mut one, Request::HandoverNames { pin: ALICE_PIN.into() }, APP), Answer::HandedNames { names: None, old: vec![] });
+    // TWO SEEDS: names = the original, data = a rotated one.
+    let rotated = [0xD7; 32];
+    let mut m = Map::default();
+    let seeds = [&ALICE_DATA[..], &rotated[..]].concat();
+    assert!(matches!(serve(&mut m, Request::Provision { seed: ALICE, did: ALICE_DID, pin: ALICE_PIN.into(), data: seeds }, APP), Answer::Unlocked { data: Some(d), .. } if d == public(rotated)), "its data key is the rotated one");
+    assert_eq!(key(&mut m, "notes"), table_key(&ALICE_DATA, "notes", 0), "private tables: the names seed");
+    assert_eq!(key(&mut m, CHANNEL), table_key(&ALICE_DATA, CHANNEL, 0), "the channel too: the names seed (it never moves)");
+    // Kept and read back (locked, unlocked): both still.
+    assert_eq!(serve(&mut m, Request::Lock, APP), Answer::LoggedOut);
+    assert!(matches!(unlock(&mut m, ALICE_PIN, APP), Answer::Unlocked { .. }));
+    assert_eq!(key(&mut m, "notes"), table_key(&ALICE_DATA, "notes", 0));
+    assert_eq!(serve(&mut m, Request::HandoverNames { pin: ALICE_PIN.into() }, APP), Answer::HandedNames { names: Some(ALICE_DATA), old: vec![] });
+}
+
+/// K8.7 THE NEW DATA SEED KEPT (`DataKeep`): the member's data key is the new one; its private tables keep their keys
+/// (the names seed: the old data seed); its channel's key is the new seed's; the old seed is kept. CONTROL: before it,
+/// the channel's key is the old seed's; the same seed again changes nothing.
+#[test]
+fn a_new_data_seed_is_kept_and_the_private_tables_do_not_move() {
+    let key = |m: &mut Map, t: &str| match serve(m, Request::TableKey { table: t.into(), gen: 0 }, APP) {
+        Answer::TableKey { key } => key,
+        x => panic!("{x:?}"),
+    };
+    let mut m = provisioned(APP);
+    assert_eq!(key(&mut m, CHANNEL), table_key(&ALICE_DATA, CHANNEL, 0), "before: the names seed's");
+    assert_eq!(serve(&mut m, Request::DataKeep { data: ALICE_DATA }, APP), alice(), "the same seed: nothing changes");
+    let new = [0xD8; 32];
+    assert!(matches!(serve(&mut m, Request::DataKeep { data: new }, APP), Answer::Unlocked { data: Some(d), .. } if d == public(new)));
+    assert_eq!(key(&mut m, "notes"), table_key(&ALICE_DATA, "notes", 0), "private tables: unmoved");
+    assert_eq!(key(&mut m, CHANNEL), table_key(&ALICE_DATA, CHANNEL, 0), "the channel: still the names seed's");
+    let old: Vec<[u8; 32]> = bincode::deserialize(&m.get_secret(&[DATA_OLD, &public(ALICE)[..]].concat()).unwrap()).unwrap();
+    assert_eq!(old, vec![ALICE_DATA], "the old seed kept");
+    assert_eq!(serve(&mut m, Request::HandoverNames { pin: ALICE_PIN.into() }, APP), Answer::HandedNames { names: Some(ALICE_DATA), old: vec![ALICE_DATA] }, "the names seed handed on, and the seed replaced");
+}
+
+/// K8.7 THE INBOX after a rotation: what was sealed to the OLD inbox key still opens (the old seed kept), and what is
+/// sealed to the new one. CONTROL: before the rotation, the new key's item does not open.
+#[test]
+fn the_inbox_opens_what_was_sealed_before_and_after_a_rotation() {
+    let mut m = provisioned(APP);
+    let new = [0xD9; 32];
+    let to = |d: &[u8; 32], msg: &[u8]| seal_to(&inbox_public(d), msg, [3; 32]);
+    let (before, after) = (to(&ALICE_DATA, b"before"), to(&new, b"after"));
+    let open = |m: &mut Map, items: Vec<Vec<u8>>| match serve(m, Request::InboxOpen { items }, APP) {
+        Answer::Opened { items } => items,
+        x => panic!("{x:?}"),
+    };
+    assert_eq!(open(&mut m, vec![before.clone(), after.clone()]), vec![Some(b"before".to_vec()), None], "control: not yet the new key's");
+    serve(&mut m, Request::DataKeep { data: new }, APP);
+    assert_eq!(open(&mut m, vec![before, after]), vec![Some(b"before".to_vec()), Some(b"after".to_vec())]);
+}
+
+/// K8.7 A ROTATION BEGUN (`DataPending`): read back; its key SIGNS the tables it moves before it is kept; `DataKeep`
+/// (the commit) clears it. CONTROL: with none pending, that key signs nothing.
+#[test]
+fn a_rotation_begun_signs_with_its_pending_key_until_kept() {
+    let mut m = provisioned(APP);
+    let new = [0xDC; 32];
+    let p = params(public(new), b"card");
+    let sign = |m: &mut Map| serve(m, Request::Sign { params: p.clone(), seq: 1, value_hash: [1; 32], space: None, table: None }, APP);
+    assert!(matches!(sign(&mut m), Answer::Refused(_)), "control: not pending — the new key signs nothing");
+    assert_eq!(serve(&mut m, Request::DataPending { data: new, seq: 2 }, APP), Answer::DataPendingIs { pending: Some((new, 2)) });
+    assert_eq!(serve(&mut m, Request::DataPendingRead, APP), Answer::DataPendingIs { pending: Some((new, 2)) });
+    assert!(!matches!(sign(&mut m), Answer::Refused(Why::NotThisKey) | Answer::Refused(Why::NoDataKey)), "pending: its key signs");
+    let kept = serve(&mut m, Request::DataKeep { data: new }, APP);
+    assert!(matches!(kept, Answer::Unlocked { .. }), "kept: {kept:?}");
+    assert_eq!(serve(&mut m, Request::DataPendingRead, APP), Answer::DataPendingIs { pending: None }, "kept: no longer pending");
+}
+
+/// A GENERATION HELD FOR READING never becomes the one written with; the WRITING mark is set only to a held one, and may
+/// go below a generation held (a clean tree's current one under a rogue's deeper one). CONTROL: `EpochKeep` raises it.
+#[test]
+fn a_generation_held_for_reading_is_never_written_with() {
+    let mut m = provisioned(APP);
+    let me = public(ALICE);
+    let latest = |m: &Map| latest_in(m, &me, &None);
+    // (`EpochKeep`, an earlier build's request: held too — the mark moves by `EpochWrite` alone.)
+    assert_eq!(serve(&mut m, Request::EpochKeep { space: None, epoch: 5, secret: [5; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(latest(&m), None, "kept: the writing mark untouched");
+    assert_eq!(serve(&mut m, Request::EpochWrite { space: None, epoch: Some(5) }, APP), Answer::MlsSaved);
+    assert_eq!(latest(&m), Some(5), "control: named — written with");
+    assert_eq!(serve(&mut m, Request::EpochHold { space: None, epoch: 9, secret: [9; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(latest(&m), Some(5), "held for reading: the mark untouched");
+    assert_eq!(account_epoch_secret(&m, &me, 9), Some([9; 32]), "…and it reads");
+    assert_eq!(serve(&mut m, Request::EpochWrite { space: None, epoch: Some(7) }, APP), Answer::Refused(Why::NotSaved), "not held: refused");
+    assert_eq!(serve(&mut m, Request::EpochHold { space: None, epoch: 7, secret: [7; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::EpochWrite { space: None, epoch: Some(7) }, APP), Answer::MlsSaved);
+    assert_eq!(latest(&m), Some(7), "written with: 7, below the 9 held");
+    assert!(matches!(serve(&mut m, Request::EpochWrite { space: None, epoch: Some(7) }, OTHER), Answer::Refused(_)), "another site: refused");
+    // CLEARED (the tree not clean): no generation to write with; read still.
+    assert_eq!(serve(&mut m, Request::EpochWrite { space: None, epoch: None }, APP), Answer::MlsSaved);
+    assert_eq!(latest(&m), None, "cleared: nothing written with");
+    assert_eq!(account_epoch_secret(&m, &me, 7), Some([7; 32]), "…held still");
+}
+
+/// THE KEY STORE is keyed by the DATA seed (a device removed holds the names seed for ever, never the new data seed —
+/// 10-28 review); every other table by the names seed. After a rotation the store's key moves, a table's does not.
+#[test]
+fn the_key_store_is_keyed_by_the_data_seed() {
+    let key = |m: &mut Map, t: &str| match serve(m, Request::TableKey { table: t.into(), gen: 0 }, APP) {
+        Answer::TableKey { key } => key,
+        x => panic!("{x:?}"),
+    };
+    let mut m = provisioned(APP);
+    let before = (key(&mut m, KEYSTORE), key(&mut m, "notes"));
+    assert_eq!(before.0, table_key(&ALICE_DATA, KEYSTORE, 0), "the store: the data seed's");
+    assert!(matches!(serve(&mut m, Request::DataKeep { data: [0xD7; 32] }, APP), Answer::Unlocked { .. }));
+    assert_eq!(key(&mut m, KEYSTORE), table_key(&[0xD7; 32], KEYSTORE, 0), "rotated: the new data seed's");
+    assert_eq!(key(&mut m, "notes"), before.1, "a table's: the names seed's, unmoved");
+}
+
+/// THE KEY STORE's write signs under the label its OWN key blinds (`table_seed`: the data seed's — `TableKey`'s rule):
+/// after a rotation, the new data seed's. CONTROL: the label the names seed blinds — refused (10-28 live: the store's
+/// label and the signing check were blinded by different seeds once the data seed rotated).
+#[test]
+fn the_key_store_signs_under_its_data_seed_label() {
+    let mut m = provisioned(APP);
+    assert_eq!(ask(&mut m, APP, KEYSTORE, ALLOW), Answer::Granted { tables: vec![KEYSTORE.into()] });
+    let new = [0xD7; 32];
+    assert!(matches!(serve(&mut m, Request::DataKeep { data: new }, APP), Answer::Unlocked { .. }));
+    let signed = |m: &mut Map, seed: [u8; 32]| {
+        let p = table(new, &blind_name(&table_key(&seed, KEYSTORE, 0), KEYSTORE));
+        serve(m, Request::Sign { params: p, seq: 1, value_hash: [1; 32], space: None, table: Some(KEYSTORE.into()) }, APP)
+    };
+    let got = signed(&mut m, new);
+    assert!(matches!(got, Answer::Signed { .. }), "its label under the data seed: signed — {got:?}");
+    assert_eq!(signed(&mut m, ALICE_DATA), Answer::Refused(Why::NotATable), "control: under the names seed — refused");
+}
+
+/// THE OLD RANGES WALKED ONCE (10-29: walked every call — ~8,000 secret reads with generation numbers past 2^24 — the
+/// node's rounds timed out): an epoch kept before the index is found by the walk and put in the index; after it,
+/// `kept_epochs` reads the index alone. CONTROL: an epoch written past the index after the walk is not found (no walk).
+#[test]
+fn the_old_epoch_ranges_are_walked_once_into_the_index() {
+    let mut m = provisioned(APP);
+    let me = public(ALICE);
+    let raw = |m: &mut Map, e: u64, s: [u8; 32]| assert!(m.set_secret(&[in_space(EPOCH, &me, &None), e.to_be_bytes().to_vec()].concat(), &s));
+    // (A member from before the index: not walked yet — its session opened before this build.)
+    assert!(m.set_secret(&in_space(EPOCH_WALKED, &me, &None), &[]));
+    // (Kept before the index: the secret and the latest mark only.)
+    raw(&mut m, 3, [3; 32]);
+    assert!(m.set_secret(&in_space(EPOCH_LATEST, &me, &None), &5u64.to_be_bytes()));
+    assert_eq!(kept_epochs(&m, &me, &None), vec![3], "before the walk: found by the ranges");
+    assert!(walk_epochs(&mut m, &me, &None));
+    assert_eq!(kept_epochs(&m, &me, &None), vec![3], "walked into the index");
+    raw(&mut m, 4, [4; 32]);
+    assert_eq!(kept_epochs(&m, &me, &None), vec![3], "after the walk: the index alone — no range walked again");
+    assert!(hold_epoch(&mut m, &me, None, 4, &[4; 32]));
+    assert_eq!(kept_epochs(&m, &me, &None), vec![3, 4], "held: indexed");
 }

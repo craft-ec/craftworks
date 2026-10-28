@@ -97,6 +97,8 @@ export async function start(ctx) {
       // Whether the account HAS a devices contract (its own word, written once it put one): readers look it up only then
       // — an absent contract is never searched for.
       hasDevices: rows.find(r => r.key === "devices")?.value === "1",
+      // The members the account REPLACED (K8.7: its data key rotated): each one's credential as it was (`beekem-was/<n>`).
+      was: rows.filter(r => r.key.startsWith("beekem-was/") && r.value).map(r => r.value),
     };
   };
 

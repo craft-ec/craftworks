@@ -208,7 +208,9 @@ export async function start(ctx) {
         missSaid = said;
         // THE ONE RULE (`guards::list_whole`, the node's too): no act named and not here, no listed member's devices
         // unread, the list's own tables read.
-        const feeds = t.state?.s === "present" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];
+        // (ANSWERED ABSENT is read: no acts yet — the list is its owner alone, read whole. 10-29: counted as unread, a
+        // new space's first act waited on a tree that waited on the list — none could go first.)
+        const feeds = t.state?.s === "present" || t.state?.s === "absent" ? [] : [[space.tableOf(sp, "acts"), `not read whole (${t.state?.s})`]];
         listWhole = !node.glue.guard_list_whole(JSON.stringify(devicesUnread), JSON.stringify(feeds), miss.length);
       }
     }

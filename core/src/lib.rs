@@ -45,6 +45,8 @@ pub fn answer_json(a: &Answer) -> Value {
             "seed": hex(seed), "public": hex(public), "credential": hex(credential),
         } }),
         Answer::DeviceMember { seed } => json!({ "deviceMember": { "seed": hex(seed) } }),
+        Answer::DataPendingIs { pending } => json!({ "dataPending": pending.map(|(d, seq)| json!({ "data": hex(&d), "seq": seq })) }),
+        Answer::HandedNames { names, old } => json!({ "handedNames": { "names": names.map(|n| hex(&n)), "old": old.iter().map(|o| hex(o)).collect::<Vec<_>>() } }),
         Answer::Upkeep {
             wakeups,
             inbox,
@@ -223,6 +225,8 @@ impl Core {
                 | Request::EpochSecrets { .. }
                 // THIS DEVICE's MEMBER SEED there (read: the one it keeps; K8.6 — carried to this build).
                 | Request::DeviceMember { .. }
+                // The account's NAMES seed there (K8.7: a build that kept two after a rotation).
+                | Request::HandoverNames { .. }
         ) && !matches!(req, Request::UpkeepMandate { spaces, .. } if spaces.is_empty())
         {
             return Err("an earlier build is asked only to hand a member over, to give a space's earlier keys, or to retire its upkeep".into());
@@ -1135,6 +1139,14 @@ mod js {
                 secret: b32(secret)?,
             })
         }
+        /// A generation KEPT FOR READING (`EpochHold`: the writing mark untouched).
+        pub fn frames_epoch_hold(&mut self, epoch: f64, secret: &[u8], space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::EpochHold { space: space_of(space)?, epoch: epoch as u64, secret: b32(secret)? })
+        }
+        /// THE GENERATION TO WRITE WITH (`EpochWrite`: a clean tree's current one, held already; negative: CLEARED).
+        pub fn frames_epoch_write(&mut self, epoch: f64, space: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::EpochWrite { space: space_of(space)?, epoch: (epoch >= 0.0).then_some(epoch as u64) })
+        }
         pub fn frames_inbox_key(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::InboxKey)
         }
@@ -1142,9 +1154,32 @@ mod js {
         pub fn frames_device_member(&mut self, fresh: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::DeviceMember { fresh: b32(fresh)? })
         }
+        /// The data seeds an earlier build kept as replaced, kept here (`DataOldKeep`, K8.7).
+        pub fn frames_data_old_keep(&mut self, old: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+            let old: Vec<[u8; 32]> = old.iter().filter_map(|v| v.as_string()).filter_map(|s| craftworks_identity::unhex32(&s)).collect();
+            self.ask(Request::DataOldKeep { old })
+        }
+        /// A ROTATION BEGUN here (`DataPending`, K8.7): kept before the key log is put.
+        pub fn frames_data_pending(&mut self, data: &[u8], seq: u32) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::DataPending { data: b32(data)?, seq })
+        }
+        /// The rotation begun here and not finished (`DataPendingRead`).
+        pub fn frames_data_pending_read(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::DataPendingRead)
+        }
+        /// THE ACCOUNT's NEW DATA SEED kept (`DataKeep`, K8.7).
+        pub fn frames_data_keep(&mut self, data: &[u8]) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::DataKeep { data: b32(data)? })
+        }
         /// THIS DEVICE's MEMBER SEED carried from an earlier build (`DeviceSeedKeep`).
         pub fn frames_device_seed_keep(&mut self, seed: &[u8]) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::DeviceSeedKeep { seed: b32(seed)? })
+        }
+        /// `[id, frames]` of a HandoverNames asked of an EARLIER build (K8.7): the account's names seed it keeps, if not the
+        /// data seed (a build from before answers nothing it can read: one seed).
+        pub fn frames_handover_names_from(&mut self, prior: &str, pin: String) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::HandoverNames { pin }).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
         }
         /// `[id, frames]` of a DeviceMember asked of an EARLIER build (its session opened there by the PIN first): the
         /// member seed it keeps for this device (`fresh`: kept there only if it had none — a build from before K8.6).
@@ -1483,9 +1518,11 @@ mod js {
         ) -> Result<js_sys::Object, JsValue> {
             let did = b32(did)?;
             let log = self.log_of(idlog_code, &did, entropy)?;
-            let (_, _, data) = account::open_log(entropy, &log).ok_or_else(|| {
+            let (_, _, seeds) = account::open_log(entropy, &log).ok_or_else(|| {
                 err("these recovery words were replaced by newer ones: use the newest words".into())
             })?;
+            // (The account's seeds as the identity takes them: `names ‖ data` after a rotation, the one seed before — K8.7.)
+            let data = seeds.bytes();
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
             set("did", account::did(&did).into())?;
@@ -1548,15 +1585,19 @@ mod js {
             did: &[u8],
             words: &[u8],
             keep: js_sys::Array,
+            new_data: &[u8],
         ) -> Result<js_sys::Object, JsValue> {
             let did = b32(did)?;
             let log = self.log_of(idlog_code, &did, words)?;
-            let next = account::rotate(&log, words).ok_or_else(|| err("these are not this account's current recovery words".into()))?;
+            // (K8.7: the DATA key rotates with it — `new_data`, the page's fresh seed.)
+            let next = account::rotate_data(&log, words, &b32(new_data)?).ok_or_else(|| err("these are not this account's current recovery words".into()))?;
             let again = account::reissue(&did, &next, words, &bytes_list(&keep)).ok_or_else(|| err("a device's credential is not this account's".into()))?;
             let o = js_sys::Object::new();
             let set = |k: &str, v: JsValue| js_sys::Reflect::set(&o, &k.into(), &v).map(|_| ());
             set("log", self.put_obj(&account::idlog_put(idlog_code, &did, Some(&next)))?)?;
             set("devices", self.put_obj(&account::devices_put(devices_code, idlog_code, &did, &again))?)?;
+            // (The new event's seq: what names the new data seed sealed for the devices that stay — K8.7.)
+            set("seq", JsValue::from(next.head().seq))?;
             Ok(o)
         }
 
@@ -1622,6 +1663,17 @@ mod js {
             let creds = craftworks_devices_contract::decode(st).ok_or_else(|| err("the account's devices do not read".into()))?;
             Ok(account::device_members(&did, &log, &creds).iter().map(|n| JsValue::from(hex(n))).collect())
         }
+        /// A card's SUPERSEDED member (K8.7, `account::beekem_superseded`): its `beekem-was/<n>` value checked against the
+        /// DID's key log (read first) — signed by a data key it HAD, not the head's. → JSON `{ id, leaf }` or `{ why }`.
+        pub fn beekem_superseded(&self, idlog_code: &[u8], did: &[u8], value: &str) -> String {
+            let Ok(did) = <[u8; 32]>::try_from(did) else { return json!({ "why": "a DID is 32 bytes" }).to_string() };
+            let lid = account::idlog_put(idlog_code, &did, None).id_bytes;
+            let Some(log) = self.0.got(&lid).and_then(|st| craftworks_idlog_contract::read(&did, st)) else { return json!({ "why": "its key log not read" }).to_string() };
+            match account::beekem_superseded(&did, &log, value.as_bytes()) {
+                Ok((id, leaf)) => json!({ "id": hex(&id), "leaf": hex(&leaf) }).to_string(),
+                Err(why) => json!({ "why": why }).to_string(),
+            }
+        }
         /// THE ACCOUNT's DEVICES NOW (K8.6: the account's status, no MLS group): each credential on the key log's CURRENT
         /// key — `{ node, member, cred }` (hex), by node — and the log's `seq` (it moves with every removal). `null`
         /// until the key log and the devices contract are both read here.
@@ -1637,7 +1689,11 @@ mod js {
                 .into_iter()
                 .filter_map(|(node, c)| craftworks_identity::read_credential(&c).map(|(_, _, _, member)| serde_json::json!({ "node": hex(&node), "member": hex(&member), "cred": hex(&c) })))
                 .collect();
-            Ok(JsValue::from(serde_json::json!({ "seq": log.head().seq, "devices": devices }).to_string()))
+            // (`data`: the key log head's data key — K8.7: a device whose own is not it learns of a rotation.)
+            // (`since`: the seq of the event that brought the head's data key — the ROTATION's, which names the seed sealed for
+            // the devices that stay; a later change of words keeps the key and moves the head.)
+            let since = log.events.iter().find(|e| e.data == log.head().data).map(|e| e.seq).unwrap_or(0);
+            Ok(JsValue::from(serde_json::json!({ "seq": log.head().seq, "data": hex(&log.head().data), "since": since, "devices": devices }).to_string()))
         }
         /// EVERY DEVICE THE ACCOUNT TREE EVER HAD (`craftworks_account::device_members_ever`): whose operations count as
         /// authored. → `[member hex…]`.
@@ -1906,9 +1962,11 @@ mod js {
         ) -> Result<js_sys::Object, JsValue> {
             let o = self.0.tail(&b32(id)?).map_err(err)?;
             if o.writes.is_none() && !o.public {
-                return Err(err(
-                    "this table's key is not held here: it cannot be written".into(),
-                ));
+                return Err(err(if o.group {
+                    "no generation of its group to write with yet (the tree not clean): not written".into()
+                } else {
+                    "this table's key is not held here: it cannot be written".into()
+                }));
             }
             let (seq, hash) = o
                 .prepare_row(key, value)
@@ -2028,6 +2086,16 @@ mod js {
             Ok(())
         }
 
+        /// SEALED BY A GROUP (`data::Open::group_sealed`): its table key never written with — only a current epoch's.
+        pub fn tail_group_sealed(&mut self, id: &[u8]) -> Result<(), JsValue> {
+            self.0.tail(&b32(id)?).map_err(err)?.group_sealed();
+            Ok(())
+        }
+        /// NO GENERATION TO WRITE WITH now (the writing mark cleared: the tree places one the list puts out).
+        pub fn tail_no_writing(&mut self, id: &[u8]) -> Result<(), JsValue> {
+            self.0.tail(&b32(id)?).map_err(err)?.no_writing_epoch();
+            Ok(())
+        }
         /// An epoch's key for an open table (from the identity delegate; empty: it has none for that epoch). `current`:
         /// new rows and blocks are sealed with it.
         pub fn tail_epoch_key(
@@ -2180,6 +2248,15 @@ mod js {
                 data::Place::None => "none",
             }
             .into()
+        }
+        /// A CATALOG ROW's place ("listed", "blinded", "none"), or null for a value that is not a catalog row
+        /// (`data::catalog_row`: a card's own rows).
+        pub fn catalog_row(v: &str) -> Option<String> {
+            data::catalog_row(v.as_bytes()).map(|p| match p {
+                data::Place::Listed => "listed".to_string(),
+                data::Place::Blinded => "blinded".to_string(),
+                data::Place::None => "none".to_string(),
+            })
         }
         /// A catalog row for a place ("listed", "blinded", "none"), noted `at` (ms).
         pub fn catalog_value(place: &str, at: f64) -> Result<String, JsValue> {
@@ -2641,6 +2718,13 @@ mod js {
     pub fn bag_open_key(space: &[u8]) -> Result<String, JsValue> {
         let s: [u8; 32] = space.try_into().map_err(|_| err("a space's id is 32 bytes".into()))?;
         Ok(hex(&craftworks_identity::bag_open_key(&s)))
+    }
+    /// A data seed's PUBLIC key (hex): what the key log names as the account's data key (K8.7: a seed read from the
+    /// channel checked against the head).
+    #[wasm_bindgen]
+    pub fn data_public(seed: &[u8]) -> Result<String, JsValue> {
+        let s: [u8; 32] = seed.try_into().map_err(|_| err("a seed is 32 bytes".into()))?;
+        Ok(hex(&ed25519_dalek::SigningKey::from_bytes(&s).verifying_key().to_bytes()))
     }
     /// An item SEALED: `plain` under `key` (hex), marked `epoch`; `nonce` 12 random bytes.
     #[wasm_bindgen]

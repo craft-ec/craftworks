@@ -165,7 +165,7 @@ fn the_node_adds_a_current_device_to_the_accounts_tree() {
     assert!(ops.len() >= 3, "the root, B's add, a key change: {}", ops.len());
     // B, from the channel's operations alone, is placed.
     let mut gb = Group::empty(&w.did, w.b.clone());
-    let check = craftworks_groups::AccountCheck { current: vec![w.a.id.0.to_bytes(), w.b.id.0.to_bytes()], ever: vec![], writers: vec![w.a.id.0.to_bytes()] };
+    let check = craftworks_groups::AccountCheck { current: vec![w.a.id.0.to_bytes(), w.b.id.0.to_bytes()], ever: vec![], writers: vec![w.a.id.0.to_bytes()], leaves: [(w.a.id.0.to_bytes(), w.a.leaf_key().to_bytes()), (w.b.id.0.to_bytes(), w.b.leaf_key().to_bytes())].into_iter().collect() };
     gb.merge_all(&ops, &check);
     assert!(gb.placed(), "B placed by the node");
     // Every generation escrowed (`g/`) and MLS-sealed (`m/`), and kept here as the account's epoch.
@@ -185,6 +185,61 @@ fn the_node_adds_a_current_device_to_the_accounts_tree() {
     let _ = &w.root;
 }
 
+/// THE MLS BRIDGE CLOSED once a device ever credentialed is out (10-28 review: through `m/` a removed device opened the
+/// generation after its removal): no `m/` written; the words' escrows (`g/`) still. CONTROL: the test above — no device
+/// out, `m/` written.
+#[test]
+fn the_node_writes_no_mls_bridge_once_a_device_is_out() {
+    let mut w = world(true);
+    // C: credentialed once, then out — the key log moved (its data seed kept), A and B credentialed again, C not.
+    let owner = craftworks_account::owner_seed(&[0x77; 16]).unwrap();
+    let lid = id(IDLOG, &w.did);
+    let log = craftworks_idlog_contract::read(&w.did, &w.net.st[&lid]).unwrap();
+    let rotated = craftworks_account::rotate_data(&log, &[0x77; 16], &w.data).unwrap();
+    w.net.st.insert(lid, rotated.encode());
+    let before = vec![identity::credential(&w.did, &w.member, &w.a.id.0.to_bytes(), &owner), identity::credential(&w.did, &[0xB1; 32], &w.b.id.0.to_bytes(), &owner)];
+    let mut creds = craftworks_account::reissue(&w.did, &rotated, &[0x77; 16], &before).expect("credentialed again");
+    creds.extend(before);
+    creds.push(identity::credential(&w.did, &[0xC1; 32], &[0xC2; 32], &owner));
+    assert!(!craftworks_account::mls_bridge_open(&w.did, &rotated, &creds), "C out: the bridge closed");
+    w.net.st.insert(id(DEVICES, &craftworks_devices_contract::params(&w.did, &contract_keys::code_hash(IDLOG))), craftworks_devices_contract::encode(&creds));
+    run(&mut w);
+    let rows = channel_rows(&w);
+    assert!(rows.keys().any(|r| r.starts_with("g/")), "the words' escrows written");
+    assert!(!rows.keys().any(|r| r.starts_with("m/")), "no MLS-sealed generation: {:?}", rows.keys().filter(|r| r.starts_with("m/")).collect::<Vec<_>>());
+}
+
+/// A TREE ITS MERGE LEFT SHORT IS NEVER MARKED FROM (10-28 review: the node's tree, stopped on an operation it waited
+/// on, set the shared writing mark to an old generation): an operation whose predecessor is on no row — the merge leaves it
+/// waiting, the mark stays as it was. CONTROL: whole — marked.
+#[test]
+fn the_node_marks_nothing_from_a_tree_its_merge_left_short() {
+    let mut w = world(true);
+    run(&mut w);
+    assert!(identity::account_writing_epoch(&w.h, &w.member).is_some(), "control: a whole merge — marked");
+    // A key change of A's on one never written: it waits.
+    let rows = channel_rows(&w);
+    let ops: Vec<Vec<u8>> = rows.iter().filter(|(k, _)| k.starts_with("o/")).map(|(_, v)| identity::unhex(v).unwrap()).collect();
+    let check = craftworks_groups::AccountCheck { current: vec![w.a.id.0.to_bytes(), w.b.id.0.to_bytes()], ever: vec![], writers: vec![w.a.id.0.to_bytes()], leaves: [(w.a.id.0.to_bytes(), w.a.leaf_key().to_bytes()), (w.b.id.0.to_bytes(), w.b.leaf_key().to_bytes())].into_iter().collect() };
+    let mut ga = Group::empty(&w.did, w.a.clone());
+    ga.merge_all(&ops, &check);
+    ga.rotate_seeded([5; 32]).unwrap();
+    let orphan = ga.rotate_seeded([6; 32]).unwrap();
+    let data_key = SigningKey::from_bytes(&w.data);
+    let name = account_round::channel_name(&w.did);
+    let mut o = data::Open::new(TAIL, &data_key.verifying_key().to_bytes(), &name);
+    o.set_table_key(identity::table_key(&w.data, &name, 0));
+    o.absorb(&w.net.st[&o.id_bytes()]);
+    o.on_network = true;
+    let (s2, hh) = o.prepare_rows(&[(format!("o/{}", craftworks_rules::members::keyop_key(&orphan)).into_bytes(), identity::hex(&orphan).into_bytes())]).unwrap();
+    let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
+    o.commit(data_key.sign(&p.signed_message(false, s2, &hh)).to_bytes()).unwrap();
+    w.net.st.insert(o.id_bytes(), o.state());
+    identity::write_epoch(&mut w.h, &w.member, None, None);
+    run(&mut w);
+    assert_eq!(identity::account_writing_epoch(&w.h, &w.member), None, "a merge left short: nothing marked");
+}
+
 /// CONTROL: B NOT CURRENT (no credential) — its leaf in the channel, but it is not added.
 #[test]
 fn the_node_does_not_add_a_device_that_is_not_current() {
@@ -193,7 +248,7 @@ fn the_node_does_not_add_a_device_that_is_not_current() {
     let rows = channel_rows(&w);
     let ops: Vec<Vec<u8>> = rows.iter().filter(|(k, _)| k.starts_with("o/")).map(|(_, v)| identity::unhex(v).unwrap()).collect();
     let mut gb = Group::empty(&w.did, w.b.clone());
-    let check = craftworks_groups::AccountCheck { current: vec![w.a.id.0.to_bytes(), w.b.id.0.to_bytes()], ever: vec![], writers: vec![w.a.id.0.to_bytes()] };
+    let check = craftworks_groups::AccountCheck { current: vec![w.a.id.0.to_bytes(), w.b.id.0.to_bytes()], ever: vec![], writers: vec![w.a.id.0.to_bytes()], leaves: [(w.a.id.0.to_bytes(), w.a.leaf_key().to_bytes()), (w.b.id.0.to_bytes(), w.b.leaf_key().to_bytes())].into_iter().collect() };
     gb.merge_all(&ops, &check);
     assert!(!gb.placed(), "B not added");
 }
@@ -210,4 +265,48 @@ fn a_retired_member_is_not_served_and_a_left_build_reads_nothing() {
     assert!(identity::upkeep_retired(&w.h, &w.member), "retired by the empty mandate");
     assert!(account_round::woke(&mut w.h).is_empty(), "no round for a retired member");
     assert_eq!(identity::upkeep_woke(&mut w.h), None, "no inbox read for a build every member left");
+}
+
+/// K8.7 THE NODE ADOPTS A ROTATED DATA KEY (every page of a device that STAYS closed): the key log's head names a new
+/// data key; the new seed is in the NEW channel (the head's key's address — only that key writes it), sealed with a
+/// generation this device's tree reaches (`k/<seq>/<n>`, as the remover's page writes it); the node keeps it. CONTROL:
+/// before that channel is there, it keeps the old one.
+#[test]
+fn the_node_adopts_a_rotated_data_key_from_the_channel() {
+    use sha2::Digest;
+    let mut w = world(true);
+    run(&mut w);
+    // THE REMOVAL ELSEWHERE: the key log rotated with a new data key.
+    let new = [0x6E; 32];
+    let lid = id(IDLOG, &w.did);
+    let log = craftworks_idlog_contract::read(&w.did, &w.net.st[&lid]).unwrap();
+    let rotated = craftworks_account::rotate_data(&log, &[0x77; 16], &new).unwrap();
+    w.net.st.insert(lid, rotated.encode());
+    // (…and the devices that stay CREDENTIALED AGAIN on the new key, in the same step — `removeDevice`: after a
+    // rotation they alone count.)
+    let owner = craftworks_account::owner_seed(&[0x77; 16]).unwrap();
+    let before = [identity::credential(&w.did, &w.member, &w.a.id.0.to_bytes(), &owner), identity::credential(&w.did, &[0xB1; 32], &w.b.id.0.to_bytes(), &owner)];
+    let again = craftworks_account::reissue(&w.did, &rotated, &[0x77; 16], &before).expect("credentialed again");
+    w.net.st.insert(id(DEVICES, &craftworks_devices_contract::params(&w.did, &contract_keys::code_hash(IDLOG))), craftworks_devices_contract::encode(&again));
+    let seq = rotated.head().seq;
+    // CONTROL: no sealed seed in the channel yet — the old key kept.
+    run(&mut w);
+    assert_eq!(identity::upkeep_account(&w.h, &w.member).map(|(_, d)| d), Some(w.data), "control: nothing to open — the old seed");
+    // THE SEED sealed for the devices that stay, with the newest generation this device holds.
+    let n = identity::kept_epochs(&w.h, &w.member, &None).into_iter().max().expect("a generation held");
+    let secret = identity::account_epoch_secret(&w.h, &w.member, n).expect("its secret");
+    let key: [u8; 32] = sha2::Sha256::new().chain_update(b"craftworks 2026-10-27 account data seed, generation-sealed").chain_update(secret).finalize().into();
+    let sealed = identity::bag_seal(&key, 0, &new, [4; 12]);
+    // (In the NEW channel — at the new key's address, written by it; its table key the names seed's, the old one here.)
+    let data_key = SigningKey::from_bytes(&new);
+    let name = account_round::channel_name(&w.did);
+    let mut o = data::Open::new(TAIL, &data_key.verifying_key().to_bytes(), &name);
+    o.set_table_key(identity::table_key(&w.data, &name, 0));
+    let (s2, hh) = o.prepare_rows(&[(format!("k/{seq}/{n}").into_bytes(), hex(&sealed).into_bytes())]).unwrap();
+    let p = craftec_register_contract::wire::Params::parse(&o.params).unwrap();
+    o.commit(data_key.sign(&p.signed_message(false, s2, &hh)).to_bytes()).unwrap();
+    w.net.params.insert(o.id_bytes(), o.params.clone());
+    w.net.st.insert(o.id_bytes(), o.state());
+    run(&mut w);
+    assert_eq!(identity::upkeep_account(&w.h, &w.member).map(|(_, d)| d), Some(new), "the new seed kept");
 }

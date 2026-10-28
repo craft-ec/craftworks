@@ -65,6 +65,10 @@ export async function start(ctx) {
     // once (`login`), which ended this work when it ran behind (10-18, fx: no earlier build retired, epoch 0 never
     // recovered — the space's acts and channels unreadable after an update). Bounded: a build silent past it is left.
     if (r.unlocked) {
+      // THE ACCOUNT's GENERATION TO WRITE WITH marked first (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS":
+      // an earlier build's keys are only HELD here — its writes, the retirement's own moves among them, would wait on the
+      // account's first reconcile; 10-28 gate: the "retired" move waited past the bound below and was never kept).
+      await ctx.optional("auth: the account ready to write", async () => (await (await ctx.require("members")).account()).readyToWrite(), () => null);
       let timer;
       await Promise.race([
         retireEarlier(pin, r.movedFrom ?? null).catch(e => ctx.log("earlier build", { what: `not finished: ${e?.message ?? e}` })),
@@ -151,7 +155,15 @@ export async function start(ctx) {
     // before anything reads a table.
     const moveIn = async (prior, h) => {
       const bytes = x => (x ? hexBytes(x) : new Uint8Array(0));
-      const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, bytes(h.handed.data));
+      // The account's seeds: its NAMES seed first, where that build keeps one apart from the data seed (K8.7, after a
+      // rotation) — `names ‖ data`; else the one seed.
+      const handed = h.handed.data ? await id.namesFrom(prior, pin) : null;
+      if (handed?.silent || handed?.refused) throw new Error(`the earlier build did not give the account's names seed (${handed.refused ?? "no answer"}): log in again in a moment`);
+      const names = handed?.names ?? null;
+      const seeds = names ? new Uint8Array([...bytes(names), ...bytes(h.handed.data)]) : bytes(h.handed.data);
+      const p = await id.provision(bytes(h.handed.seed), bytes(h.handed.did), pin, seeds);
+      // (The data seeds it replaced: what was sealed to them before a rotation still opens here.)
+      if (p.unlocked && handed?.old?.length) await ctx.optional("auth: dataOldKeep", id.dataOldKeep(handed.old), () => null);
       ctx.log("member moved", { what: `from the earlier build ${prior.slice(0, 12)}…: ${p.unlocked ? "logged in" : JSON.stringify(p)}` });
       p.movedFrom = prior;
       if (p.unlocked) {

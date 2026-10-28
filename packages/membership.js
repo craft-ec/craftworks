@@ -115,7 +115,14 @@ export async function start(ctx) {
     if (!node) throw new Error("no such node among the account's devices");
     if (!words) throw new Error("removing a device needs the account's recovery words");
     const me = await auth.check.strict();
-    await auth.identity.removeDevice(me.didBytes, words, await credentials(index));
+    // ONLY A PLACED DEVICE TAKES ANOTHER OUT: it writes the removal in the account's tree in the same step — a device
+    // off the devices list counts in the tree as history only with its removal on record (a removal is written by the device that makes it — FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS").
+    const tree = await (await ctx.require("members")).account();
+    await tree.sync();
+    if (!tree.placed()) throw new Error("this device is not in the account's tree yet — once it is, it can take another out");
+    // THE DATA KEY ROTATES WITH IT (K8.7): a fresh seed, in the key log's new event (sealed there for the words).
+    const seed = crypto.getRandomValues(new Uint8Array(32));
+    const { seq } = await auth.identity.removeDevice(me.didBytes, words, await credentials(index), seed);
     const st = await keys.remove(index);
     await storage.adopt(node).catch(e => ctx.failed("members", e, `adopting ${node.slice(0, 12)}…'s rows: ${e.message}`));
     await (await storage.table(MEMBERS)).put(`x/${node}`, JSON.stringify({ epoch: st.epoch, at: Date.now() }));
@@ -123,6 +130,8 @@ export async function start(ctx) {
     await ctx.background("membership: moderation.retire", (await ctx.require("moderation")).retire());
     cache = null;
     ctx.log("members", { what: `${node.slice(0, 12)}… removed at epoch ${st.epoch}: told in this node's members feed` });
+    // …then the new data key to the devices that stay, the account's shared tables moved to it, the page loaded again.
+    await keys.rotateData(seq, seed);
     return st;
   }
 

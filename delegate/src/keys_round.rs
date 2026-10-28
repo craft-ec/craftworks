@@ -3,7 +3,8 @@
 //!
 //!   1. THE TREE, rebuilt from the operations (nothing kept: every leaf secret of the account derives — K6).
 //!   2. OUR CHECK from the replay (`gov`) and the members' cards (`Reading::beekem`): the page's `members` check.
-//!   3. THE GENERATIONS reached kept as the space's epochs (`keep_epoch`): the node reads the space's new rows.
+//!   3. THE GENERATIONS reached kept as the space's epochs (`keep_generations`: held; a clean tree's current one written
+//!      with): the node reads the space's new rows.
 //!   4. RECONCILE, from a WHOLE read only (I6): add each listed account its card names and the tree does not place (by
 //!      the latest act letting it in), remove each placed member whose account the list no longer names (by the act
 //!      putting it out); then ONE key change. No turns: several nodes doing it at once merge.
@@ -57,18 +58,50 @@ pub(super) fn card_due(known: &[Known], asked: &[(String, u64)], did: &str, now_
     let last = known.iter().find(|k| k.0 == did).map(|k| (k.3, true)).or_else(|| asked.iter().find(|(d, _)| d == did).map(|(_, t)| (*t, false)));
     craftworks_rules::members::card_due(last, now_ms)
 }
+/// The members their accounts REPLACED (K8.7), as learned from cards — KEPT (a card not read this round: its old member
+/// still authors its history in every fresh merge). `(DID, member id, leaf)`, grow-only.
+const SUPERSEDED: &[u8] = b"identity_keys/superseded/";
+fn learn_superseded<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(String, [u8; 32], [u8; 32])]) -> Vec<(String, [u8; 32], [u8; 32])> {
+    let key = [SUPERSEDED, &member[..], &space[..]].concat();
+    let mut all: Vec<(String, [u8; 32], [u8; 32])> = h.get_secret(&key).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    let n = all.len();
+    for x in read {
+        if !all.iter().any(|k| k.1 == x.1) {
+            all.push(x.clone());
+        }
+    }
+    if all.len() != n {
+        h.set_secret(&key, &bincode::serialize(&all).expect("a list encodes"));
+    }
+    all
+}
 fn learn<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], read: &[(String, [u8; 32], [u8; 32])], now_ms: u64) -> Vec<(String, [u8; 32], [u8; 32])> {
     let mut all = known(h, member, space);
+    let mut earlier = earlier_members(h, member, space);
+    let n = earlier.len();
     for (d, id, leaf) in read {
         let m = (d.clone(), *id, *leaf, now_ms);
         if let Some(at) = all.iter().position(|k| k.0 == *d) {
+            // (A card naming ANOTHER member now: the one it named before kept — whose it is, for every fresh merge of
+            // its history and to take it out: 10-28 review, a kicked member's card rewritten left its add waiting.)
+            if all[at].1 != *id && !earlier.iter().any(|e| e.1 == all[at].1) {
+                earlier.push((all[at].0.clone(), all[at].1, all[at].2));
+            }
             all[at] = m;
         } else {
             all.push(m);
         }
     }
     h.set_secret(&[KNOWN, &member[..], &space[..]].concat(), &bincode::serialize(&all).expect("a list encodes"));
+    if earlier.len() != n {
+        h.set_secret(&[EARLIER, &member[..], &space[..]].concat(), &bincode::serialize(&earlier).expect("a list encodes"));
+    }
     all.into_iter().map(|(d, id, leaf, _)| (d, id, leaf)).collect()
+}
+/// The members a card NAMED BEFORE (`learn`): `(DID, member id, leaf)`, grow-only.
+const EARLIER: &[u8] = b"identity_keys/earlier/";
+fn earlier_members<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<(String, [u8; 32], [u8; 32])> {
+    h.get_secret(&[EARLIER, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
 
 /// No act names the owner's own placement (its tree's first operation).
@@ -84,9 +117,14 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let mut g = Group::empty(&r.space, Account::of(&seed));
     // Every member LEARNED, this read's added (a card read now replaces what was kept).
     let members = learn(h, &r.member, &r.space, &r.reading.beekem, now_ms);
-    // OUR CHECK (`groups::ListCheck`, the page's too).
+    // …and the members their accounts REPLACED (K8.7): authors of their history, taken out with no act.
+    let superseded = learn_superseded(h, &r.member, &r.space, &r.reading.superseded);
+    // OUR CHECK (`groups::ListCheck`, the page's too): each member's leaf as published — an add is taken only with it.
     let list = ListCheck {
-        by_member: members.iter().map(|(d, id, _)| (*id, d.clone())).collect(),
+        // (Every member a card names now, its account replaced, or a card named before: whose each is.)
+        by_member: earlier_members(h, &r.member, &r.space).iter().chain(&members).chain(&superseded).map(|(d, id, _)| (*id, d.clone())).collect(),
+        leaves: earlier_members(h, &r.member, &r.space).iter().chain(&members).chain(&superseded).map(|(_, id, leaf)| (*id, *leaf)).collect(),
+        superseded: superseded.iter().map(|(_, id, _)| *id).collect(),
         listed: gov.roster.iter().cloned().collect(),
         owner: m.owner.clone(),
         acts: gov
@@ -125,18 +163,14 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     // refused (R4). (Merging nothing deadlocked a member one generation behind: the acts sealed with the generation it
     // lacked, its list never read whole.)
     if let Err(why) = whole(&r, &gov) {
-        for (n, k) in g.generations() {
-            identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
-        }
+        crate::account_round::keep_generations(h, &r.member, Some(r.space), &mut g, None::<&ListCheck>);
         followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — what the check takes merged, {} deferred; nothing reconciled this round", m.name, merged.refused.len()));
         return next_space(h, c, r);
     }
     let (refused, waiting) = (merged.refused.len(), merged.waiting);
     let why: Vec<String> = merged.refused.iter().take(2).map(|w| w.chars().take(80).collect()).collect();
     // 3. THE GENERATIONS: the space's epochs on this node.
-    for (n, k) in g.generations() {
-        identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
-    }
+    crate::account_round::keep_generations(h, &r.member, Some(r.space), &mut g, (merged.waiting == 0).then_some(&list));
     let placed = g.members();
     // 4. RECONCILE (the list read whole: checked before the merge).
     if !g.placed() {
@@ -155,8 +189,10 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
             .collect()
     };
     let (ins, outs) = (acts(true), acts(false));
+    // (The REPLACED members still placed: taken out with the reconcile — K8.7.)
+    let retiring: Vec<[u8; 32]> = superseded.iter().map(|(_, id, _)| *id).filter(|id| placed.contains(id)).collect();
     // (`Group::due`: reconcile's own conditions, the page's too.)
-    if !g.due(&members, &|d| list.listed(d), &outs) {
+    if retiring.is_empty() && !g.due(&members, &|d| list.listed(d), &outs) {
         followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), waiting));
         return next_space(h, c, r);
     }
@@ -166,7 +202,15 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         return next_space(h, c, r);
     };
     let done = g.reconcile(&members, &|d| list.listed(d), &ins, &outs, rand);
-    let ops = done.ops;
+    let mut ops = done.ops;
+    let retired = match g.retire_superseded(&retiring, blake3::derive_key("craftworks 2026-10-27 node retire", &rand)) {
+        Ok(o) => o,
+        Err(why) => {
+            followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: a replaced member not taken out — {why}", m.name));
+            Vec::new()
+        }
+    };
+    ops.extend(retired);
     // AN OPERATION TOO LARGE FOR A ROW is stored as a file — new contracts, which reach the network only from a page
     // (`upkeep::creates`, as a re-key's new pieces): then the change is a page's, and nothing of it is kept here (a
     // generation nobody else could ever read).
@@ -174,9 +218,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
         followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: the key change has an operation too large for a row: a page stores it (a contract made here stays on this node)", m.name));
         return next_space(h, c, r);
     }
-    for (n, k) in g.generations() {
-        identity::keep_epoch(h, &r.member, Some(r.space), n, &k);
-    }
+    crate::account_round::keep_generations(h, &r.member, Some(r.space), &mut g, (merged.waiting == 0).then_some(&list));
     // Each operation in its row; a large one stored as a FILE first, its row naming it (`members::keyop_*`, the page's
     // too).
     let mut rows: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
@@ -361,7 +403,7 @@ pub(super) fn file_put<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, 
 /// The space's `files` table read, to list the files written in it.
 pub(super) fn list_files<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate) -> Vec<Io> {
     let (epochs, dids) = crate::upkeep::readers(h, &r.member, m);
-    let (reading, io) = crate::upkeep::members_read(h, &c.codes(), r.space, epochs, &dids, &["files"]);
+    let (reading, io) = crate::upkeep::members_read(h, &r.member, &c.codes(), r.space, epochs, &dids, &["files"]);
     r.reading = reading;
     r.step = Step::ListFiles;
     keep(h, Some(&r));
@@ -387,5 +429,25 @@ pub(super) fn write<H: Host>(h: &mut H, c: &Held, mut r: Round, m: &Mandate, tab
             followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WRITE, &format!("{}: the key operations were not written — {why}", m.name));
             next_space(h, c, r)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A CARD NAMING ANOTHER MEMBER NOW (a kicked member's card rewritten — 10-28 review): the one it named before KEPT,
+    /// whose it is, for every fresh merge of its history and to take it out. CONTROL: the same member named again keeps
+    /// nothing apart.
+    #[test]
+    fn a_member_a_card_named_before_is_kept() {
+        let mut h = crate::testhost::Map::default();
+        let (me, space) = ([1u8; 32], [2u8; 32]);
+        learn(&mut h, &me, &space, &[("did:b".into(), [0xB1; 32], [0x11; 32])], 1);
+        learn(&mut h, &me, &space, &[("did:b".into(), [0xB1; 32], [0x11; 32])], 2);
+        assert!(earlier_members(&h, &me, &space).is_empty(), "control: the same member — nothing kept apart");
+        let now = learn(&mut h, &me, &space, &[("did:b".into(), [0xB2; 32], [0x12; 32])], 3);
+        assert_eq!(now, vec![("did:b".to_string(), [0xB2; 32], [0x12; 32])], "the card's member now");
+        assert_eq!(earlier_members(&h, &me, &space), vec![("did:b".to_string(), [0xB1; 32], [0x11; 32])], "the one it named before, kept");
     }
 }

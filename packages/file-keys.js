@@ -36,10 +36,12 @@ export async function start(ctx) {
     // seals with its newest generation.)
     const tree = (await ctx.require("members")).group(sp);
     for (const did of [...r.goneList(), ...r.bannedList()]) if (await tree.holds(did)) return false;
+    // (The generation WRITTEN with — a clean tree's current one, marked: `currentGeneration` — and this table on it.)
+    const w = await ctx.optional("file keys: the generation to write with", tree.currentGeneration(), () => null);
+    if (!w) return false;
     await storage.sealNewest();
     const t = await storage.table(space.tableOf(sp, "files"), sp);
-    const newest = Math.max(0, ...tree.generationNumbers().map(Number));
-    if (!newest || (t.sealing && t.sealing.epoch < newest)) return false;
+    if (!t.sealing || t.sealing.epoch !== Number(w[0])) return false;
     await files.rotate(sp, removals);
     ctx.log("file keys", { what: `${label(sp)}: a member removed — a new salt; its files re-key` });
     return true;

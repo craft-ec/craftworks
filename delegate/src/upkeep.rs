@@ -166,7 +166,7 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
         let space = rest.remove(0);
         let Some(m) = identity::upkeep_mandate(h, &member).and_then(|(_, ms)| ms.into_iter().find(|m| m.space == space)) else { continue };
         let (epochs, dids) = readers(h, &member, &m);
-        let (reading, io) = members_read(h, &c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
+        let (reading, io) = members_read(h, &member, &c.codes(), space, epochs, &dids, &["acts", "pub-acts", "pub-keyops"]);
         let r = Round { member, me, space, rest, reading, step: Step::Acts, moved_ms: identity::upkeep_now_ms(h), moved: identity::upkeep_wakeups(h), by_list: false, files_unread: Vec::new(), listing: Vec::new() };
         keep(h, Some(&r));
         return io;
@@ -204,9 +204,11 @@ fn keep_absent<H: Host>(h: &mut H, space: &[u8; 32], absent: &[([u8; 32], [u8; 3
     let _ = h.set_secret(&[ABSENT, &space[..]].concat(), &bincode::serialize(&absent[from..]).unwrap_or_default());
 }
 /// A space's read of its members' tables (`Reading::of_members`), what it found absent before remembered.
-pub(crate) fn members_read<H: Host>(h: &H, c: &crate::table::Codes, space: [u8; 32], epochs: std::collections::BTreeMap<u64, [u8; 32]>, dids: &[[u8; 32]], tables: &[&str]) -> (Reading, Vec<Io>) {
+pub(crate) fn members_read<H: Host>(h: &H, member: &[u8; 32], c: &crate::table::Codes, space: [u8; 32], epochs: std::collections::BTreeMap<u64, [u8; 32]>, dids: &[[u8; 32]], tables: &[&str]) -> (Reading, Vec<Io>) {
     let (mut reading, io) = Reading::of_members(c, space, epochs, dids, tables);
     reading.absent = absent_of(h, &space);
+    // (The generation written with: the identity's writing mark — never the newest one held.)
+    reading.writing = identity::latest_epoch(h, member, space);
     (reading, io)
 }
 /// An answer to a read (`Reading::got`); what it found absent kept.

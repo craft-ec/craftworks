@@ -32,17 +32,22 @@ pub enum Next {
     More(Sent),
 }
 
-fn feed_open(c: &Codes, r: &Reading, owner: &[u8; 32], name: &str, label: &str, held: Option<(Option<Vec<u8>>, Vec<([u8; 32], Vec<u8>)>)>) -> data::Open {
+pub(crate) fn feed_open(c: &Codes, r: &Reading, owner: &[u8; 32], name: &str, label: &str, held: Option<(Option<Vec<u8>>, Vec<([u8; 32], Vec<u8>)>)>) -> data::Open {
     let space = r.space();
     let t = table::table_name(&space, name);
     let mut o = data::Open::new(c.tail, owner, label);
     if table::is_public(&space, &t) {
         o.public = true;
     } else {
+        // (SEALED BY THE GROUP: the table's key reads what came before any epoch, never written with — written with the
+        // identity's writing mark only: `Reading::writing`.)
+        // (A CATALOG — the directory a space's tables are found by — is not: the page's rule too, `storage` UNGROUPED.)
+        if name != "tables" {
+            o.group_sealed();
+        }
         o.set_table_key(identity::space_table_key(&space, &t));
-        let newest = r.epochs().keys().max().copied();
         for (e, s) in r.epochs() {
-            o.epoch_key(*e, Some(identity::epoch_table_key(s, &t)), Some(*e) == newest);
+            o.epoch_key(*e, Some(identity::epoch_table_key(s, &t)), Some(*e) == r.writing);
         }
     }
     if let Some((state, blocks)) = held {

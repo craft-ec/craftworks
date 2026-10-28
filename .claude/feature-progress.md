@@ -3177,6 +3177,91 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               another — the credential named neither, the device was never placed, the upkeep job (needs writable) never
               ran, the DM never accepted. Fix: the hand-over unlocks the earlier build and asks its `DeviceMember`, kept
               here by `DeviceSeedKeep` (appended LAST; another seed refused) BEFORE this build mints one. Test + control.
+## KEYS SOUND — before the Blog (owner 10-27: "no point in doing blog if the keys is not right — the foundation of
+## everything"; "don't dismiss keys if more issues crop up … fix the cause rather than patching"). NOT a closed list: every
+## key hole found is fixed AT ITS CAUSE, here, before the Blog starts.
+- [ ] 1. Key OPERATIONS authenticated: each one's signature verified, once per device (held ones skipped first), page and
+        node — one place (`groups::Group::merge`). A forged operation refused (test + control). (10-27: nothing verified
+        them; the check judged the signer an operation NAMES.)
+- [ ] 2. K8.7 A REMOVAL TAKES BACK EVERYTHING (FOUNDATION, design 10-27). Map (10-27): the data seed carries write
+        authority (card, directory, channel, public tails), the account's MEMBER in every space (leaf secrets derived
+        from it — a removed device reads every space's new content), the inbox seal key. Phases:
+        - [x] (1) item 1 built + fx-verified 10-27/28: `Group::merge` verifies each new operation's signature
+              (held skipped first); test + control + mutation; fx k85-two, remove-control-bk, k86-reg PASS
+        - [x] H3 (found 10-28, a hole of its own): an ADD's leaf was never checked against the leaf its member
+              PUBLISHED — an insider could plant a leaf it held in another's place and read on after its own removal.
+              `Check::leaf_of` (cards' / signed `d/` leaves), page and node; test + control + mutation
+        - [x] BeeKEM measured: a key change made concurrently with one's own removal reads nothing after (test)
+        - [x] R1 two seeds: vault `names ‖ data`; identity keeps both; names/base keys/ACCOUNT_CHECK from names
+        - [x] R2 rotation in the removal's event; the new seed to the devices that stay (channel `k/<seq>` sealed with the
+              removal's generation); `DataKeep`
+        - [x] R3 data-addressed tables follow the head: card, directory, channel, public tails copied; readers follow
+        - [x] R4 space member swap: card names the new member; trees take the old out, the new in
+        - [x] R5 inbox seal key rotates; old seeds kept
+        - [x] WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS (10-28, after three reviews of history-judged admission —
+              C1/C2, N1, F1–F5, then 2 criticals + a fork + O(N²) non-convergence: every rule reading an op's
+              predecessors or what was offered with it read evidence the sender chooses; every "listed now" rule forked
+              fresh merges). REPLACED all of it: (a) admission by FIXED FACTS only — signature, signer ever let in, the
+              add's act / ever-credentialed device, the published leaf (card unknown: waits), removal's act, one root,
+              no current device → all wait; (b) a generation is WRITTEN with only from a CLEAN tree (`Group::writable`:
+              nobody placed whom the list puts out now — `Check::in_now`); every other generation HELD for reading
+              (identity `EpochHold`/`EpochWrite`, appended; page `keepGenerations`, node `keep_generations`); a placed
+              rogue reads nothing (not written for), the reconcile takes it out. Also: only a placed device removes one;
+              founder not listed by being founder; `placed()` replays pending first; the measure test asserts.
+              groups 30 (`not_written_for` helper: precondition a current generation exists — W1–W3 survived until
+              it did), identity 51, delegate 38; mutations W1–W9 red
+        - [x] 4th review (10-28) on the seal-side rule — all fixed at cause: CRITICAL `m/` bridge sealed every new
+              generation (incl. the removal's and the data seed's) with the frozen MLS secret a removed device holds →
+              written only while no device ever credentialed is out (`account::mls_bridge_open`, page + node); node
+              sealed with the newest epoch held → the identity's mark (`Reading::writing`); no mark → storage/node fell
+              back to the TABLE key (space id-derived / names seed) → group-sealed tails never write with it
+              (`data::Open::group_sealed`), a write first makes the tree clean (`readyToWrite`) else refused; handover +
+              MlsSave raised the mark → held only; kick window (last clean gen held by the kicked) → mark CLEARED when not
+              clean; card-dropping kicked member never removable → `Group::known` kept with the tree (save v2, old saves
+              load); offline lowest device stalled writes → any device resolves heads on write; open tables follow the
+              mark down; file re-key gate on the writable generation. groups 31, identity 51, data 20, delegate 40;
+              mutations X1–X8 red.
+        - [x] 5th review (10-28) — fixed at cause: CRITICAL the key store (`beekem`) group-sealed → its own saves waited
+              on the generation they made (fresh registration, words login, every account at the upgrade) → keyed by the
+              DATA seed, ungrouped (`identity::KEYSTORE`); a write from inside the group's queue never waits on it;
+              adder's own add never recorded → recorded at every add offered (held too); GRP2 broke v451 devices and
+              rollback → tree save stays v1, `kn/` row beside; node re-key salt ungated → `clean_at`; node marked from a
+              tree left short / forgot a card's earlier member → whole merges only, earlier members kept; short reads
+              leave the mark (page = node); `EpochKeep` holds. groups 31, identity 52, delegate 43; Y1–Y6 red.
+        - [ ] STATE 10-29 (NOT GREEN — do not commit as done): the seal-side rule is in the tree (uncommitted) with the
+              fixes from reviews 4–5 and the write-path inventory (bridge/file-key gates on merged tables, bare key-op
+              files, node catalog = page rule, catalogs + key store ungrouped, login marks the account before retiring).
+              Live: k85-two, remove-control-bk, k86-reg PASS; k87-rot and k86-mls passed alone, flaky in full runs;
+              k87-three FAILS: (1) a write right after creating a space is refused — a new space's list is not read
+              WHOLE yet, so nothing is ever writable (the creator knows its list locally); (2) after the rotation fy's
+              card at the new address does not name its member. Upgrade gate passed once (02:xx run), last run could not
+              publish (test node accepted 0 of 9 pieces — check node state before the next gate).
+              ROOT CAUSE OF THE CHURN (owner 10-29): the rule was implemented without an OFFLINE FLOW TEST of every state
+              that writes; each bug surfaced live, one per run. NEXT: build the offline flow harness (real packages:
+              storage, members, keys, auth, identity, core wasm; in-memory node) covering registration, words login,
+              upgrade hand-over, create space, join, normal writes, device removal + rotation, kick — every write's key
+              and outcome asserted; in the gate. Fix every failure it shows in one change; live probes only confirm.
+        - [ ] OPEN: a member→account binding the member cannot erase (fresh devices wait on a card-dropping kicked
+              member's history; saved trees + node cache handle it)
+        - [ ] R6 probes: removed device writes nothing read, reads nothing after (account + spaces); stayers go on;
+              offline catch-up; words login after
+        - built 10-28 (unit-tested; fx probe k87-rot pending): account `Seeds`/`rotate_data`/`beekem_superseded`;
+          identity names seed (Member tag 2, Provision 64 B, TableKey/Sign/ACCOUNT_CHECK by names, channel by data),
+          `DataKeep`/`DataOldKeep`/`HandoverNames`/`HandedNames` (appended LAST), old seeds kept and open the inbox;
+          groups `Check::superseded` + `retire_superseded` (no act for a replaced member; history still authored);
+          page: removal draws a seed → `rotateData` (seal `k/<seq>/<n>` with the post-removal generation, read the
+          data-addressed tables, keep, write them at the new address, card member → `beekem-was/<seq>`, reload);
+          stayers adopt (`adoptData`), the NODE adopts with every page closed (test + control); spaces: superseded read
+          from cards, retired by any placed member, an unplaced listed account enters by itself (page)
+- [ ] 3. A removed device reads nothing written after: account and spaces (probes k85-two, remove-control-bk) + the
+        forged/rogue-writer cases of (1)–(2).
+- [ ] 4. Every page CLOSED, the node: places a new device (k85-node), takes out a removed one, re-keys a space's files
+        after a removal (fx probe — today a unit test only).
+- [ ] 5. Upgrades keep everything (keys, device seed, spaces, history): the three gates on every release.
+- [ ] 6. 6c: MLS code removed but the migration pieces; no dead MLS path in page, node or identity.
+- Also: old builds' wake-up cost on nodes; the node rebuilds its trees every round (unmeasured — measure, then fix the
+  cause); crypto crates' opt-level (with 6c's identity build).
+
 - [x] 10-27 v451 — K8.6 6b SPACES OFF MLS LIVE (90cac6c; manifest bb211bf5db0a; gates 3/3 + frames; identity changed:
   one PIN entry). Carries the device-seed hand-over fix for accounts made on v450. NEXT: 6c (MLS code removed).
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed

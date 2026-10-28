@@ -19,7 +19,7 @@ use beekem::{
     operation::{CgkaAuthorization, CgkaOperation},
 };
 use future_form::Local;
-use keyhive_crypto::{share_key::{ShareKey, ShareSecretKey}, signed::Signed, signer::memory::MemorySigner};
+use keyhive_crypto::{digest::Digest, share_key::{ShareKey, ShareSecretKey}, signed::Signed, signer::memory::MemorySigner};
 use std::sync::Arc;
 
 /// A space's TREE ID: a key derived from the space's id (BeeKEM names a tree by a verifying key).
@@ -75,18 +75,46 @@ pub fn leaf_checks(member: &[u8; 32], leaf: &[u8; 32], sig: &[u8; 64]) -> bool {
     k.verify(&[LEAF_SIGNED, &leaf[..]].concat(), &ed25519_dalek::Signature::from_bytes(sig)).is_ok()
 }
 
-/// OUR CHECK, the list's: who a member id is (its account), whether the list names it, and whether an act allows an
-/// add or a remove of a member.
+/// OUR CHECK, the list's: who a member id is (its account), whether the list names it now, and whether an act allows
+/// an add or a remove of a member. ADMISSION judges FIXED FACTS only; WHO RECEIVES is decided by the one who seals
+/// (`Group::writable` — FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS").
 pub trait Check {
     /// The account (DID) a member id belongs to — from its published credential; `None`: unknown.
     fn account_of(&self, member: &[u8; 32]) -> Option<String>;
-    /// Whether the list names this account now (an operation's signer must be listed).
+    /// Whether the list names this account NOW.
     fn listed(&self, did: &str) -> bool;
-    /// Whether the act whose hash is `act` allows ADDING (`add`) or REMOVING the member `target`.
+    /// Whether the act whose hash is `act` allows ADDING (`add`) or REMOVING the member `target` — a fixed fact (the acts
+    /// only grow): an add stays valid after its member leaves.
     fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool;
+    /// Whether an account was EVER let in (a fixed fact): an operation's SIGNER counts by it, never by who is listed now
+    /// (10-28 re-review: judged by "now", a member kicked made every operation it ever wrote unauthorized on later fresh
+    /// merges — the removal and everything after waited on them, and the tree forked).
+    fn ever_in(&self, did: &str) -> bool {
+        self.listed(did)
+    }
+    /// Whether a PLACED member is IN NOW (a space: its account listed, its member not one its account replaced; the
+    /// account's tree: a current device): a tree placing one who is not is never written with (`Group::writable`).
+    fn in_now(&self, member: &[u8; 32]) -> bool {
+        !self.superseded(member) && self.account_of(member).is_some_and(|d| self.listed(&d))
+    }
+    /// Whether this check can JUDGE at all: the account's tree with NO current device — its key log moved and the devices
+    /// that stay not credentialed on the new key yet (`removeDevice` puts the log, then the devices) — judges nothing:
+    /// every operation WAITS (none refused for a window; page and node alike).
+    fn whole(&self) -> bool {
+        true
+    }
     /// THE ONE ACCOUNT that may make the space's tree: its owner (a space with none: the lowest listed DID). `None`:
     /// not known yet — no root is taken.
     fn creator(&self) -> Option<String>;
+    /// The LEAF KEY a member PUBLISHED (its card's, a device's signed leaf): an add is taken only with it (10-27: an add
+    /// carried any leaf — a member could plant a leaf it held in another's place and read on after its own removal).
+    /// `None`: not known yet — an add of it waits.
+    fn leaf_of(&self, member: &[u8; 32]) -> Option<[u8; 32]>;
+    /// A member id its account REPLACED (K8.7: its data seed rotated — a new member on its card): still the author of
+    /// what it wrote, and taken out with no act.
+    fn superseded(&self, _member: &[u8; 32]) -> bool {
+        false
+    }
 }
 
 /// A card's member the tree should PLACE: listed, not placed. One the tree should TAKE OUT: not listed, and an act put
@@ -104,6 +132,10 @@ fn wants_out(did: &str, listed: &dyn Fn(&str) -> bool, outs: &std::collections::
 #[derive(Debug, Default)]
 pub struct ListCheck {
     pub by_member: std::collections::BTreeMap<[u8; 32], String>,
+    /// Each member's published leaf key (its card's).
+    pub leaves: std::collections::BTreeMap<[u8; 32], [u8; 32]>,
+    /// Member ids their accounts replaced (K8.7) — in `by_member` too: the authors of what they wrote.
+    pub superseded: std::collections::BTreeSet<[u8; 32]>,
     pub listed: Vec<String>,
     pub owner: String,
     pub acts: std::collections::BTreeMap<[u8; 32], (bool, String)>,
@@ -113,8 +145,14 @@ impl Check for ListCheck {
     fn account_of(&self, member: &[u8; 32]) -> Option<String> {
         self.by_member.get(member).cloned()
     }
+    /// Listed NOW: the roster (the governance's — its owner on it as any member; the space's founder is no exception:
+    /// put out after handing the space on, they are out — 10-28 re-review).
     fn listed(&self, did: &str) -> bool {
-        self.listed.iter().any(|d| d == did) || did == self.owner
+        self.listed.iter().any(|d| d == did)
+    }
+    /// EVER let in: by an act, or the founder (its tree's first placement, by no act).
+    fn ever_in(&self, did: &str) -> bool {
+        did == self.owner || self.listed(did) || self.acts.values().any(|(i, d)| *i && d == did)
     }
     fn allows(&self, act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
         let t = self.by_member.get(target);
@@ -131,22 +169,30 @@ impl Check for ListCheck {
         }
         self.listed.iter().min().cloned()
     }
+    fn leaf_of(&self, member: &[u8; 32]) -> Option<[u8; 32]> {
+        self.leaves.get(member).copied()
+    }
+    fn superseded(&self, member: &[u8; 32]) -> bool {
+        self.superseded.contains(member)
+    }
 }
 
 /// THE ACCOUNT's CHECK (K8.5, FOUNDATION "THE ACCOUNT's GROUP ON BEEKEM"): the account's own tree, whose members are
 /// its DEVICES (each device's member: the group key its credential names), and WHO IS IN IS THE DEVICES LIST —
 /// `current`: the members its devices contract credentials under its key log's current key (`account::device_members`).
-/// An operation's AUTHOR counts when the device was EVER the account's (`ever`: credentialed under any key its key log
-/// has had — a device removed since still made the root and the adds before: fx/fy 10-26, judged by the current list
-/// alone every earlier operation went unauthorized and the removal never landed). An add is allowed of a CURRENT device
-/// only (a removed one never adds itself back), a removal of one no longer current only (no act: the devices list is the
-/// word). The ROOT is the lowest member ever the account's among the authors of the root operations in the account's
+/// An operation's AUTHOR, and an add's target, count when the device was EVER the account's (`ever`: credentialed under
+/// any key its key log has had — a fixed fact: a device removed since still made the root and the adds before; fx/fy
+/// 10-26, judged by the current list alone every earlier operation went unauthorized and the removal never landed). A
+/// removal: of one no longer current (no act: the devices list is the word). IN NOW (`Group::writable`): a current
+/// device. The ROOT is the lowest member ever the account's among the authors of the root operations in the account's
 /// channel (`writers`) — never a second tree from two makers.
 #[derive(Debug, Default)]
 pub struct AccountCheck {
     pub current: Vec<[u8; 32]>,
     pub ever: Vec<[u8; 32]>,
     pub writers: Vec<[u8; 32]>,
+    /// Each device's SIGNED leaf (`d/<member>` in the account's channel, `leaf_checks`): an add is taken only with it.
+    pub leaves: std::collections::BTreeMap<[u8; 32], [u8; 32]>,
 }
 fn hex32(b: &[u8; 32]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -159,10 +205,19 @@ impl Check for AccountCheck {
         self.current.iter().chain(&self.ever).any(|c| hex32(c) == device)
     }
     fn allows(&self, _act: &[u8; 32], add: bool, target: &[u8; 32]) -> bool {
-        self.current.contains(target) == add
+        if add { self.listed(&hex32(target)) } else { !self.current.contains(target) }
+    }
+    fn in_now(&self, member: &[u8; 32]) -> bool {
+        self.current.contains(member)
+    }
+    fn whole(&self) -> bool {
+        !self.current.is_empty()
     }
     fn creator(&self) -> Option<String> {
         self.current.iter().chain(&self.ever).filter(|c| self.writers.contains(c)).min().map(hex32)
+    }
+    fn leaf_of(&self, member: &[u8; 32]) -> Option<[u8; 32]> {
+        self.leaves.get(member).copied()
     }
 }
 
@@ -203,7 +258,13 @@ pub enum Merged {
 pub struct Group {
     cgka: Cgka,
     account: Account,
+    /// WHOSE each member is, as our check said when its add was TAKEN (10-28 review: a kicked member rewrote its card
+    /// without its member — no card named it, nothing could take it out, and the tree was never clean again). Saved
+    /// BESIDE the tree (`save_known`: the tree's own save stays what every build reads — 10-28 review: a new format broke
+    /// a device of the same account still on the build before, and any rollback); a card that names it still decides.
+    known: std::collections::BTreeMap<[u8; 32], String>,
 }
+
 
 /// BeeKEM's operations finish at once with an in-memory signer: poll once; a future that would wait is a fault here.
 fn now<T>(f: impl core::future::Future<Output = T>) -> T {
@@ -241,16 +302,38 @@ impl Group {
     pub fn empty(space: &[u8; 32], account: Account) -> Group {
         let mut sks = ShareKeyMap::new();
         sks.insert(account.leaf_key(), account.leaf);
-        Group { cgka: Cgka::new(tree_id(space), account.id, sks), account }
+        Group { cgka: Cgka::new(tree_id(space), account.id, sks), account, known: Default::default() }
     }
     pub fn save(&self) -> Result<Vec<u8>, String> {
         bincode::serialize(&self.cgka).map_err(|x| x.to_string())
     }
+    /// WHOSE each member is (`known`), saved beside the tree.
+    pub fn save_known(&self) -> Vec<u8> {
+        bincode::serialize(&self.known).unwrap_or_default()
+    }
+    /// …taken back (a save that does not read: none — learned again as operations are taken).
+    pub fn take_known(&mut self, bytes: &[u8]) {
+        if let Ok(k) = bincode::deserialize::<std::collections::BTreeMap<[u8; 32], String>>(bytes) {
+            self.known.extend(k);
+        }
+    }
     pub fn load(bytes: &[u8], account: Account) -> Result<Group, String> {
-        Ok(Group { cgka: bincode::deserialize(bytes).map_err(|x| x.to_string())?, account })
+        let cgka: Cgka = bincode::deserialize(bytes).map_err(|x| x.to_string())?;
+        let known = std::collections::BTreeMap::new();
+        // SAVED BY ANOTHER MEMBER of this account (K8.7: its data key rotated — a new member): the operations kept, the
+        // owner this one, with its own leaf only — the old member's keys never used again; it is placed once it enters
+        // (fx 10-28: the old owner loaded with the new signer, "Identifier not found" on every change).
+        if cgka.owner_id != account.id {
+            let mut sks = ShareKeyMap::new();
+            sks.insert(account.leaf_key(), account.leaf.clone());
+            return Ok(Group { cgka: cgka.with_new_owner(account.id, sks).map_err(e)?, account, known });
+        }
+        Ok(Group { cgka, account, known })
     }
     /// Whether this account is in the tree (its view).
-    pub fn placed(&self) -> bool {
+    pub fn placed(&mut self) -> bool {
+        // (Its pending concurrent operations replayed first — read alone, `placed` could be stale: 10-28 review.)
+        let _ = self.members();
         self.cgka.owner_leaf_key().is_some()
     }
     /// The member ids the tree places (its view).
@@ -258,11 +341,34 @@ impl Group {
         self.cgka.member_ids().map(|it| it.map(|m| m.0.to_bytes()).collect()).unwrap_or_default()
     }
 
-    /// MERGE another's operation — through OUR CHECK first.
+    /// MERGE another's operation — through OUR CHECK first (fixed facts only: `admitted`).
     pub fn merge(&mut self, op: &[u8], check: &impl Check) -> Merged {
         let Ok(op) = bincode::deserialize::<Signed<CgkaOperation>>(op) else { return Merged::Refused("not an operation".into()) };
-        if let Err(why) = admitted(&op, check) {
-            return Merged::Refused(why);
+        // (WHOSE an added member is, while a card names it — recorded for every add offered, one held too: the adder's
+        // own add comes back held, and was never judged here — 10-28 review.)
+        if let CgkaOperation::Add { added_id, .. } = &op.payload {
+            if let Some(d) = check.account_of(&added_id.0.to_bytes()) {
+                self.known.insert(added_id.0.to_bytes(), d);
+            }
+        }
+        // HELD already: judged and verified when it was taken — nothing again (each operation checked once per device).
+        let held: beekem::collections::Set<_> = [Digest::hash(&op)].into_iter().collect();
+        if self.cgka.contains_predecessors(&held) {
+            return Merged::Applied;
+        }
+        // AUTHENTIC: signed by the member it names (10-27: nothing verified it — our check judged the signer an operation
+        // NAMES, so whoever could write where we read could write a key change in another member's name).
+        if op.try_verify().is_err() {
+            return Merged::Refused("its signature does not verify".into());
+        }
+        // NOTHING JUDGED YET: a check that cannot judge (`Check::whole`) — it waits.
+        if !check.whole() {
+            return Merged::Waiting;
+        }
+        match admitted(&op, check) {
+            Ok(()) => {}
+            Err(None) => return Merged::Waiting,
+            Err(Some(why)) => return Merged::Refused(why),
         }
         // THIS ACCOUNT's own key change, made on another device or its node: its leaf secret derived here (K6).
         if let CgkaOperation::Update { id, new_path, predecessors, .. } = &op.payload {
@@ -282,6 +388,28 @@ impl Group {
         }
     }
 
+    /// THE GENERATION TO SEAL WITH (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS"): the current one, only
+    /// when the tree places nobody the list puts out NOW (`Check::in_now`) and has one current (no concurrent heads).
+    /// `None`: not clean — the reconcile takes them out first (its removal, then a key change); writes stay on the last
+    /// clean generation meanwhile. Every other generation reached is for READING only.
+    pub fn writable(&mut self, check: &impl Check) -> Option<(u64, [u8; 32])> {
+        if !check.whole() || !self.members().iter().all(|m| self.in_now(check, m)) {
+            return None;
+        }
+        self.current_now()
+    }
+    /// IN NOW (`Check::in_now`) — a member no card names any more judged by WHOSE it was when taken (`known`): listed now,
+    /// or not (then out — the reconcile takes it out by its account's act).
+    fn in_now(&self, check: &impl Check, m: &[u8; 32]) -> bool {
+        match check.account_of(m) {
+            Some(_) => check.in_now(m),
+            None => !check.superseded(m) && self.known.get(m).is_some_and(|d| check.listed(d)),
+        }
+    }
+    /// WHOSE a placed member is: its card's account, else the one it was taken as (`known`).
+    pub fn whose(&self, m: &[u8; 32]) -> Option<&str> {
+        self.known.get(m).map(String::as_str)
+    }
     /// MERGE EVERY operation, in any order (page and node, one loop): each offered again while its predecessors arrive,
     /// up to 64 rounds. How many applied, the ones still waiting, why each refused.
     pub fn merge_all(&mut self, ops: &[Vec<u8>], check: &impl Check) -> MergedAll {
@@ -306,7 +434,6 @@ impl Group {
     /// no feed — the owner's own operations waited on it everywhere, Ivvor never placed — while the owner's saved tree
     /// held it). Written again by a device that holds them, their authors' signatures as they were.
     pub fn unpublished(&self, published: &[Vec<u8>], check: &impl Check) -> Vec<Vec<u8>> {
-        use keyhive_crypto::digest::Digest;
         let have: std::collections::BTreeSet<Vec<u8>> = published.iter().filter_map(|o| bincode::deserialize::<Signed<CgkaOperation>>(o).ok()).map(|o| Digest::hash(&o).as_slice().to_vec()).collect();
         let Ok(batches) = self.cgka.ops() else { return Vec::new() };
         batches
@@ -332,6 +459,21 @@ impl Group {
     pub fn rotate_seeded(&mut self, seed: [u8; 32]) -> Result<Vec<u8>, String> {
         use rand::SeedableRng;
         Ok(self.rotate(&mut rand::rngs::StdRng::from_seed(seed))?.0)
+    }
+    /// THE MEMBERS THEIR ACCOUNTS REPLACED (K8.7), taken out — each placed one in `superseded` — and one key change:
+    /// the operations (none: none placed). The account's new member is added as any listed member is (`reconcile`).
+    pub fn retire_superseded(&mut self, superseded: &[[u8; 32]], seed: [u8; 32]) -> Result<Vec<Vec<u8>>, String> {
+        let placed = self.members();
+        let mut ops = Vec::new();
+        for id in superseded.iter().filter(|id| placed.contains(id)) {
+            if let Some(op) = self.remove_member(id, &[0; 32])? {
+                ops.push(op);
+            }
+        }
+        if !ops.is_empty() {
+            ops.push(self.rotate_seeded(seed)?);
+        }
+        Ok(ops)
     }
     /// REMOVE a member, authorized by the act `act`: the operation's bytes, or `None` if not placed.
     pub fn remove_member(&mut self, member: &[u8; 32], act: &[u8; 32]) -> Result<Option<Vec<u8>>, String> {
@@ -413,7 +555,7 @@ impl Group {
     /// tree does not place, or a placed one no longer listed that an act put out. `reconcile`'s own conditions.
     pub fn due(&mut self, cards: &[Card], listed: &dyn Fn(&str) -> bool, outs: &std::collections::BTreeMap<String, [u8; 32]>) -> bool {
         let placed = self.members();
-        cards.iter().any(|(did, id, _)| wants_in(&placed, id, did, listed)) || placed.iter().any(|id| cards.iter().find(|c| c.1 == *id).is_some_and(|(did, ..)| wants_out(did, listed, outs)))
+        cards.iter().any(|(did, id, _)| wants_in(&placed, id, did, listed)) || placed.iter().any(|id| cards.iter().find(|c| c.1 == *id).map(|c| c.0.clone()).or_else(|| self.known.get(id).cloned()).is_some_and(|did| wants_out(&did, listed, outs)))
     }
 
     pub fn reconcile(&mut self, cards: &[Card], listed: &dyn Fn(&str) -> bool, ins: &std::collections::BTreeMap<String, [u8; 32]>, outs: &std::collections::BTreeMap<String, [u8; 32]>, seed: [u8; 32]) -> Reconciled {
@@ -430,7 +572,9 @@ impl Group {
             }
         }
         for id in &placed {
-            let Some((did, ..)) = cards.iter().find(|c| c.1 == *id) else { continue };
+            // (Its card's account; no card names it any more: the one it was taken as — `known`.)
+            let Some(did) = cards.iter().find(|c| c.1 == *id).map(|c| c.0.clone()).or_else(|| self.known.get(id).cloned()) else { continue };
+            let did = &did;
             if !wants_out(did, listed, outs) {
                 continue;
             }
@@ -463,34 +607,46 @@ fn generation_number(depth: u64, h: &keyhive_crypto::digest::Digest<Signed<CgkaO
 }
 
 /// OUR CHECK (the list's): the signer listed; an add or a remove authorized by an act that allows exactly that.
-fn admitted(op: &Signed<CgkaOperation>, check: &impl Check) -> Result<(), String> {
+/// `Err(None)`: not judged yet — WAITS (its added member's card not read: its account or its published leaf unknown).
+fn admitted(op: &Signed<CgkaOperation>, check: &impl Check) -> Result<(), Option<String>> {
     let signer = op.issuer().to_bytes();
-    let did = check.account_of(&signer).ok_or("signed by a member id no listed account publishes")?;
-    if !check.listed(&did) {
-        return Err(format!("signed by {did}, not on the list"));
+    let did = check.account_of(&signer).ok_or(Some("signed by a member id no listed account publishes".to_string()))?;
+    // (EVER let in — never "listed now": one put out since is not WRITTEN for — `Group::writable`.)
+    if !check.ever_in(&did) {
+        return Err(Some(format!("signed by {did}, never on the list")));
     }
     // A TREE's ROOT (no predecessors) only by its creator: two members each making a tree — each page seeing none yet
     // — forked a space into two (10-19, live: Craftworks' tree made by a member, the owner's own operations left
     // waiting forever on a root that lost; nobody was ever added). One account may make it, so there is one root.
     if op.payload.predecessors().is_empty() && check.creator().as_deref() != Some(did.as_str()) {
-        return Err(format!("a tree's root signed by {did}, not the space's creator"));
+        return Err(Some(format!("a tree's root signed by {did}, not the space's creator")));
     }
     match &op.payload {
-        // AN ADD: of an account the list names NOW (K7 — the tree only ever holds the list: any listed member places any
-        // listed account, itself included), or one its named act allows.
-        CgkaOperation::Add { added_id, authorization, .. } => {
+        // AN ADD: by the act it NAMES (a space: the act letting that account in — the owner's own placement, none; the
+        // account's tree: a device the account ever credentialed) — never by who is listed NOW (10-28 re-review: an add
+        // judged by the list of the day went unauthorized once its member was kicked, and every later fresh merge left
+        // the kick waiting on it — the tree forked between those who merged before and after).
+        CgkaOperation::Add { added_id, pk, authorization, .. } => {
             let target = added_id.0.to_bytes();
-            if check.account_of(&target).is_some_and(|d| check.listed(&d)) {
-                return Ok(());
+            // (Whose it is not known yet — its card not read: it waits.)
+            if check.account_of(&target).is_none() {
+                return Err(None);
             }
-            match authorization {
-                CgkaAuthorization::Delegation(act) if check.allows(act, true, &target) => Ok(()),
-                _ => Err("an add of an account not listed, no act allowing it".into()),
+            if !matches!(authorization, CgkaAuthorization::Delegation(act) if check.allows(act, true, &target)) {
+                return Err(Some("an add of an account not listed, no act allowing it".into()));
+            }
+            // ITS LEAF: the one the added member published, never one the adder chose (not read yet: it waits).
+            match check.leaf_of(&target) {
+                Some(l) if l == pk.to_bytes() => Ok(()),
+                Some(_) => Err(Some("an add with a leaf its member did not publish".into())),
+                None => Err(None),
             }
         }
         CgkaOperation::Remove { id, authorization, .. } => match authorization {
+            // A member its account REPLACED (K8.7): out with no act — the tree holds each account's current member.
+            _ if check.superseded(&id.0.to_bytes()) => Ok(()),
             CgkaAuthorization::Revocation(act) if check.allows(act, false, &id.0.to_bytes()) => Ok(()),
-            _ => Err("a removal no act allows".into()),
+            _ => Err(Some("a removal no act allows".into())),
         },
         _ => Ok(()),
     }
@@ -538,11 +694,29 @@ mod page {
         fn creator(&self) -> Option<String> {
             match self { Chk::List(c) => c.creator(), Chk::Account(c) => c.creator() }
         }
+        fn leaf_of(&self, m: &[u8; 32]) -> Option<[u8; 32]> {
+            match self { Chk::List(c) => c.leaf_of(m), Chk::Account(c) => c.leaf_of(m) }
+        }
+        fn superseded(&self, m: &[u8; 32]) -> bool {
+            match self { Chk::List(c) => c.superseded(m), Chk::Account(c) => c.superseded(m) }
+        }
+        fn ever_in(&self, d: &str) -> bool {
+            match self { Chk::List(c) => c.ever_in(d), Chk::Account(c) => c.ever_in(d) }
+        }
+        fn in_now(&self, m: &[u8; 32]) -> bool {
+            match self { Chk::List(c) => c.in_now(m), Chk::Account(c) => c.in_now(m) }
+        }
+        fn whole(&self) -> bool {
+            match self { Chk::List(c) => c.whole(), Chk::Account(c) => c.whole() }
+        }
+
     }
     #[wasm_bindgen]
     impl BeeList {
         #[wasm_bindgen(constructor)]
-        pub fn new(by_member: js_sys::Array, listed: js_sys::Array, owner: String, acts: js_sys::Array) -> Result<BeeList, JsValue> {
+        /// `by_member` `[[member hex, did, leaf hex]…]` (each card's member and published leaf); `superseded` the same for
+        /// the members their accounts replaced (K8.7: still their history's authors, taken out with no act).
+        pub fn new(by_member: js_sys::Array, listed: js_sys::Array, owner: String, acts: js_sys::Array, superseded: Option<js_sys::Array>) -> Result<BeeList, JsValue> {
             let h32 = |v: JsValue| -> Result<[u8; 32], JsValue> {
                 let s = v.as_string().ok_or_else(|| err("a hex string"))?;
                 let b: Option<Vec<u8>> = (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect();
@@ -551,24 +725,47 @@ mod page {
             let mut l = ListCheck { owner, ..ListCheck::default() };
             for e in by_member.iter() {
                 let e = js_sys::Array::from(&e);
-                l.by_member.insert(h32(e.get(0))?, e.get(1).as_string().unwrap_or_default());
+                let m = h32(e.get(0))?;
+                l.by_member.insert(m, e.get(1).as_string().unwrap_or_default());
+                if let Ok(leaf) = h32(e.get(2)) {
+                    l.leaves.insert(m, leaf);
+                }
+            }
+            for e in superseded.map(|a| a.iter().collect::<Vec<_>>()).unwrap_or_default() {
+                let e = js_sys::Array::from(&e);
+                let m = h32(e.get(0))?;
+                l.by_member.insert(m, e.get(1).as_string().unwrap_or_default());
+                if let Ok(leaf) = h32(e.get(2)) {
+                    l.leaves.insert(m, leaf);
+                }
+                l.superseded.insert(m);
             }
             l.listed = listed.iter().filter_map(|d| d.as_string()).collect();
-            for e in acts.iter() {
-                let e = js_sys::Array::from(&e);
-                l.acts.insert(h32(e.get(0))?, (e.get(1).as_bool().unwrap_or(false), e.get(2).as_string().unwrap_or_default()));
-            }
+            let acts = acts
+                .iter()
+                .map(|e| {
+                    let e = js_sys::Array::from(&e);
+                    Ok((h32(e.get(0))?, (e.get(1).as_bool().unwrap_or(false), e.get(2).as_string().unwrap_or_default())))
+                })
+                .collect::<Result<Vec<_>, JsValue>>()?;
+            l.acts.extend(acts);
             Ok(BeeList(Chk::List(l)))
         }
         /// THE ACCOUNT's CHECK (`AccountCheck`): `current` `[member hex…]` — the group keys of its devices' credentials
         /// on its key log's current key; `writers` `[member hex…]` — the devices whose `account-keyops` the directory lists.
-        pub fn account(current: js_sys::Array, ever: js_sys::Array, writers: js_sys::Array) -> Result<BeeList, JsValue> {
+        /// … `leaves` `[[member hex, leaf hex]…]` — each device's signed leaf (an add is taken only with it).
+        pub fn account(current: js_sys::Array, ever: js_sys::Array, writers: js_sys::Array, leaves: js_sys::Array) -> Result<BeeList, JsValue> {
             let h32 = |v: JsValue| -> Result<[u8; 32], JsValue> {
                 let s = v.as_string().ok_or_else(|| err("a hex string"))?;
                 let b: Option<Vec<u8>> = (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect();
                 b32(&b.ok_or_else(|| err("hex"))?)
             };
-            Ok(BeeList(Chk::Account(AccountCheck { current: current.iter().map(h32).collect::<Result<_, _>>()?, ever: ever.iter().map(h32).collect::<Result<_, _>>()?, writers: writers.iter().map(h32).collect::<Result<_, _>>()? })))
+            let mut lv = std::collections::BTreeMap::new();
+            for e in leaves.iter() {
+                let e = js_sys::Array::from(&e);
+                lv.insert(h32(e.get(0))?, h32(e.get(1))?);
+            }
+            Ok(BeeList(Chk::Account(AccountCheck { current: current.iter().map(h32).collect::<Result<_, _>>()?, ever: ever.iter().map(h32).collect::<Result<_, _>>()?, writers: writers.iter().map(h32).collect::<Result<_, _>>()?, leaves: lv })))
         }
     }
 
@@ -624,7 +821,14 @@ mod page {
         pub fn save(&self) -> Result<js_sys::Uint8Array, JsValue> {
             Ok(js_sys::Uint8Array::from(&self.0.save().map_err(err)?[..]))
         }
-        pub fn placed(&self) -> bool {
+        /// WHOSE each member is (`Group::save_known`), saved beside the tree.
+        pub fn save_known(&self) -> js_sys::Uint8Array {
+            js_sys::Uint8Array::from(&self.0.save_known()[..])
+        }
+        pub fn take_known(&mut self, bytes: &[u8]) {
+            self.0.take_known(bytes);
+        }
+        pub fn placed(&mut self) -> bool {
             self.0.placed()
         }
         /// The member ids placed (hex).
@@ -665,6 +869,20 @@ mod page {
         /// REMOVE a member, authorized by an act's hash: the operation, or null (not placed).
         pub fn remove(&mut self, member: &[u8], act: &[u8]) -> Result<JsValue, JsValue> {
             Ok(bytes(self.0.remove_member(&b32(member)?, &b32(act)?).map_err(err)?))
+        }
+        /// THE MEMBERS THEIR ACCOUNTS REPLACED taken out (K8.7, `Group::retire_superseded`): `superseded` `[member hex…]`
+        /// → the operations to send.
+        pub fn retire(&mut self, superseded: js_sys::Array) -> Result<js_sys::Array, JsValue> {
+            let ids: Vec<[u8; 32]> = superseded
+                .iter()
+                .filter_map(|v| v.as_string())
+                .filter_map(|s| (0..s.len() / 2).map(|i| u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>())
+                .filter_map(|b| b.try_into().ok())
+                .collect();
+            let mut seed = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut seed);
+            let ops = self.0.retire_superseded(&ids, seed).map_err(err)?;
+            Ok(ops.iter().map(|o| JsValue::from(js_sys::Uint8Array::from(&o[..]))).collect())
         }
         /// ROTATE this account's leaf: `[operation, the new leaf secret]` (the account hands the secret to its devices).
         pub fn rotate(&mut self) -> Result<js_sys::Array, JsValue> {
@@ -717,6 +935,14 @@ mod page {
             let (n, k, op) = self.0.current(&mut rand::rngs::OsRng).map_err(err)?;
             Ok([JsValue::from(n.to_string()), js_sys::Uint8Array::from(&k[..]).into(), bytes(op)].into_iter().collect())
         }
+        /// THE GENERATION TO SEAL WITH (`Group::writable`): `[number (decimal string), secret]`, or null (not clean: the
+        /// reconcile first).
+        pub fn writable(&mut self, list: &BeeList) -> JsValue {
+            match self.0.writable(&list.0) {
+                Some((n, k)) => [JsValue::from(n.to_string()), js_sys::Uint8Array::from(&k[..]).into()].into_iter().collect::<js_sys::Array>().into(),
+                None => JsValue::NULL,
+            }
+        }
         /// EVERY GENERATION reached: `[[number (decimal string), secret]…]`.
         pub fn generations(&mut self) -> js_sys::Array {
             self.0.generations().into_iter().map(|(n, k)| -> JsValue { [JsValue::from(n.to_string()), js_sys::Uint8Array::from(&k[..]).into()].into_iter().collect::<js_sys::Array>().into() }).collect()
@@ -727,3 +953,4 @@ mod page {
         }
     }
 }
+

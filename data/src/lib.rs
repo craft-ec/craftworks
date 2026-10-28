@@ -51,6 +51,15 @@ pub fn catalog_place(v: &[u8]) -> Place {
         Place::Listed
     }
 }
+/// A CATALOG ROW's place — `None` for a value that is not one (a card holds rows of its own beside the tables it lists:
+/// a handle, an inbox key, its member, its devices — `catalog_place` reads any of those as "listed", K8.7 found it).
+pub fn catalog_row(v: &[u8]) -> Option<Place> {
+    let o: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(v).ok()?;
+    if o.is_empty() || !o.keys().all(|k| ["at", "b", "n"].contains(&k.as_str())) {
+        return None;
+    }
+    Some(catalog_place(v))
+}
 /// A catalog row for `place`, noted `at` (ms) when given.
 pub fn catalog_value(place: Place, at: Option<u64>) -> Vec<u8> {
     let mut o = serde_json::Map::new();
@@ -236,6 +245,10 @@ pub struct Open {
     /// it; never sealed — and its tree in the clear too (Block contracts named by their ids, as trees from before
     /// sealing), so it grows past what one tail holds.
     pub public: bool,
+    /// SEALED BY A GROUP (a space's table, the account's): its table key READS what was written before any epoch, and
+    /// is never WRITTEN with (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS": a table key anyone who once
+    /// held it — or anyone who names the space — opens) — only a current epoch's key is (`group_sealed`).
+    pub group: bool,
     /// What this page's flushes put, by block id (the tests' network).
     #[cfg(test)]
     sent: HashMap<Cid, Vec<u8>>,
@@ -307,6 +320,7 @@ impl Open {
             locked: HashMap::new(),
             writer_key: *key,
             public: false,
+            group: false,
             #[cfg(test)]
             sent: HashMap::new(),
         }
@@ -330,7 +344,22 @@ impl Open {
     /// The table's own key: rows and blocks under it read, and — until an epoch's key is given — writes use it.
     pub fn set_table_key(&mut self, key: [u8; 32]) {
         self.table_key = Some(key);
-        self.writes.get_or_insert(KeyRef::Table);
+        if !self.group {
+            self.writes.get_or_insert(KeyRef::Table);
+        }
+    }
+    /// SEALED BY A GROUP (`group`): written only with a current epoch's key — none yet, nothing is written.
+    pub fn group_sealed(&mut self) {
+        self.group = true;
+        if self.writes == Some(KeyRef::Table) {
+            self.writes = None;
+        }
+    }
+    /// NO GENERATION TO WRITE WITH now (the group's writing mark cleared): nothing written until one is given.
+    pub fn no_writing_epoch(&mut self) {
+        if self.group {
+            self.writes = None;
+        }
     }
 
     /// An epoch's key for this table (`None`: the identity has none for it). `current`: new writes are sealed with it.
@@ -1039,6 +1068,18 @@ pub enum Send {
 
 #[cfg(test)]
 mod tests {
+
+    /// K8.7 A CARD's CATALOG ROWS are the tables it lists; its own rows (a handle, an inbox key, its member, its devices)
+    /// are none. CONTROL: `catalog_place` reads every one of them as listed.
+    #[test]
+    fn a_cards_own_rows_are_not_catalog_rows() {
+        assert_eq!(catalog_row(&catalog_value(Place::Listed, Some(1))), Some(Place::Listed));
+        assert_eq!(catalog_row(&catalog_value(Place::Blinded, Some(1))), Some(Place::Blinded));
+        for own in [&b"alice"[..], b"\"9f3c\"", b"[\"ab\"]", br#"{"cred":"00","leaf":"11"}"#, b"1", b"{}"] {
+            assert_eq!(catalog_row(own), None, "{}", String::from_utf8_lossy(own));
+            assert_eq!(catalog_place(own), Place::Listed, "control: catalog_place reads it as listed");
+        }
+    }
     /// One catalog place rule, page and node: written and read back; a row that is no place is listed by its name.
     #[test]
     fn catalog_places_round_trip() {
@@ -1060,6 +1101,34 @@ mod tests {
     fn sign(key: &SigningKey, o: &Open, seq: u64, hash: [u8; 32]) -> [u8; 64] {
         let p = Params::parse(&o.params).unwrap();
         key.sign(&p.signed_message(false, seq, &hash)).to_bytes()
+    }
+
+    /// SEALED BY A GROUP (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS"): its table key reads, and is never
+    /// written with — no current epoch, nothing written; an epoch made current, written with it; the mark cleared, nothing
+    /// again. CONTROL: a table not sealed by a group writes with its table key.
+    #[test]
+    fn a_group_sealed_table_is_never_written_with_its_table_key() {
+        let member = SigningKey::from_bytes(&[5; 32]).verifying_key().to_bytes();
+        let mut plain = Open::new(CODE, &member, "notes");
+        plain.set_table_key([1; 32]);
+        assert_eq!(plain.writes, Some(KeyRef::Table), "control: its table key written with");
+        let mut o = Open::new(CODE, &member, "notes");
+        o.group_sealed();
+        o.set_table_key([1; 32]);
+        assert_eq!(o.writes, None, "no current epoch: nothing written");
+        assert!(o.prepare_row(b"a", b"1").is_none(), "…a write refused");
+        o.epoch_key(1 << 24, Some([2; 32]), false);
+        assert_eq!(o.writes, None, "an epoch held to read: still nothing written");
+        o.epoch_key(1 << 25, Some([3; 32]), true);
+        assert_eq!(o.writes, Some(KeyRef::Epoch(1 << 25)), "the current one: written with");
+        assert!(o.prepare_row(b"a", b"1").is_some());
+        o.no_writing_epoch();
+        assert_eq!(o.writes, None, "the mark cleared: nothing written");
+        // (Set after group_sealed too: the order does not matter.)
+        let mut late = Open::new(CODE, &member, "notes");
+        late.set_table_key([1; 32]);
+        late.group_sealed();
+        assert_eq!(late.writes, None, "sealed by a group after its table key: not written with it");
     }
 
     #[test]
@@ -2093,4 +2162,5 @@ mod journal_cost {
             println!("{}: 400 moves → {} flushes, {} blocks, {} KB", if rolling { "A rolling 500 (today)" } else { "B appends only" }, cost.0, cost.1, cost.2 / 1024);
         }
     }
+
 }

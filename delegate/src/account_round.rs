@@ -25,6 +25,38 @@ use crate::rekey_round::Held;
 use crate::upkeep::{id_of, Io, Reply};
 
 pub const ROUND: &[u8] = b"identity_account_tree/round/";
+/// THE GENERATIONS ON THIS NODE (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS", the page's
+/// `keepGenerations` too): every one reached HELD for reading; the one WRITTEN with a clean tree's current one only
+/// (`Group::writable` with our `check`; none: the writing mark stays).
+pub(crate) fn keep_generations<H: Host>(h: &mut H, member: &[u8; 32], space: Option<[u8; 32]>, g: &mut Group, check: Option<&impl craftworks_groups::Check>) {
+    for (n, k) in g.generations() {
+        identity::hold_epoch(h, member, space, n, &k);
+    }
+    // (Judged with a check — given only for a tree its merge left WHOLE, nothing waiting: a tree stopped short of
+    // operations is never marked from, 10-28 review — a clean tree's current generation; or, not clean, the mark
+    // CLEARED: nothing written with a generation one put out holds.)
+    if let Some(c) = check {
+        let w = g.writable(c);
+        identity::write_epoch(h, member, space, w.map(|(n, _)| n));
+        // (A space's: WHICH ACCOUNTS the clean tree placed at that mark — the re-key's gate, `clean_at`.)
+        if let (Some(sp), Some((n, _))) = (space, w) {
+            let placed: Vec<String> = g.members().iter().filter_map(|m| c.account_of(m).or_else(|| g.whose(m).map(str::to_string))).collect();
+            let _ = h.set_secret(&[CLEAN_AT, &member[..], &sp[..]].concat(), &bincode::serialize(&(n, placed)).expect("encodes"));
+        }
+    }
+}
+/// A space's tree as last found CLEAN here: `(the generation marked, the accounts it placed)` (`keep_generations`).
+const CLEAN_AT: &[u8] = b"identity_keys/clean_at/";
+#[cfg(test)]
+pub(crate) fn set_clean_at<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], n: u64, placed: Vec<String>) {
+    let _ = h.set_secret(&[CLEAN_AT, &member[..], &space[..]].concat(), &bincode::serialize(&(n, placed)).expect("encodes"));
+}
+pub(crate) fn clean_at<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Option<(u64, Vec<String>)> {
+    h.get_secret(&[CLEAN_AT, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok())
+}
+
+/// The label the new data seed is sealed under for the devices that stay (K8.7 — the page's `DATA_SEALED`, `members`).
+const DATA_SEALED: &[u8] = b"craftworks 2026-10-27 account data seed, generation-sealed";
 /// ONE ROUND PER MEMBER (a node serving several accounts serves each every wake-up — one in turn left a member waiting
 /// as many minutes as the node had members: fx 10-27, a test node with a member per run never reached a new one).
 fn round_of(member: &[u8; 32]) -> Vec<u8> {
@@ -87,10 +119,11 @@ pub fn replied<H: Host>(h: &mut H, reply: &Reply) -> Vec<Io> {
 
 fn drive<H: Host>(h: &mut H, r: Round) -> Vec<Io> {
     let (out, want) = match step(h, &r) {
-        Ok(x) => {
-            let said = if !x.1.is_empty() { format!("reading {} contract(s)", x.1.len()) } else if x.0.is_empty() { "in step: nothing to write".into() } else { "wrote to the channel".into() };
+        Ok((out, want, own)) => {
+            // (What the step said of itself — a rotated data key adopted — else what it did.)
+            let said = own.unwrap_or_else(|| if !want.is_empty() { format!("reading {} contract(s)", want.len()) } else if out.is_empty() { "in step: nothing to write".into() } else { "wrote to the channel".into() });
             identity::upkeep_account_tree_said(h, &r.member, &said);
-            x
+            (out, want)
         }
         Err(why) => {
             identity::upkeep_account_tree_said(h, &r.member, &format!("stopped: {why}"));
@@ -102,13 +135,43 @@ fn drive<H: Host>(h: &mut H, r: Round) -> Vec<Io> {
     reads::go(h, &name, r, out, want)
 }
 
+/// A CHANNEL's rows from its state (its tree's blocks, once flushed, each fetched once): `Err(want)` — read these first.
+fn open_rows(r: &Round, c: &crate::table::Codes, o: &mut data::Open, st: &[u8]) -> Result<Result<std::collections::BTreeMap<Vec<u8>, Vec<u8>>, Vec<[u8; 32]>>, String> {
+    o.absorb(st);
+    loop {
+        match o.opened() {
+            Ok(data::Step::Ready(rows)) => return Ok(Ok(rows.into_iter().collect())),
+            Ok(data::Step::Need(cids)) => {
+                let mut want = Vec::new();
+                let mut fed = false;
+                for cid in cids {
+                    let id = crate::table::block_id(o, &cid, &c.sealed_hash, &c.block_hash).ok_or("a block of the channel has no place")?;
+                    match got(r, &id) {
+                        Some(Some(st)) => fed |= o.absorb_block(&cid, &st),
+                        Some(None) => return Err("a block of the account's channel is not there".into()),
+                        None => want.push(id),
+                    }
+                }
+                if !want.is_empty() {
+                    return Ok(Err(want));
+                }
+                if !fed {
+                    return Err("the account's channel's tree does not open".into());
+                }
+            }
+            Ok(data::Step::Keys(_)) => return Err("the account's channel asks for keys it is never sealed with".into()),
+            Err(why) => return Err(format!("the account's channel does not open: {why}")),
+        }
+    }
+}
+
 /// The state read of `id` this round: `Some(None)` read, not there; `None` not read yet.
 fn got(r: &Round, id: &[u8; 32]) -> Option<Option<Vec<u8>>> {
     r.got.get(id).map(|s| (!s.is_empty()).then(|| s.clone()))
 }
 
 /// One pass over what is read: (what to send now, what to read first).
-fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), String> {
+fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>, Option<String>), String> {
     let member = r.member;
     let held = Held::of(h).ok_or("the contracts' code is not held here yet")?;
     let c = held.codes();
@@ -125,40 +188,18 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
     let data_pub = ed25519_dalek::SigningKey::from_bytes(&data_seed).verifying_key().to_bytes();
     let name = channel_name(&did);
     let mut o = data::Open::new(c.tail, &data_pub, &name);
-    o.set_table_key(identity::table_key(&data_seed, &name, 0));
+    // (Its key the NAMES seed's — K8.7: it never moves; its address and authority are the data key's.)
+    o.set_table_key(identity::table_key(&identity::upkeep_names(h, &member).unwrap_or(data_seed), &name, 0));
     let ch_id = o.id_bytes();
     let (Some(log), Some(dev), Some(ch)) = (got(r, &log_id), got(r, &dev_id), got(r, &ch_id)) else {
-        return Ok((Vec::new(), vec![log_id, dev_id, ch_id]));
+        return Ok((Vec::new(), vec![log_id, dev_id, ch_id], None));
     };
     let log = log.and_then(|st| craftworks_idlog_contract::read(&did, &st)).ok_or("the account's key log does not read")?;
     let creds = dev.and_then(|st| craftworks_devices_contract::decode(&st)).ok_or("the account's devices contract does not read")?;
     let Some(ch) = ch else { return Err("the account's channel is not there".into()) };
-    o.absorb(&ch);
-    // (Its tree's blocks, once flushed: each fetched once.)
-    let rows = loop {
-        match o.opened() {
-            Ok(data::Step::Ready(rows)) => break rows,
-            Ok(data::Step::Need(cids)) => {
-                let mut want = Vec::new();
-                let mut fed = false;
-                for cid in cids {
-                    let id = crate::table::block_id(&o, &cid, &c.sealed_hash, &c.block_hash).ok_or("a block of the channel has no place")?;
-                    match got(r, &id) {
-                        Some(Some(st)) => fed |= o.absorb_block(&cid, &st),
-                        Some(None) => return Err("a block of the account's channel is not there".into()),
-                        None => want.push(id),
-                    }
-                }
-                if !want.is_empty() {
-                    return Ok((Vec::new(), want));
-                }
-                if !fed {
-                    return Err("the account's channel's tree does not open".into());
-                }
-            }
-            Ok(data::Step::Keys(_)) => return Err("the account's channel asks for keys it is never sealed with".into()),
-            Err(why) => return Err(format!("the account's channel does not open: {why}")),
-        }
+    let rows = match open_rows(r, &c, &mut o, &ch)? {
+        Ok(rows) => rows,
+        Err(want) => return Ok((Vec::new(), want, None)),
     };
     let text = |k: &[u8]| String::from_utf8(k.to_vec()).ok();
 
@@ -186,13 +227,75 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
         }
     }
     let writers: Vec<[u8; 32]> = ops.iter().filter_map(|op| craftworks_groups::op_info(op)).filter(|(_, kind, preds, _)| *kind == "add" && preds.is_empty()).map(|(.., by)| by).collect();
-    let check = AccountCheck { current: current.clone(), ever, writers };
+    let check = AccountCheck { current: current.clone(), ever, writers, leaves: leaves.iter().map(|(m, l)| (*m, *l)).collect() };
     let mut g = Group::empty(&did, me);
-    g.merge_all(&ops, &check);
+    let whole = g.merge_all(&ops, &check).waiting == 0;
 
-    // 3. ITS GENERATIONS, kept as the account's epochs.
-    for (n, k) in g.generations() {
-        identity::keep_epoch(h, &member, None, n, &k);
+    // 3. ITS GENERATIONS, kept as the account's epochs (held; the clean one written with).
+    keep_generations(h, &member, None, &mut g, whole.then_some(&check));
+    // 3b. THE DATA KEY ROTATED (K8.7: a removal elsewhere): this device STAYS — its new seed is in the channel the key
+    // log's head names (only the new key writes it; its table key the names seed's), sealed with a generation of the
+    // tree: that channel's operations merged too (a device behind by more than one rotation reaches the newest at
+    // once), the seed the ROTATION's event names (`since`: a later change of words keeps the key) opened, checked
+    // against the head, kept; the round ends here (the next wake-up reads the new channel).
+    let head = log.head();
+    if head.data != data_pub {
+        use sha2::Digest;
+        let since = log.events.iter().find(|e| e.data == head.data).map(|e| e.seq).unwrap_or(head.seq);
+        let mut o2 = data::Open::new(c.tail, &head.data, &name);
+        o2.set_table_key(identity::table_key(&identity::upkeep_names(h, &member).unwrap_or(data_seed), &name, 0));
+        let id2 = o2.id_bytes();
+        let Some(st2) = got(r, &id2) else { return Ok((Vec::new(), vec![id2], None)) };
+        let said = match st2 {
+            None => format!("the account's data key moved (key log {since}): its new channel is not there yet"),
+            Some(st2) => {
+                let rows2 = match open_rows(r, &c, &mut o2, &st2)? {
+                    Ok(rows) => rows,
+                    Err(want) => return Ok((Vec::new(), want, None)),
+                };
+                let ops2: Vec<Vec<u8>> = rows2
+                    .iter()
+                    .filter(|(k, _)| k.starts_with(b"o/"))
+                    .filter_map(|(_, v)| match craftworks_rules::members::keyop_row(&text(v)?) {
+                        Some(craftworks_rules::members::KeyopRow::Op(op)) => Some(op),
+                        _ => None,
+                    })
+                    .collect();
+                // (Judged with the NEW channel's signed leaves too — an add made there after the move names a leaf only it
+                // holds; 10-28 re-review.)
+                let mut lv2 = check.leaves.clone();
+                for (k, v) in &rows2 {
+                    let (Some(k), Some(v)) = (text(k), text(v)) else { continue };
+                    let Some(m) = k.strip_prefix("d/").and_then(identity::unhex32) else { continue };
+                    let l: serde_json::Value = serde_json::from_str(&v).unwrap_or_default();
+                    let (Some(leaf), Some(sig)) = (l["leaf"].as_str().and_then(identity::unhex32), l["sig"].as_str().and_then(identity::unhex).and_then(|s| <[u8; 64]>::try_from(s).ok())) else { continue };
+                    if craftworks_groups::leaf_checks(&m, &leaf, &sig) {
+                        lv2.insert(m, leaf);
+                    }
+                }
+                let check2 = AccountCheck { current: check.current.clone(), ever: check.ever.clone(), writers: check.writers.clone(), leaves: lv2 };
+                g.merge_all(&ops2, &check2);
+                let held: BTreeMap<String, [u8; 32]> = g.generations().into_iter().map(|(n, k)| (n.to_string(), k)).collect();
+                let found = rows2.iter().find_map(|(k, v)| {
+                    let k = text(k)?;
+                    let mut p = k.split('/');
+                    if p.next()? != "k" || p.next()?.parse::<u32>().ok()? != since {
+                        return None;
+                    }
+                    let secret = held.get(p.next()?)?;
+                    let key: [u8; 32] = sha2::Sha256::new().chain_update(DATA_SEALED).chain_update(secret).finalize().into();
+                    let plain = identity::bag_open(&key, &identity::unhex(&text(v)?)?)?;
+                    <[u8; 32]>::try_from(plain).ok().filter(|s| ed25519_dalek::SigningKey::from_bytes(s).verifying_key().to_bytes() == head.data)
+                });
+                match found {
+                    Some(seed) if identity::upkeep_data_keep(h, &member, seed) => format!("the account's data key moved (key log {since}): its new seed kept — the channel follows it"),
+                    Some(_) => "the account's data key moved: its new seed opened but not saved".to_string(),
+                    None => format!("the account's data key moved (key log {since}): its new seed not opened here (this tree does not reach the removal's generation)"),
+                }
+            }
+        };
+        crate::upkeep::followed(h, &member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::ACCOUNT_TREE, &said);
+        return Ok((Vec::new(), Vec::new(), Some(said)));
     }
     let mut out_rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     // (This device's own leaf, signed: what an add encrypts to.)
@@ -225,8 +328,9 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
         for op in &new_ops {
             out_rows.push((format!("o/{}", craftworks_rules::members::keyop_key(op)).into_bytes(), identity::hex(op).into_bytes()));
         }
-        // EACH GENERATION's ESCROWS: to the words (`g/`), and for the account's current MLS epoch (`m/`).
-        let mls = mls_state.as_deref().and_then(|st| mls_epoch(&did, &log, st));
+        // EACH GENERATION's ESCROWS: to the words (`g/`), and for the account's current MLS epoch (`m/`) — only while
+        // the MLS bridge is open (`account::mls_bridge_open`: no device ever credentialed out; one removed holds it).
+        let mls = mls_state.as_deref().filter(|_| craftworks_account::mls_bridge_open(&did, &log, &creds)).and_then(|st| mls_epoch(&did, &log, st));
         let mut eph = blake3::derive_key("craftworks account tree escrow", &rand);
         for (n, k) in g.generations() {
             if !have.contains(&format!("g/{n}")) {
@@ -244,11 +348,9 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
         }
     }
     // (Kept again: the key change this round made is a generation too.)
-    for (n, k) in g.generations() {
-        identity::keep_epoch(h, &member, None, n, &k);
-    }
+    keep_generations(h, &member, None, &mut g, whole.then_some(&check));
     if out_rows.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), None));
     }
     // 5. WRITTEN in one step (a channel due a flush: left to a page).
     if data::flush_due(o.pending_rows(), out_rows.len()) {
@@ -257,7 +359,7 @@ fn step<H: Host>(h: &mut H, r: &Round) -> Result<(Vec<Io>, Vec<[u8; 32]>), Strin
     let step = o.prepare_rows(&out_rows).ok_or("the account's channel would not take the rows")?;
     let io = crate::write::signed_with(h, &member, &mut o, step, identity::upkeep_sign_channel)?;
     crate::upkeep::followed(h, &member, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::ACCOUNT_TREE, &format!("{} row(s) written to the channel ({said})", out_rows.len()));
-    Ok((vec![io], Vec::new()))
+    Ok((vec![io], Vec::new(), None))
 }
 
 /// The account's CURRENT MLS epoch and its secret, from the state kept here (its owners: every key its key log has

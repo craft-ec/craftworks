@@ -322,6 +322,29 @@ pub enum Request {
     /// account registered on v450 held a fresh seed only that build's delegate kept; the next build minted another, the
     /// credential named neither, and the device was never placed again). Answered `DeviceMember` with the seed kept.
     DeviceSeedKeep { seed: [u8; 32] },
+    /// The account's NAMES seed, to the next build on the right PIN (K8.7: after a rotation it is not the data seed —
+    /// `Handover`'s answer, fixed since before, carries the data seed alone). Its home only.
+    HandoverNames { pin: String },
+    /// THE ACCOUNT's NEW DATA SEED (K8.7: a removal rotated it — the remover's, or read from the account's channel by a
+    /// device that stays): kept as this member's data seed; its names seed stays (the old data seed, where it had none
+    /// apart); the seeds it replaces kept (`DATA_OLD`) to open what was sealed to them. Answered `Unlocked`. Home only.
+    DataKeep { data: [u8; 32] },
+    /// The data seeds an EARLIER build kept as replaced (`HandedNames`'s `old`), kept here too: what was sealed to them
+    /// still opens after an update. Home only.
+    DataOldKeep { old: Vec<[u8; 32]> },
+    /// A ROTATION BEGUN here (K8.7): the new data seed and the key log seq that names it, kept BEFORE the key log is put
+    /// — a page that stops midway finishes it on its next load (`DataPendingRead`); `DataKeep` clears it. Home only.
+    DataPending { data: [u8; 32], seq: u32 },
+    /// The rotation begun here and not finished, if any.
+    DataPendingRead,
+    /// A GENERATION KEPT FOR READING ONLY (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS"): its secret kept,
+    /// the WRITING mark untouched — a generation reached while the tree placed one the list puts out is never written
+    /// with. Answered `MlsSaved`. Home only.
+    EpochHold { space: Option<[u8; 32]>, epoch: u64, secret: [u8; 32] },
+    /// THE GENERATION TO WRITE WITH (`groups::Group::writable`: a clean tree's current one), held already: the writing
+    /// mark set to it — `None`: CLEARED (the tree places one the list puts out: nothing is written until it is clean).
+    /// Answered `MlsSaved`; not held: `Refused(NotSaved)`. Home only.
+    EpochWrite { space: Option<[u8; 32]>, epoch: Option<u64> },
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`): the codes' hashes
@@ -446,6 +469,10 @@ pub enum Answer {
     // (NEW VARIANTS GO LAST — see `Request`.)
     /// This device's member seed in the account's tree (`Request::DeviceMember`).
     DeviceMember { seed: [u8; 32] },
+    /// The account's names seed (`HandoverNames`), when it is not the data seed; and the data seeds it replaced.
+    HandedNames { names: Option<[u8; 32]>, old: Vec<[u8; 32]> },
+    /// A rotation begun and not finished (`DataPendingRead`): its new seed and seq.
+    DataPendingIs { pending: Option<([u8; 32], u32)> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -559,7 +586,11 @@ pub fn upkeep_status<H: Host>(h: &H, m: Option<&[u8; KEY_LEN]>) -> Answer {
         decided: m.map(|m| upkeep_decided(h, m)).unwrap_or_default(),
         round_at: m.and_then(|m| upkeep_round_at(h, m)),
         next: m.and_then(|m| u64_of(h.get_secret(&of(UPKEEP_NEXT, m)))).filter(|n| *n > 0),
-        account_tree: m.and_then(|m| h.get_secret(&of(ACCOUNT_TREE_LAST, m))).and_then(|b| String::from_utf8(b).ok()),
+        // (…and, once the node adopted a rotated data key itself — K8.7 — when: said beside every round's word.)
+        account_tree: m.and_then(|m| h.get_secret(&of(ACCOUNT_TREE_LAST, m))).and_then(|b| String::from_utf8(b).ok()).map(|t| match m.and_then(|m| h.get_secret(&of(DATA_ADOPTED, m))).and_then(|b| String::from_utf8(b).ok()) {
+            Some(a) => format!("{t} · {a}"),
+            None => t,
+        }),
     }
 }
 
@@ -699,6 +730,10 @@ pub fn epoch_secret<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32], epoch: u
 pub fn latest_epoch<H: Host>(h: &H, m: &[u8; KEY_LEN], space: [u8; 32]) -> Option<u64> {
     latest_in(h, m, &Some(space))
 }
+/// THE ACCOUNT's generation WRITTEN WITH (its writing mark; none: nothing written).
+pub fn account_writing_epoch<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<u64> {
+    latest_in(h, m, &None)
+}
 /// The epochs a member's secrets are looked for in, newest `latest`: at most `EPOCHS_BACK` of them (audit 10-11: a
 /// site keeping an epoch of `u64::MAX` made every walk from 0 hang the delegate). A group moves one epoch a commit.
 pub const EPOCHS_BACK: u64 = 4096;
@@ -710,8 +745,16 @@ fn epochs_back(latest: u64) -> std::ops::RangeInclusive<u64> {
 /// it is kept) and, for what was kept before the index, the old ranges — below the latest, and from 0. (A walk of
 /// the numbers below the latest alone lost every key a handover should have carried once epochs became BeeKEM
 /// generations — sparse numbers far above an MLS epoch: v401 → v403, 10-18, a channel unreadable after the PIN.)
+/// (The old ranges are walked ONCE (`walk_epochs`), into the index: walked every call they cost ~8,000 secret reads —
+/// generation numbers sit far above 4096 — and the node's rounds timed out on them, 54–87 an hour on a test node,
+/// 10-29.)
 pub fn kept_epochs<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> Vec<u64> {
     let mut all: Vec<u64> = h.get_secret(&in_space(EPOCH_INDEX, m, space)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    if walked(h, m, space) {
+        all.sort_unstable();
+        all.dedup();
+        return all;
+    }
     if let Some(l) = latest_in(h, m, space) {
         all.extend(epochs_back(l).filter(|e| secret_in(h, m, space, *e).is_some()));
         all.extend((0..l.min(EPOCHS_BACK)).filter(|e| secret_in(h, m, space, *e).is_some()));
@@ -720,7 +763,41 @@ pub fn kept_epochs<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) 
     all.dedup();
     all
 }
+/// `EPOCH_WALKED ‖ member ‖ space`: the old ranges walked into the index (`walk_epochs`).
+const EPOCH_WALKED: &[u8] = b"identity_epoch_walked/";
+fn walked<H: Host>(h: &H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> bool {
+    h.get_secret(&in_space(EPOCH_WALKED, m, space)).is_some_and(|b| b == [1])
+}
+/// THE OLD RANGES WALKED ONCE: every epoch kept before the index, put in it; then `kept_epochs` reads the index alone.
+/// On every path that can write (a session opened, an epoch kept or held).
+pub fn walk_epochs<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: &Option<[u8; 32]>) -> bool {
+    if walked(h, m, space) {
+        return true;
+    }
+    let all = kept_epochs(h, m, space);
+    h.set_secret(&in_space(EPOCH_INDEX, m, space), &bincode::serialize(&all).expect("a list encodes")) && h.set_secret(&in_space(EPOCH_WALKED, m, space), &[1])
+}
+/// A generation's secret KEPT FOR READING (`Request::EpochHold`): indexed, the writing mark untouched.
+pub fn hold_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: u64, secret: &[u8; 32]) -> bool {
+    walk_epochs(h, m, &space);
+    let mut index: Vec<u64> = h.get_secret(&in_space(EPOCH_INDEX, m, &space)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    let new = !index.contains(&epoch);
+    if new {
+        index.push(epoch);
+    }
+    note_space(h, m, &space) && h.set_secret(&[in_space(EPOCH, m, &space), epoch.to_be_bytes().to_vec()].concat(), secret) && (!new || h.set_secret(&in_space(EPOCH_INDEX, m, &space), &bincode::serialize(&index).expect("a list encodes")))
+}
+/// THE WRITING MARK set to a generation HELD here (`Request::EpochWrite`: a clean tree's current one — it may be below a
+/// generation held for reading). Not held: false.
+/// `None`: the mark CLEARED — nothing written with any generation until a clean one is named.
+pub fn write_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: Option<u64>) -> bool {
+    match epoch {
+        Some(e) => secret_in(h, m, &space, e).is_some() && h.set_secret(&in_space(EPOCH_LATEST, m, &space), &e.to_be_bytes()),
+        None => h.set_secret(&in_space(EPOCH_LATEST, m, &space), &[]),
+    }
+}
 pub fn keep_epoch<H: Host>(h: &mut H, m: &[u8; KEY_LEN], space: Option<[u8; 32]>, epoch: u64, secret: &[u8; 32]) -> bool {
+    walk_epochs(h, m, &space);
     let latest = latest_in(h, m, &space);
     // The secret, then the newest mark if this epoch is newer (a node joining with the words keeps the epochs it
     // walks before its group's state exists: it signs the log of the one it joins at).
@@ -1043,7 +1120,9 @@ pub fn epoch_log_key(epoch_secret: &[u8; 32]) -> SigningKey {
 }
 
 /// `MLS ‖ member` → this member's MLS state; `EPOCH ‖ member ‖ epoch (u64 BE)` → that epoch's secret;
-/// `EPOCH_LATEST ‖ member` → the newest epoch held (u64 BE).
+/// THE KEY STORE: the account table the saved key trees live in — keyed by the DATA seed (`Request::TableKey`).
+pub const KEYSTORE: &str = "beekem";
+/// `EPOCH_LATEST ‖ member` → the WRITING mark: the generation written with (u64 BE; empty: none).
 pub const MLS: &[u8] = b"identity_mls/";
 pub const EPOCH: &[u8] = b"identity_epoch/";
 pub const EPOCH_LATEST: &[u8] = b"identity_epoch_latest/";
@@ -1155,6 +1234,9 @@ struct Member {
     home: [u8; 32],
     /// The account's data key seed, if this node holds it.
     data: Option<[u8; 32]>,
+    /// The account's NAMES seed (K8.7: the inception's data seed, never rotating — private tables' labels and base keys,
+    /// the account check), when it is not the data seed (`None`: one seed, as before any rotation).
+    names: Option<[u8; 32]>,
 }
 
 fn pin_hash(pin: &str) -> [u8; 32] {
@@ -1162,13 +1244,18 @@ fn pin_hash(pin: &str) -> [u8; 32] {
 }
 
 impl Member {
-    /// `seed ‖ did ‖ pin hash ‖ home ‖ 0 | 1 ‖ data`.
+    /// `seed ‖ did ‖ pin hash ‖ home ‖ 0 | 1 ‖ data | 2 ‖ names ‖ data`.
     fn encode(&self) -> Vec<u8> {
         let mut out = [&self.seed[..], &self.did, &self.pin, &self.home].concat();
-        match self.data {
-            None => out.push(0),
-            Some(d) => {
+        match (self.data, self.names.filter(|n| Some(*n) != self.data)) {
+            (None, _) => out.push(0),
+            (Some(d), None) => {
                 out.push(1);
+                out.extend_from_slice(&d);
+            }
+            (Some(d), Some(n)) => {
+                out.push(2);
+                out.extend_from_slice(&n);
                 out.extend_from_slice(&d);
             }
         }
@@ -1180,9 +1267,10 @@ impl Member {
         let (did, rest) = rest.split_at_checked(32)?;
         let (pin, rest) = rest.split_at_checked(32)?;
         let (home, rest) = rest.split_at_checked(32)?;
-        let data = match rest {
-            [0] => None,
-            [1, d @ ..] if d.len() == 32 => Some(d.try_into().ok()?),
+        let (data, names) = match rest {
+            [0] => (None, None),
+            [1, d @ ..] if d.len() == 32 => (Some(d.try_into().ok()?), None),
+            [2, nd @ ..] if nd.len() == 64 => (Some(nd[32..].try_into().ok()?), Some(nd[..32].try_into().ok()?)),
             _ => return None,
         };
         Some(Member {
@@ -1191,6 +1279,7 @@ impl Member {
             pin: pin.try_into().ok()?,
             home: home.try_into().ok()?,
             data,
+            names,
         })
     }
 
@@ -1206,6 +1295,16 @@ impl Member {
         self.data.map(|d| SigningKey::from_bytes(&d))
     }
 
+    /// The NAMES seed (K8.7): what names and finds the account's private tables — the data seed until a rotation.
+    fn names_seed(&self) -> Option<[u8; 32]> {
+        self.names.or(self.data)
+    }
+    /// THE SEED a table's key comes from (`TableKey`, and the blinded label a write is signed under — one rule): the
+    /// key store's the DATA seed's (`KEYSTORE`), every other table's the names seed's.
+    fn table_seed(&self, table: &str) -> Option<[u8; 32]> {
+        if table == KEYSTORE { self.data } else { self.names_seed() }
+    }
+
     fn unlocked(&self) -> Answer {
         Answer::Unlocked { public: self.public(), did: self.did, data: self.data_key().map(|k| k.verifying_key().to_bytes()) }
     }
@@ -1214,6 +1313,10 @@ impl Member {
 /// `ACCOUNT_CHECK ‖ DID` → a one-way check of the account's data key: a new member bringing that key proves the
 /// account's words (they alone give it), which is what opens a node locked by wrong PINs.
 pub const ACCOUNT_CHECK: &[u8] = b"identity_account_check/";
+/// `DATA_PENDING ‖ member` → a rotation this member began and has not finished (K8.7): `(new seed, key log seq)`.
+pub const DATA_PENDING: &[u8] = b"identity_data_pending/";
+/// `DATA_OLD ‖ member` → the data seeds this member held before each rotation (K8.7), oldest first.
+pub const DATA_OLD: &[u8] = b"identity_data_old/";
 fn account_check(data: &[u8; 32]) -> [u8; 32] {
     blake3::derive_key("craftworks identity account check", data)
 }
@@ -1255,6 +1358,11 @@ fn open<H: Host>(h: &mut H, app: &[u8; 32], a: &Member) -> Answer {
     if !h.set_secret(&session_name(app), &a.public()) || !try_back(h) {
         return Answer::Refused(Why::NotSaved);
     }
+    // (Its epochs' old ranges walked into the index, once — the account's and every space's: `walk_epochs`.)
+    let m = a.public();
+    for sp in std::iter::once(None).chain(spaces_of(h, &m).into_iter().map(Some)) {
+        walk_epochs(h, &m, &sp);
+    }
     a.unlocked()
 }
 
@@ -1290,9 +1398,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if !pin_ok(&pin) {
                 return Refused(Why::BadPin);
             }
-            let data: Option<[u8; 32]> = match data.len() {
-                0 => None,
-                32 => Some(data.try_into().expect("32 bytes")),
+            // (`names ‖ data` — 64 bytes — after a rotation, K8.7; the one seed before.)
+            let (data, names): (Option<[u8; 32]>, Option<[u8; 32]>) = match data.len() {
+                0 => (None, None),
+                32 => (Some(data.try_into().expect("32 bytes")), None),
+                64 => (Some(data[32..].try_into().expect("32 bytes")), Some(data[..32].try_into().expect("32 bytes"))),
                 _ => return Refused(Why::BadDataKey),
             };
             let pin = pin_hash(&pin);
@@ -1302,7 +1412,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             // counted, and not answered at all once the node is locked — except for the account's words: a new member
             // of an account that has one here, bringing that account's data key (only its words give it).
             let t = tries(h);
-            if existing.is_none() && t >= MAX_TRIES && !data.is_some_and(|d| owns_account(h, &did, &d)) {
+            if existing.is_none() && t >= MAX_TRIES && !names.or(data).is_some_and(|d| owns_account(h, &did, &d)) {
                 return Locked;
             }
             if by_pin(h, &pin).is_some_and(|a| a.public() != public) {
@@ -1319,18 +1429,19 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     if a.pin != pin && !h.set_secret(&[PIN, &a.pin[..]].concat(), &[]) {
                         return Refused(Why::NotSaved);
                     }
-                    // A key file may bring no data key; one already held stays.
-                    let data = data.or(a.data);
-                    Member { pin, data, ..a }
+                    // A key file may bring no data key; one already held stays (and its names seed with it).
+                    // (A 32-byte seed brings no names seed: the one held stays — 10-28 review.)
+                    let (data, names) = if data.is_some() { (data, names.or(a.names)) } else { (a.data, a.names) };
+                    Member { pin, data, names, ..a }
                 }
-                None => Member { seed, did, pin, home: app, data },
+                None => Member { seed, did, pin, home: app, data, names },
             };
             // The member before its PIN entry: a crash between leaves a member a handover can reach, never a PIN that
             // points at nothing. And the account's check: what its words prove on a locked node.
             if !h.set_secret(&[MEMBER, &public[..]].concat(), &a.encode())
                 || !h.set_secret(&[PIN, &pin[..]].concat(), &public)
                 || !h.set_secret(ANY_MEMBER, &[1])
-                || a.data.is_some_and(|d| !h.set_secret(&[ACCOUNT_CHECK, &a.did[..]].concat(), &account_check(&d)))
+                || a.names_seed().is_some_and(|d| !h.set_secret(&[ACCOUNT_CHECK, &a.did[..]].concat(), &account_check(&d)))
             {
                 return Refused(Why::NotSaved);
             }
@@ -1393,14 +1504,9 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotHome);
             }
             let m = a.public();
-            let latest = latest_in(h, &m, &space);
-            // Epoch secret first, then the state, then the newest mark: a crash between leaves a secret nobody points
-            // at, never a state whose epoch has no secret.
-            if !note_space(h, &m, &space)
-                || !h.set_secret(&[in_space(EPOCH, &m, &space), epoch.to_be_bytes().to_vec()].concat(), &secret)
-                || !h.set_secret(&in_space(MLS, &m, &space), &state)
-                || (latest.is_none_or(|l| epoch >= l) && !h.set_secret(&in_space(EPOCH_LATEST, &m, &space), &epoch.to_be_bytes()))
-            {
+            // Epoch secret first (held: indexed), then the state — the WRITING mark untouched (it moves only by
+            // `EpochWrite`: a clean tree's generation — FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS").
+            if !hold_epoch(h, &m, space, epoch, &secret) || !h.set_secret(&in_space(MLS, &m, &space), &state) {
                 return Refused(Why::NotSaved);
             }
             MlsSaved
@@ -1410,7 +1516,28 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            if !keep_epoch(h, &a.public(), space, epoch, &secret) {
+            // (HELD only — an earlier build's request kept answering: the writing mark moves by `EpochWrite` alone.)
+            if !hold_epoch(h, &a.public(), space, epoch, &secret) {
+                return Refused(Why::NotSaved);
+            }
+            MlsSaved
+        }
+        Request::EpochHold { space, epoch, secret } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if !hold_epoch(h, &a.public(), space, epoch, &secret) {
+                return Refused(Why::NotSaved);
+            }
+            MlsSaved
+        }
+        Request::EpochWrite { space, epoch } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if !write_epoch(h, &a.public(), space, epoch) {
                 return Refused(Why::NotSaved);
             }
             MlsSaved
@@ -1429,13 +1556,13 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             for e in kept_epochs(h, &m, &None) {
                 ok &= h.set_secret(&[EPOCH, &m[..], &e.to_be_bytes()].concat(), &[]);
             }
-            ok &= h.set_secret(&in_space(EPOCH_INDEX, &m, &None), &[]);
+            ok &= h.set_secret(&in_space(EPOCH_INDEX, &m, &None), &[]) && h.set_secret(&in_space(EPOCH_WALKED, &m, &None), &[]);
             // Every other space's group too: its state and every epoch's secret.
             for sp in spaces_of(h, &m).into_iter().map(Some) {
                 for e in kept_epochs(h, &m, &sp) {
                     ok &= h.set_secret(&[in_space(EPOCH, &m, &sp), e.to_be_bytes().to_vec()].concat(), &[]);
                 }
-                ok &= h.set_secret(&in_space(EPOCH_INDEX, &m, &sp), &[]);
+                ok &= h.set_secret(&in_space(EPOCH_INDEX, &m, &sp), &[]) && h.set_secret(&in_space(EPOCH_WALKED, &m, &sp), &[]);
                 ok &= h.set_secret(&in_space(EPOCH_LATEST, &m, &sp), &[]) && h.set_secret(&in_space(MLS, &m, &sp), &[]);
             }
             ok &= h.set_secret(&[SPACES, &m[..]].concat(), &[]);
@@ -1518,6 +1645,64 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 None => Refused(Why::NotSaved),
             }
         }
+        Request::DataKeep { data } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if a.data.is_none() {
+                return Refused(Why::NoDataKey);
+            }
+            match data_keep(h, a, data) {
+                Some(b) => b.unlocked(),
+                None => Refused(Why::NotSaved),
+            }
+        }
+        Request::DataPending { data, seq } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            if !h.set_secret(&of(DATA_PENDING, &a.public()), &bincode::serialize(&(data, seq)).expect("a pair encodes")) {
+                return Refused(Why::NotSaved);
+            }
+            DataPendingIs { pending: Some((data, seq)) }
+        }
+        Request::DataPendingRead => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            DataPendingIs { pending: h.get_secret(&of(DATA_PENDING, &a.public())).filter(|b| !b.is_empty()).and_then(|b| bincode::deserialize(&b).ok()) }
+        }
+        Request::DataOldKeep { old } => {
+            let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
+            if a.home != app {
+                return Refused(Why::NotHome);
+            }
+            let m = a.public();
+            let mut held: Vec<[u8; 32]> = h.get_secret(&of(DATA_OLD, &m)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+            for s in old {
+                if !held.contains(&s) && Some(s) != a.data {
+                    held.push(s);
+                }
+            }
+            if !h.set_secret(&of(DATA_OLD, &m), &bincode::serialize(&held).expect("seeds encode")) {
+                return Refused(Why::NotSaved);
+            }
+            a.unlocked()
+        }
+        Request::HandoverNames { pin } => match try_pin(h, &pin) {
+            Err(answer) => answer,
+            Ok(a) if a.home != app => Refused(Why::NotHome),
+            Ok(a) => {
+                if !try_back(h) {
+                    return Refused(Why::NotSaved);
+                }
+                let old: Vec<[u8; 32]> = h.get_secret(&of(DATA_OLD, &a.public())).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+                HandedNames { names: a.names.filter(|n| Some(*n) != a.data), old }
+            }
+        },
         Request::DeviceSeedKeep { seed } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {
@@ -1706,8 +1891,10 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 return Refused(Why::NotHome);
             }
             let Some(data) = a.data else { return Refused(Why::NoDataKey) };
-            let seed = inbox_seed(&data);
-            Opened { items: items.iter().map(|b| open_with(&seed, b)).collect() }
+            // The current data seed's inbox key, then each one it replaced (K8.7: what was sealed before a rotation).
+            let old: Vec<[u8; 32]> = h.get_secret(&of(DATA_OLD, &a.public())).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+            let seeds: Vec<[u8; 32]> = std::iter::once(data).chain(old.into_iter().rev()).map(|d| inbox_seed(&d)).collect();
+            Opened { items: items.iter().map(|b| seeds.iter().find_map(|s| open_with(s, b))).collect() }
         }
         Request::MlsLoad { space } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
@@ -1752,8 +1939,13 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if !may {
                 return Refused(Why::NotGranted { table });
             }
-            let Some(data) = a.data else { return Refused(Why::NoDataKey) };
-            TableKey { key: table_key(&data, &table, gen) }
+            // Every table's key is the NAMES seed's: it never moves (K8.7 — the account's channel too: what is secret in it
+            // is sealed row by row — escrows to the words, `k/` to a generation — and a rotation in the middle must still
+            // open the channel it is moving). THE KEY STORE (`KEYSTORE`: the saved trees, their leaf secrets) the DATA
+            // seed's: it is what a group's own state is saved in, so it cannot wait on a generation, and a device removed
+            // — holding the names seed for ever — reads nothing saved after (10-28 review).
+            let Some(seed) = a.table_seed(&table) else { return Refused(Why::NoDataKey) };
+            TableKey { key: table_key(&seed, &table, gen) }
         }
         Request::Sign { params, seq, value_hash, space, table: named } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
@@ -1773,8 +1965,11 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                     matches!(&p.authority, Authority::One(v) if *v == k.verifying_key()).then_some(k)
                 })
             };
+            // A ROTATION under way here (K8.7): its new data key signs the tables it moves, before it is kept.
+            let pending = h.get_secret(&of(DATA_PENDING, &a.public())).filter(|b| !b.is_empty()).and_then(|b| bincode::deserialize::<([u8; 32], u32)>(&b).ok()).map(|(d, _)| SigningKey::from_bytes(&d));
             let key = match &p.authority {
                 Authority::One(v) if *v == own.verifying_key() => own,
+                Authority::One(v) if a.home == app && pending.as_ref().is_some_and(|k| k.verifying_key() == *v) => pending.expect("checked"),
                 // A space's feed: the DID's writer (the same on every device of the account).
                 Authority::One(v) if space.is_some() && a.data.is_some_and(|d| space_writer(&d).verifying_key() == *v) => space_writer(&a.data.expect("checked")),
                 Authority::One(v) if a.data_key().is_some_and(|d| d.verifying_key() == *v) => a.data_key().expect("checked"),
@@ -1792,7 +1987,8 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
                 let Some(name) = named.as_deref().filter(|t| table_ok(t)) else { return Refused(Why::NotATable) };
                 let tk = match space {
                     Some(sp) => space_table_key(&sp, name),
-                    None => match a.data {
+                    // (The seed its key comes from — `table_seed`, `TableKey`'s: the key store's the data seed's.)
+                    None => match a.table_seed(name) {
                         Some(d) => table_key(&d, name, 0),
                         None => return Refused(Why::NoDataKey),
                     },
@@ -1908,6 +2104,32 @@ pub fn upkeep_device_seed<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<[u8; 32]>
         .and_then(|b| <[u8; 32]>::try_from(b).ok())
         .or_else(|| h.get_secret(&in_space(MLS, m, &None)).filter(|s| !s.is_empty()).and_then(|st| mls_signer_seed(&st)))
 }
+
+/// THE NEW DATA SEED kept for a member (K8.7 — `DataKeep`, the page's; `upkeep_data_keep`, the node's): its names seed
+/// stays, the seed replaced is kept (`DATA_OLD`). `None`: not saved.
+fn data_keep<H: Host>(h: &mut H, a: Member, data: [u8; 32]) -> Option<Member> {
+    let Some(was) = a.data else { return Some(a) };
+    if was == data {
+        return Some(a);
+    }
+    let m = a.public();
+    let mut old: Vec<[u8; 32]> = h.get_secret(&of(DATA_OLD, &m)).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    old.push(was);
+    let b = Member { data: Some(data), names: a.names_seed(), ..a };
+    // (A rotation begun here is finished: kept last — `DataKeep` is its commit — no longer pending.)
+    (h.set_secret(&of(DATA_OLD, &m), &bincode::serialize(&old).expect("seeds encode")) && h.set_secret(&[MEMBER, &m[..]].concat(), &b.encode()) && h.set_secret(&of(DATA_PENDING, &m), &[])).then_some(b)
+}
+/// UPKEEP's NAMES SEED (K8.7: every table's key — the account's channel's too).
+pub fn upkeep_names<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<[u8; 32]> {
+    member_(h, m)?.names_seed()
+}
+/// UPKEEP's DATA SEED moved (K8.7: the node read the rotated seed from the account's channel, with every page closed).
+pub fn upkeep_data_keep<H: Host>(h: &mut H, m: &[u8; KEY_LEN], data: [u8; 32]) -> bool {
+    let w = upkeep_wakeups(h);
+    member_(h, m).is_some_and(|a| data_keep(h, a, data).is_some()) && h.set_secret(&of(DATA_ADOPTED, m), format!("data key adopted by the node at wake-up {w}").as_bytes())
+}
+/// `DATA_ADOPTED ‖ member` → when the NODE adopted a rotated data key itself (K8.7), every page closed.
+pub const DATA_ADOPTED: &[u8] = b"identity_data_adopted/";
 
 /// The account tree's round as it last went for a member (`upkeep_status`'s `account_tree`).
 pub const ACCOUNT_TREE_LAST: &[u8] = b"identity_account_tree/last/";

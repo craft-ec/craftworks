@@ -46,6 +46,12 @@ export async function start(ctx) {
   // reads to say whose feeds count).
   const { catalog: CATALOG, members: MEMBERS, channel: CHANNEL } = space.tables;
   const CHANNELS = new Set([CHANNEL]);
+  // NOT SEALED BY A GROUP'S GENERATION: a channel (read before any); a CATALOG — the directory a group's tables are
+  // found by (their addresses; each table sealed by its own generation): written at registration, before any tree
+  // (10-28 live: the account's catalog waited on a generation that did not exist yet, and its keys never joined); and the
+  // KEY STORE — the saved trees, keyed by the data seed (`identity::KEYSTORE`): what a group's state is saved in cannot
+  // wait on that group.
+  const UNGROUPED = new Set([CHANNEL, CATALOG, "beekem"]);
   // Tables whose key comes with ANY grant of the site: the catalog, and the space's members.
   const ANY_GRANT = new Set([CATALOG, MEMBERS]);
 
@@ -199,8 +205,16 @@ export async function start(ctx) {
         const w = t.sealing;
         if (!w) continue;
         const e = await ctx.optional("storage: access.keyAt", access.keyAt(w.app, -1, { catalog: w.catalog, space: w.space }), () => ({}));
-        // A newer epoch — or the SAME epoch with another key (a fork healed: the winner's key for that epoch).
-        if (!e.key || e.epoch < w.epoch || (e.epoch === w.epoch && e.key === w.key)) continue;
+        // NO GENERATION TO WRITE WITH (the mark cleared: the tree places one the list puts out): nothing written until
+        // one is (`readyToWrite`, at the next write).
+        if (!e.key) {
+          if (w.epoch !== -1) (core.tail_no_writing(bytes(idHex)), (w.epoch = -1), (w.key = null));
+          continue;
+        }
+        // ANOTHER generation to write with — the mark moves either way (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE
+        // WHO SEALS": a clean tree's current one may be below one held to read) — or the SAME epoch with another key (a
+        // fork healed: the winner's key for that epoch).
+        if (e.epoch === w.epoch && e.key === w.key) continue;
         core.tail_epoch_key(bytes(idHex), e.epoch, bytes(e.key), true);
         const healed = e.epoch === w.epoch;
         if (healed && w.sp) await ctx.background("storage: alternates", alternates(bytes(idHex), w.app, w.sp));
@@ -422,6 +436,8 @@ export async function start(ctx) {
       absent: false,
       took: tail => took(tail),
       rows: () => rows,
+      // (WRITABLE now: a group-sealed table with a generation to write with — none: a write would wait, then be refused.)
+      canWrite: () => !t.sealing || t.sealing.epoch !== -1,
       raw: () => core.tail_raw(id) ?? [],
       onChange: f => (changed.push(f), () => changed.includes(f) && changed.splice(changed.indexOf(f), 1)),
       // `value`: bytes, text, or a function giving the bytes at the moment of writing (a version names the feed's
@@ -533,7 +549,10 @@ export async function start(ctx) {
       // WRITES are sealed with the account's newest EPOCH (a node removed from the account then reads nothing written
       // after): the group brought current first. Not a channel (a node reads the MLS channel before it has any epoch),
       // and the catalog not after the group (the group's channel is found through it). No group here: the table's key.
-      if (k.key && !sealWith && !CHANNELS.has(app)) {
+      // (A space's catalog is named in that space — `x<id>-tables`: a catalog all the same.)
+      if (k.key && !sealWith && !UNGROUPED.has(app) && !catalogKey && !app.endsWith(`-${CATALOG}`)) {
+        // (SEALED BY THE GROUP: its table key reads what came before, never written with — `data::Open::group_sealed`.)
+        core.tail_group_sealed(id);
         // (A space's: its tree's generations reach the identity as it reconciles — `members.keepGenerations` — and
         // writes move onto a newer one as it arrives: `sealNewest`. K8.6: nothing waits on an MLS group.)
         if (!inSpace?.id && !catalogKey) await (await ctx.require("keys")).ready();
@@ -541,7 +560,7 @@ export async function start(ctx) {
         const e = await access.keyAt(app, -1, { catalog: catalogKey, space: spaceId });
         mark("epoch");
         if (e.key) core.tail_epoch_key(id, e.epoch, bytes(e.key), true);
-        else ctx.log("table sealed", { what: `${app}: no epoch here (${e.why}): written with the table's key` });
+        else ctx.log("table sealed", { what: `${app}: no generation to write with yet (${e.why}): written once its group's tree is clean` });
         // Kept: when a newer epoch arrives (the group moved: a node removed, one added), writes move onto it.
         t.sealing = { app, catalog: catalogKey, space: spaceId, sp: inSpace?.id ? inSpace : null, epoch: e.key ? e.epoch : -1, key: e.key ?? null };
         // A space's LOST BRANCH (`keys`' heal: this node's commits another beat): its epochs' keys read with, as
@@ -708,6 +727,19 @@ export async function start(ctx) {
       if (now.s === "unreadable") throw new Fault("sealed", `${app}: not saved, its table unreadable here`, { message: `${app}: not saved — ${now.why}`, d: { app } });
       sealedBelow("not saved");
       if (t.refuse) throw new Error(t.refuse);
+      // NO GENERATION TO WRITE WITH (a group-sealed table): its tree made clean first — the reconcile, the current
+      // generation marked (`members.readyToWrite`) — within WAIT.answer; still none: refused, never sealed with a key
+      // one put out holds (FOUNDATION "WHO RECEIVES IS DECIDED BY THE ONE WHO SEALS").
+      if (t.sealing && t.sealing.epoch === -1) {
+        const members = await ctx.require("members");
+        // (A space's table: its tree; the account's: the account's tree; a space's catalog without the space here: none.)
+        const tree = t.sealing.sp ? members.group(t.sealing.sp) : t.sealing.space ? null : await members.account();
+        // (The group's queue let finish first — a space just made is making its tree — within WAIT.ask: a write from
+        // INSIDE that queue waits that long, then is refused, never on itself for ever.)
+        if (tree) (await within(tree.idle(), WAIT.ask, null), await within(tree.readyToWrite(), WAIT.answer, null));
+        await sealNewest(idHex);
+        if (t.sealing.epoch === -1) throw new Fault("not-yet", `${app}: not saved, no generation to write with`, { message: `${app}: not saved — this space's keys are being brought in step (someone put out is still in its tree); try again in a moment`, d: { app } });
+      }
       // ITS OWN CATALOG notes it BEFORE it is created (`beforeCreate`: this device's own reading of where it is). What
       // OTHERS read by (the space's writers list, its open list) names it only AFTER it is made (`afterCreate`): a listed
       // contract is one that is there (owner 10-25: a writer listed with tables it never made was asked by every reader,
@@ -1562,6 +1594,13 @@ export async function start(ctx) {
           return all.map(f => hexOf(f.id ?? new Uint8Array()));
         },
         put: (key, value, user) => write(key, value, user),
+        // (WRITABLE now and the generation it writes with — this writer's OWN feed's: `canWrite`, `sealing`, as a tail's;
+        // the own feed not open yet: not writable, none — 10-29 inventory: the bridge's and the file re-key's gates read
+        // them on a merged table, which had neither, so one never wrote and the other never passed.)
+        canWrite: () => !!me?.canWrite?.(),
+        get sealing() {
+          return me?.sealing;
+        },
         // This writer's own feed written out now (`flushNow`): before an edit.
         flushOwn: () => me.flushNow?.(),
         remove: (key, user) => write(key, null, user),
@@ -1720,6 +1759,54 @@ export async function start(ctx) {
     return tail(owner, name, { public: true, ...(place === "unlisted" || place === "none" ? { known: false } : {}) });
   }
 
+  // THE ACCOUNT's DATA KEY ROTATED (K8.7: a removal): every table the data key ADDRESSES copied to its new address — the
+  // directory, the card, the account's channel, the public tables the card lists, the write-credential tables (their
+  // 32-hex names in the directory) — so a removed device, which keeps the old key, writes only where nobody reads.
+  // READ now (`read`: under the old key, as this page holds it), WRITTEN by `write(newOwner, seq)` once the identity
+  // holds the new key (it signs every step with it). The card's member becomes `beekem-was/<seq>` (the new member is
+  // put on it at the next page, from the new seed — K8.7 R4). Private tables (device feeds) do not move.
+  async function moveShared() {
+    const sp = await space.account.strict();
+    if (!sp?.shared) throw new Error("this node does not hold the account's data key");
+    const old = sp.shared;
+    const d = await directory();
+    const card = await cardOf(old);
+    const names = new Set([CARD, CHANNEL]);
+    // (Only the card's CATALOG rows name tables — `catalog_row`; its own rows, a handle or its member, name none.)
+    for (const r of card.rows()) if (r.value && Core.catalog_row(r.value) === "listed") names.add(r.key);
+    for (const r of d.rows()) if (/^[0-9a-f]{32}$/.test(r.key)) names.add(r.key);
+    const read = [{ name: CATALOG, rows: d.rows().map(r => [r.key, r.value]) }];
+    for (const name of names) {
+      const t = name === CHANNEL ? await channel(name) : await tail(old, name, { public: true });
+      await t.answer();
+      await t.settled;
+      read.push({ name, rows: t.rows().filter(r => r.value != null).map(r => [r.key, r.value]) });
+    }
+    return {
+      tables: read.map(x => `${x.name}: ${x.rows.length}`),
+      // `channel(rows)`: the account's channel's rows as they go to the new address (`members` cleans them: what a
+      // removed device could have written there between the rotation and this move is not carried as it is).
+      write: async (owner, seq, channelRows = rows => rows) => {
+        for (const { name, rows: read0 } of read) {
+          const rows = name === CHANNEL ? await channelRows(read0) : read0;
+          const t = name === CATALOG ? await tail(owner, CATALOG, { known: false, catalogKey: true }) : await tail(owner, name, name === CHANNEL ? { known: false } : { public: true, known: false });
+          for (const [k, v] of rows) await t.put(name === CARD && k === "beekem" ? `beekem-was/${seq}` : k, v);
+          await t.flushNow();
+        }
+        return read.length;
+      },
+    };
+  }
+
+  // THE ACCOUNT's CHANNEL AT ANOTHER ADDRESS (K8.7: the one the key log's head names after a rotation — read by a
+  // device still on the old key; its table key is the names seed's, which every device of the account holds). Its rows.
+  async function channelAt(owner) {
+    const t = await tail(owner, CHANNEL, {});
+    await t.answer();
+    await t.settled;
+    return t.rows().filter(r => r.value != null).map(r => [r.key, r.value]);
+  }
+
   // The nodes the directory lists as having feeds (hex keys): where `membership` starts gathering.
   async function nodes() {
     return (await directory()).rows().filter(r => r.key.startsWith("node:")).map(r => r.key.slice(5));
@@ -1866,5 +1953,5 @@ export async function start(ctx) {
     const { d, v } = await directoryMark();
     if (v.upkeep?.[key] !== value) await d.put(CATALOG, JSON.stringify({ ...v, upkeep: { ...(v.upkeep ?? {}), [key]: value } }));
   };
-  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), resealOwn, keepAlternates, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
+  return { decided, writersOf, currentWriters, setRoster, empty: guestTable, problemsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])], keyGapsIn: id => [...(problems.get(spaceKey(id))?.keys() ?? [])].filter(w => problemKinds.get(`${spaceKey(id)}|${w}`) === "key").length, own: ownTables, table, setRetention, log, publicTail, readOnly, describe, describeSpaces: ctx.total("storage.describeSpaces", () => [], describeSpaces), nodes, feedsOf, adopt, sealNewest, headsOf, refuse: why => (refusing = why), resealOwn, keepAlternates, moveShared, channelAt, upkeepMark, setUpkeepMark, opens: () => opensLog.map(({ t0, ...x }) => ({ at: Math.round(t0), ...x })) };
 }

@@ -142,7 +142,10 @@ export async function start(ctx) {
   const putOne = ([, id, frames], what) =>
     ctx.optional("files: ask", ask(frames, x => (x.kind === "put" && x.key === id) || x.kind === "refused", what, 60000).then(x => x.kind === "put"), () => false);
 
-  async function put(file, { space: sp = null, public: pub = false, app = null, inline = true, made = false, onProgress = () => {} } = {}) {
+  // `bare`: its PIECES only — no row in the files table, no upload progress (a key operation stored as a file, from
+  // inside its group's own queue: those tables are sealed by that group, and the write would wait on the queue making
+  // the tree clean — 10-29 inventory; a public piece set its row names in full needs neither).
+  async function put(file, { space: sp = null, public: pub = false, app = null, inline = true, made = false, bare = false, onProgress = () => {} } = {}) {
     const size = file.size;
     const name = file.name ?? "file";
     const type = file.type || "application/octet-stream";
@@ -160,10 +163,14 @@ export async function start(ctx) {
     const keyHex = hex(key);
     const secret = pub ? null : await secretOf(st.s, key);
     const burn = secret ? await sha(secret) : new Uint8Array(32);
-    const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress, null, burn, made ? { made: true } : {});
+    if (bare && !pub) throw new Error("files: a bare put is public only");
+    // (A bare put's progress: this page's own, in memory — nothing written.)
+    let mem = null;
+    const noRow = { read: () => mem, write: v => (mem = v), done: () => (mem = null) };
+    const root = await store(key, size, name, type, (a, b) => file.slice(a, b).arrayBuffer().then(x => new Uint8Array(x)), onProgress, bare ? noRow : null, burn, made ? { made: true } : {});
     const id = root;
     // The row keeps the BURN SECRET (`x`): whoever re-keys the file later burns these pieces with it.
-    if (!(await ctx.optional("files: rowOf", rowOf(sp, id), () => null))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
+    if (!bare && !(await ctx.optional("files: rowOf", rowOf(sp, id), () => null))) await setRow(sp, { id, key: keyHex, root, b: hex(burn), ...(secret ? { x: hex(secret) } : {}), h: hex(hash), pub: !!pub, app, n: pub ? -1 : st.n });
     // (`rules::rekey::file_ref`, the node's too.)
     return JSON.parse(glue.file_ref(id, inOf(sp) ?? undefined, key, root, hex(burn), size, name, type));
   }
