@@ -1384,6 +1384,7 @@ export async function start(ctx) {
           // reader whose catalog read is sealed to it reads by; fx 10-17, a newcomer read 0 feeds of `pub-keyops`).
           if (opened.has(o) || !(lists(c, name) || (opts.public && sp.kind !== "account"))) return;
           opened.add(o);
+          ctx.log("feed opened", { what: `${name}: ${String(o).slice(0, 8)}'s feed (its catalog lists it)` });
           take(await theirs(o, true, c));
         };
         c.onChange(() => ctx.background("storage: open", open()));

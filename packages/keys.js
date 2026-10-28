@@ -465,7 +465,10 @@ export async function start(ctx) {
       // THE DATA KEY ROTATED (K8.7: a removal elsewhere): this device stays — its new seed from the account's channel,
       // sealed with a generation of the tree it reaches (in the background: the tree read first). Until then the old
       // key reads what it always read and writes nowhere anyone reads.
-      if (s.data && d.data && String(s.data).toLowerCase() !== String(d.data).toLowerCase()) ctx.background("keys: the new data key", movedOn(d.since ?? d.seq, d.data));
+      // (Its outcome always SAID: a quiet kind — not yet, slow — is otherwise dropped unseen, 10-28: a resume that never
+      // finished left no line.)
+      if (s.data && d.data && String(s.data).toLowerCase() !== String(d.data).toLowerCase())
+        ctx.background("keys: the new data key", movedOn(d.since ?? d.seq, d.data).catch(e => (ctx.log("account keys", { what: `the new data key not taken yet: ${e?.message ?? e}` }), Promise.reject(e))));
       const as = JSON.stringify(status);
       if (as !== toldAs) (toldAs = as), told(status);
       return status;
@@ -554,11 +557,15 @@ export async function start(ctx) {
   // table the old key addressed READ, the new seed KEPT, the tables WRITTEN at their new addresses; then the page loads
   // again on the new key. A removed device keeps the old key: what it writes there nobody reads.
   async function rotateData(seq, seed) {
+    const step = what => ctx.log("account keys", { what: `rotation (key log ${seq}): ${what}` });
+    step("the account's tree opening");
     const tree = await (await ctx.require("members")).account();
     // THE REMOVED DEVICE OUT OF THE TREE FIRST (10-28 review: a page stopped after the key log, before the tree's
     // removal, resumed and sealed the new seed with a generation the removed device still reached): the tree
     // reconciled to the devices list, and nothing sealed while it places a device the list no longer holds.
+    step("the account's tree reconciling");
     await tree.reconcile();
+    step("the devices read");
     const st = await ready();
     const current = new Set((st?.members ?? []).map(m => String(m.member).toLowerCase()));
     const stray = tree.members().map(x => String(x).toLowerCase()).filter(m => !current.has(m));
@@ -566,8 +573,10 @@ export async function start(ctx) {
     // (Written under the new key BEFORE it is kept — the identity signs with a rotation's pending key — so `DataKeep` is
     // the one commit: a page stopped before it does all of this again on its next load, each step the same. The channel
     // goes CLEANED, the new seed sealed in it for the devices that stay: `members.account().cleanChannel`.)
+    step("the tables moving to the new key");
     const move = await storage.moveShared();
     const moved = await move.write(glue.data_public(seed), seq, rows => tree.cleanChannel(rows, seq, seed));
+    step(`${moved} table(s) moved: the new key kept`);
     const r = await auth.identity.dataKeep(seed);
     if (!r?.unlocked) throw new Error(`the identity would not keep the new data key: ${r?.refused ?? JSON.stringify(r)}`);
     ctx.log("account keys", { what: `the account's data key rotated (key log ${seq}): its new seed sealed for the devices that stay; ${moved} table(s) moved to the new key (${move.tables.join(", ")})` });

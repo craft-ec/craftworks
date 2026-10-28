@@ -61,12 +61,42 @@ mod entry {
 
     struct Ctx<'a>(&'a mut DelegateCtx);
 
+    // THE SECRET STORE's OWN ANSWER (10-28, fx/fy: "instance mem space not recorded" — the node lost this instance's
+    // memory, and every secret call failed ~20 000 times a second): `DelegateCtx` turns ANY failure into "absent", so a
+    // run read nothing, wrote nothing, and went on as if nothing were held. Only NOT FOUND is absent here; any other
+    // failure stops the call (a trap: the node answers it with an error, the next call runs afresh) — nothing is
+    // decided, scanned or written from a store that did not answer.
+    #[cfg(target_family = "wasm")]
+    #[link(wasm_import_module = "freenet_delegate_secrets")]
+    extern "C" {
+        fn __frnt__delegate__get_secret_len(key_ptr: i64, key_len: i32) -> i32;
+        fn __frnt__delegate__get_secret(key_ptr: i64, key_len: i32, out_ptr: i64, out_len: i32) -> i32;
+    }
+
     impl identity::Host for Ctx<'_> {
+        #[cfg(target_family = "wasm")]
+        fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
+            use freenet_stdlib::delegate_host::error_codes::ERR_SECRET_NOT_FOUND;
+            let len = unsafe { __frnt__delegate__get_secret_len(key.as_ptr() as i64, key.len() as i32) };
+            if len == ERR_SECRET_NOT_FOUND {
+                return None;
+            }
+            assert!(len >= 0, "the secret store did not answer (code {len})");
+            let mut out = vec![0u8; len as usize];
+            if len > 0 {
+                let n = unsafe { __frnt__delegate__get_secret(key.as_ptr() as i64, key.len() as i32, out.as_mut_ptr() as i64, out.len() as i32) };
+                assert!(n >= 0, "the secret store did not answer (code {n})");
+                out.truncate(n as usize);
+            }
+            Some(out)
+        }
+        #[cfg(not(target_family = "wasm"))]
         fn get_secret(&self, key: &[u8]) -> Option<Vec<u8>> {
             self.0.get_secret(key)
         }
         fn set_secret(&mut self, key: &[u8], value: &[u8]) -> bool {
-            self.0.set_secret(key, value)
+            assert!(self.0.set_secret(key, value), "the secret store did not keep a secret");
+            true
         }
     }
 

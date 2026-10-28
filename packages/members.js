@@ -313,7 +313,7 @@ export async function start(ctx) {
       said.misses = said.misses.slice(-3);
       await save();
       if (said.refused.length) life().then(l => l.transition("group", sp.id, "keys-refused", { why: said.refused.slice(0, 3).join("; "), n: said.refused.length, misses: JSON.stringify(said.misses ?? []).slice(0, 300) }));
-      if (said.waiting) life().then(l => l.transition("group", sp.id, "keys-waiting", { why: `${said.waiting} operation(s) wait on their predecessors`, n: said.waiting }));
+      if (said.waiting) life().then(l => l.transition("group", sp.id, "keys-waiting", { why: `${said.waiting} operation(s) wait: ${(said.waits ?? []).join("; ").slice(0, 300)}`, n: said.waiting }));
       return said;
     }
 

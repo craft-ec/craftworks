@@ -241,6 +241,9 @@ pub struct MergedAll {
     pub applied: usize,
     pub waiting: usize,
     pub refused: Vec<String>,
+    /// WHY each still waits (`waiting_why`): what it waits on, said — a count alone named nothing (10-28: 3 of 6 waited on
+    /// both devices, for good, and nothing said which or on what).
+    pub waits: Vec<String>,
 }
 
 /// What merging an operation did.
@@ -427,6 +430,7 @@ impl Group {
             }
         }
         out.waiting = pending.len();
+        out.waits = pending.iter().map(|op| waiting_why(op, check)).collect();
         out
     }
 
@@ -607,6 +611,28 @@ fn generation_number(depth: u64, h: &keyhive_crypto::digest::Digest<Signed<CgkaO
 }
 
 /// OUR CHECK (the list's): the signer listed; an add or a remove authorized by an act that allows exactly that.
+/// WHAT an operation WAITS on (`merge_all`'s `waits`): the check not whole, its added member's card or published leaf
+/// not read, else its predecessors not held — and whose operation, which kind.
+fn waiting_why(op: &[u8], check: &impl Check) -> String {
+    let Ok(op) = bincode::deserialize::<Signed<CgkaOperation>>(op) else { return "not an operation".into() };
+    let short = |b: &[u8]| ::hex::encode(&b[..4]);
+    let (kind, target) = match &op.payload {
+        CgkaOperation::Add { added_id, .. } => ("add", Some(added_id.0.to_bytes())),
+        CgkaOperation::Remove { id, .. } => ("remove", Some(id.0.to_bytes())),
+        _ => ("key change", None),
+    };
+    let on = if !check.whole() {
+        "the check not whole".to_string()
+    } else if let Some(t) = target.filter(|t| kind == "add" && check.account_of(t).is_none()) {
+        format!("{}'s card not read", short(&t))
+    } else if let Some(t) = target.filter(|t| kind == "add" && check.leaf_of(t).is_none()) {
+        format!("{}'s published leaf not read", short(&t))
+    } else {
+        format!("{} predecessor(s) not held", op.payload.predecessors().len())
+    };
+    format!("{kind}{} by {}: {on}", target.map(|t| format!(" {}", short(&t))).unwrap_or_default(), short(&op.issuer().to_bytes()))
+}
+
 /// `Err(None)`: not judged yet — WAITS (its added member's card not read: its account or its published leaf unknown).
 fn admitted(op: &Signed<CgkaOperation>, check: &impl Check) -> Result<(), Option<String>> {
     let signer = op.issuer().to_bytes();
@@ -844,6 +870,7 @@ mod page {
             js_sys::Reflect::set(&out, &"applied".into(), &(r.applied as f64).into())?;
             js_sys::Reflect::set(&out, &"waiting".into(), &(r.waiting as f64).into())?;
             js_sys::Reflect::set(&out, &"refused".into(), &r.refused.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
+            js_sys::Reflect::set(&out, &"waits".into(), &r.waits.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
             let misses: Vec<String> = match &list.0 { Chk::List(l) => l.misses.borrow().clone(), Chk::Account(_) => Vec::new() };
             js_sys::Reflect::set(&out, &"misses".into(), &misses.iter().map(|w| JsValue::from_str(w)).collect::<js_sys::Array>())?;
             Ok(out.into())

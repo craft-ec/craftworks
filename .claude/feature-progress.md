@@ -3228,19 +3228,18 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               rollback → tree save stays v1, `kn/` row beside; node re-key salt ungated → `clean_at`; node marked from a
               tree left short / forgot a card's earlier member → whole merges only, earlier members kept; short reads
               leave the mark (page = node); `EpochKeep` holds. groups 31, identity 52, delegate 43; Y1–Y6 red.
-        - [ ] STATE 10-29 (NOT GREEN — do not commit as done): the seal-side rule is in the tree (uncommitted) with the
-              fixes from reviews 4–5 and the write-path inventory (bridge/file-key gates on merged tables, bare key-op
-              files, node catalog = page rule, catalogs + key store ungrouped, login marks the account before retiring).
-              Live: k85-two, remove-control-bk, k86-reg PASS; k87-rot and k86-mls passed alone, flaky in full runs;
-              k87-three FAILS: (1) a write right after creating a space is refused — a new space's list is not read
-              WHOLE yet, so nothing is ever writable (the creator knows its list locally); (2) after the rotation fy's
-              card at the new address does not name its member. Upgrade gate passed once (02:xx run), last run could not
-              publish (test node accepted 0 of 9 pieces — check node state before the next gate).
-              ROOT CAUSE OF THE CHURN (owner 10-29): the rule was implemented without an OFFLINE FLOW TEST of every state
-              that writes; each bug surfaced live, one per run. NEXT: build the offline flow harness (real packages:
-              storage, members, keys, auth, identity, core wasm; in-memory node) covering registration, words login,
-              upgrade hand-over, create space, join, normal writes, device removal + rotation, kick — every write's key
-              and outcome asserted; in the gate. Fix every failure it shows in one change; live probes only confirm.
+        - [x] STATE 10-29 GREEN on fx/fy/fz (seal-side rule a33ec1e + this commit): k85-two, k87-rot, k87-resume,
+              k87-three PASS on the final tree; upgrade gate v451→candidate PASS (RETIRED yes ×2, reads across the
+              upgrade, 0 delegate failures). What had held the runs red was NOT the keys code alone: (a) publishes failed
+              unseen — every package re-sent (no PUBLISHED_MANIFEST), PUTs of held pieces unanswered, a script showing
+              only its last line; probes ran older builds; (b) the private nodes (up since 10-24) had stopped
+              propagating: each served its own copy of the site — restarted, a publish reached every node in 34 s;
+              (c) a `node` shadowing bug in a keys.js change (removed: its negative control passed without it). Now:
+              the delegate's secret store says NOT FOUND apart from a failure (any other failure traps — the trap path
+              unexercised: no way to inject a node store failure here); `merge_all` says what each waiting operation
+              waits on (page trace `keys-waiting`); the rotation says each step and its outcome; the gate publishes
+              only what is not up. Probes pin every page to its own node's manifest (tmp/pw).
+              STILL OWED: the offline flow harness (owner 10-29: every state that writes tested before live).
         - [ ] OPEN: a member→account binding the member cannot erase (fresh devices wait on a card-dropping kicked
               member's history; saved trees + node cache handle it)
         - [ ] R6 probes: removed device writes nothing read, reads nothing after (account + spaces); stayers go on;
