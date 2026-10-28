@@ -3239,7 +3239,8 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
               unexercised: no way to inject a node store failure here); `merge_all` says what each waiting operation
               waits on (page trace `keys-waiting`); the rotation says each step and its outcome; the gate publishes
               only what is not up. Probes pin every page to its own node's manifest (tmp/pw).
-              STILL OWED: the offline flow harness (owner 10-29: every state that writes tested before live).
+              TESTING (decided 10-29): on the private nodes, not an offline harness (a fake node is only as correct as
+              itself); every state that writes covered by a probe there before a release.
         - [ ] OPEN: a member→account binding the member cannot erase (fresh devices wait on a card-dropping kicked
               member's history; saved trees + node cache handle it)
         - [ ] R6 probes: removed device writes nothing read, reads nothing after (account + spaces); stayers go on;
