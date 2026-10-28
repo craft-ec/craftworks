@@ -1,0 +1,10 @@
+const { chromium } = await import(process.env.PLAYWRIGHT ?? `${process.env.HOME}/dev/atelier/node_modules/playwright-core/index.mjs`);
+const [port] = process.argv.slice(2);
+const b = await chromium.launch({ headless: true, executablePath: process.env.CHROME });
+const p = await (await b.newContext()).newPage();
+await p.goto(`http://127.0.0.1:${port}/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/?fresh=lo${Date.now()}#/settings`);
+await p.waitForTimeout(30000);
+const fr = p.frames().find(x => x !== p.mainFrame() && x.url() !== "about:srcdoc");
+console.log("logout", port, await fr?.evaluate(async () => { const a = await app.require("auth"); if (!(await a.check())) return "nobody"; await a.logout(); return "done"; }).catch(e => "ERR " + e.message.slice(0, 80)));
+await p.waitForTimeout(5000);
+await b.close();
