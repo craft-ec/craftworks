@@ -3276,6 +3276,10 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
   break — how v452 got the wrong seed is unmeasured; the fix covers the measured END STATE (identity test).
   OWED: the owner unlocks on v453 → read their account (owner-keys) — placed, writes go through.
 - [x] 10-29 v452 LIVE (8033e2f; manifest d8e6edfa02b3): keys seal-side rule; gates 3/3, probes 8/8, 222/222 findable.
+- OLD SPACES (owner 10-29): Ivvor's New Space is NOT repaired — users make a new space instead (its key holes date
+  from the MLS era: Ivvor's own page held 114351403 but not 43825365). New spaces must have no such issue; the one way
+  a new space can still stall: a key change whose predecessor never reached the network (Craftworks: 3 operations by
+  649a2d9e wait) — to close at its cause.
 - VERSIONS (owner 10-29): no semver while this is a beta — the site's version counter only; semver from the first
   stable build (MAJOR = the identity build changes: hand-over + one PIN entry).
 - [x] 10-27 v451 — K8.6 6b SPACES OFF MLS LIVE (90cac6c; manifest bb211bf5db0a; gates 3/3 + frames; identity changed:
