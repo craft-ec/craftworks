@@ -1029,3 +1029,26 @@ fn a_kicked_member_that_drops_its_card_is_still_taken_out() {
     // (The tree's save is the cgka alone, as every earlier build saves and reads it.)
     assert_eq!(ga.save().unwrap(), bincode::serialize(&ga.cgka).unwrap(), "the save every build reads");
 }
+
+/// 10-29, live (Craftworks): three operations of the owner's device waited, said as "a predecessor not held" — read
+/// as LOST operations. They were built on a stray root the creator rule refuses (taken on a page before the rule): a
+/// waiting operation says which it waits on — REFUSED (for good), or on no feed read here (CONTROL: the predecessor
+/// held back, then given: it applies).
+#[test]
+fn a_waiting_operation_says_its_predecessor_was_refused() {
+    let (owner, member, reader) = (account(21), account(22), account(23));
+    let l = list(&[(&owner, "did:owner"), (&member, "did:member"), (&reader, "did:reader")]);
+    let (_go, owners_root) = Group::create(&SPACE, owner.clone()).unwrap();
+    // The member's own tree on its stray root, the reader added on it.
+    let (mut gm, members_root) = Group::create_by(&SPACE, member.clone(), &[0; 32]).unwrap();
+    let on_stray = gm.add_member(&id(&reader), &reader.leaf_key(), &act_in(&reader)).unwrap().unwrap();
+    let mut gr = Group::empty(&SPACE, reader.clone());
+    let said = gr.merge_all(&[owners_root.clone(), members_root.clone(), on_stray.clone()], &l);
+    assert_eq!((said.applied, said.waiting, said.refused.len()), (1, 1, 1), "{said:?}");
+    assert!(said.waits[0].contains("built on a REFUSED operation"), "{said:?}");
+    // CONTROL: the stray root never given — the same add waits on a predecessor on no feed read here.
+    let mut gc = Group::empty(&SPACE, reader.clone());
+    let said = gc.merge_all(&[owners_root, on_stray], &l);
+    assert_eq!(said.waiting, 1, "{said:?}");
+    assert!(said.waits[0].contains("on no feed read here"), "{said:?}");
+}

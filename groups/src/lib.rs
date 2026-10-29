@@ -418,19 +418,27 @@ impl Group {
     pub fn merge_all(&mut self, ops: &[Vec<u8>], check: &impl Check) -> MergedAll {
         let mut out = MergedAll::default();
         let mut pending: Vec<&Vec<u8>> = ops.iter().collect();
+        // (The operations REFUSED, by hash: an operation built on one waits forever — said so, not as "not held".)
+        let mut refused = std::collections::BTreeSet::new();
         for _ in 0..64 {
             let before = pending.len();
             pending.retain(|op| match self.merge(op, check) {
                 Merged::Applied => (out.applied += 1, false).1,
                 Merged::Waiting => true,
-                Merged::Refused(w) => (out.refused.push(w), false).1,
+                Merged::Refused(w) => {
+                    if let Some((h, ..)) = op_info(op) {
+                        refused.insert(h);
+                    }
+                    (out.refused.push(w), false).1
+                }
             });
             if pending.is_empty() || pending.len() == before {
                 break;
             }
         }
         out.waiting = pending.len();
-        out.waits = pending.iter().map(|op| waiting_why(op, check)).collect();
+        let waiting: std::collections::BTreeSet<[u8; 32]> = pending.iter().filter_map(|op| op_info(op).map(|x| x.0)).collect();
+        out.waits = pending.iter().map(|op| waiting_why(op, check, &refused, &waiting)).collect();
         out
     }
 
@@ -612,8 +620,10 @@ fn generation_number(depth: u64, h: &keyhive_crypto::digest::Digest<Signed<CgkaO
 
 /// OUR CHECK (the list's): the signer listed; an add or a remove authorized by an act that allows exactly that.
 /// WHAT an operation WAITS on (`merge_all`'s `waits`): the check not whole, its added member's card or published leaf
-/// not read, else its predecessors not held — and whose operation, which kind.
-fn waiting_why(op: &[u8], check: &impl Check) -> String {
+/// not read, else a predecessor — REFUSED (it waits for good: built on a branch our check refuses), itself waiting, or on
+/// no feed read here — and whose operation, which kind. (10-29: "not held" was said of a refused predecessor too, and
+/// read as a lost one — Craftworks' three were built on a stray root the creator rule refuses.)
+fn waiting_why(op: &[u8], check: &impl Check, refused: &std::collections::BTreeSet<[u8; 32]>, waiting: &std::collections::BTreeSet<[u8; 32]>) -> String {
     let Ok(op) = bincode::deserialize::<Signed<CgkaOperation>>(op) else { return "not an operation".into() };
     let short = |b: &[u8]| ::hex::encode(&b[..4]);
     let (kind, target) = match &op.payload {
@@ -628,7 +638,15 @@ fn waiting_why(op: &[u8], check: &impl Check) -> String {
     } else if let Some(t) = target.filter(|t| kind == "add" && check.leaf_of(t).is_none()) {
         format!("{}'s published leaf not read", short(&t))
     } else {
-        format!("{} predecessor(s) not held", op.payload.predecessors().len())
+        let preds: Vec<[u8; 32]> = op.payload.predecessors().iter().filter_map(|d| <[u8; 32]>::try_from(d.as_slice()).ok()).collect();
+        let named = |set: &std::collections::BTreeSet<[u8; 32]>| preds.iter().filter(|p| set.contains(*p)).map(|p| short(p)).collect::<Vec<_>>().join(", ");
+        if preds.iter().any(|p| refused.contains(p)) {
+            format!("built on a REFUSED operation {} (waits for good)", named(refused))
+        } else if preds.iter().any(|p| waiting.contains(p)) {
+            format!("on a waiting operation {}", named(waiting))
+        } else {
+            format!("{} predecessor(s) on no feed read here", preds.len())
+        }
     };
     format!("{kind}{} by {}: {on}", target.map(|t| format!(" {}", short(&t))).unwrap_or_default(), short(&op.issuer().to_bytes()))
 }
