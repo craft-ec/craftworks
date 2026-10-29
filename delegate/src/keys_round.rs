@@ -117,13 +117,23 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let mut g = Group::empty(&r.space, Account::of(&seed));
     // Every member LEARNED, this read's added (a card read now replaces what was kept).
     let members = learn(h, &r.member, &r.space, &r.reading.beekem, now_ms);
+    // …and THIS NODE's OWN ACCOUNT: its member and leaf derive from its own seed — never waited on its card being read
+    // (10-29, fz: "679176a0's card not read" was the node's own account: it never saw itself placed, so it took nobody
+    // out and re-keyed nothing while every page was closed).
+    let own: Vec<(String, [u8; 32], [u8; 32])> = identity::upkeep_account(h, &r.member)
+        .map(|(did, _)| {
+            let me = Account::of(&seed);
+            (craftworks_account::did(&did), me.id.0.to_bytes(), me.leaf_key().to_bytes())
+        })
+        .into_iter()
+        .collect();
     // …and the members their accounts REPLACED (K8.7): authors of their history, taken out with no act.
     let superseded = learn_superseded(h, &r.member, &r.space, &r.reading.superseded);
     // OUR CHECK (`groups::ListCheck`, the page's too): each member's leaf as published — an add is taken only with it.
     let list = ListCheck {
         // (Every member a card names now, its account replaced, or a card named before: whose each is.)
-        by_member: earlier_members(h, &r.member, &r.space).iter().chain(&members).chain(&superseded).map(|(d, id, _)| (*id, d.clone())).collect(),
-        leaves: earlier_members(h, &r.member, &r.space).iter().chain(&members).chain(&superseded).map(|(_, id, leaf)| (*id, *leaf)).collect(),
+        by_member: earlier_members(h, &r.member, &r.space).iter().chain(&members).chain(&superseded).chain(&own).map(|(d, id, _)| (*id, d.clone())).collect(),
+        leaves: earlier_members(h, &r.member, &r.space).iter().chain(&members).chain(&superseded).chain(&own).map(|(_, id, leaf)| (*id, *leaf)).collect(),
         superseded: superseded.iter().map(|(_, id, _)| *id).collect(),
         listed: gov.roster.iter().cloned().collect(),
         owner: m.owner.clone(),
@@ -174,7 +184,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let placed = g.members();
     // 4. RECONCILE (the list read whole: checked before the merge).
     if !g.placed() {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NOT_PLACED, &format!("{}: this account is not in the tree yet ({} waiting, {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, waiting, why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_NOT_PLACED, &format!("{}: this account is not in the tree yet ({} waiting: {}; {refused} refused: {}; {} card(s) name a member, {} operation row(s){})", m.name, waiting, merged.waits.iter().take(3).map(|w| w.chars().take(90).collect::<String>()).collect::<Vec<_>>().join(" / "), why.join(" / "), members.len(), r.reading.rows("pub-keyops").len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
         return next_space(h, c, r);
     }
     // THE ONE PLAN (`Group::reconcile`, the page's too): the listed placed, the put-out taken out by their act.

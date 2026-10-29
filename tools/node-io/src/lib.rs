@@ -84,3 +84,17 @@ pub async fn get(ws: &str, id: [u8; 32]) -> Result<Option<Vec<u8>>> {
     }
 }
 
+
+/// UNREGISTER a delegate (its key and code hash, as the node's `delegates/<key>.reg` holds them): `true` when the node
+/// answered within 30 s (whether it is gone: its `.reg` file, read by the caller).
+pub async fn unregister_delegate(ws: &str, key: [u8; 32], code_hash: [u8; 32]) -> Result<bool> {
+    let (mut tx, mut rx) = tokio_tungstenite::connect_async(ws).await.context("connecting")?.0.split();
+    let dk = DelegateKey::new(key, CodeHash::new(code_hash));
+    for f in wire::frame_unregister_delegate(dk, 5).map_err(|e| anyhow::anyhow!(e))? {
+        tx.send(Message::Binary(f.into())).await?;
+    }
+    match tokio::time::timeout(Duration::from_secs(30), rx.next()).await {
+        Ok(Some(Ok(Message::Binary(_)))) => Ok(true),
+        _ => Ok(false),
+    }
+}

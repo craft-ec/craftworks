@@ -541,6 +541,12 @@ pub fn frame_register_delegate(
     frames(&req, stream_id)
 }
 
+/// Frame a delegate's UNREGISTRATION (its key and code hash): a test node's old builds pruned (tools/node-io
+/// `prune_delegates` — 10-29, fx: 66 delegates' wake-ups spent the node's whole wake-up budget).
+pub fn frame_unregister_delegate(key: DelegateKey, stream_id: u32) -> Result<Vec<Vec<u8>>, String> {
+    frames(&ClientRequest::DelegateOp(DelegateRequest::UnregisterDelegate(key)), stream_id)
+}
+
 /// The websocket URL for a node's client API.
 ///
 /// **`encodingProtocol=native` is not optional and not a default.** The node

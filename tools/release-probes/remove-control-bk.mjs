@@ -3,6 +3,9 @@
 // A removes B. Every step bounded; each answer read from the app's own state.
 //   node share.mjs <fresh>
 const { chromium } = await import(process.env.PLAYWRIGHT ?? `${process.env.HOME}/dev/atelier/node_modules/playwright-core/index.mjs`);
+const { traced, traceDir } = await import(new URL("./trace.mjs", import.meta.url));
+const TRACE = traceDir(import.meta.url);
+let pageN = 0;
 const [fresh] = process.argv.slice(2);
 const site = port => `http://127.0.0.1:${port}/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/?fresh=${fresh}`;
 const b = await chromium.launch({ headless: true, executablePath: process.env.CHROME });
@@ -15,6 +18,7 @@ const wantV = port => { if (!wants.has(port)) wants.set(port, fetch(`http://127.
 async function open(port, hash = "#/settings") {
   const ctx = await b.newContext();
   const p = await ctx.newPage();
+  await traced(p, `${port}-${++pageN}`, TRACE);
   const allow = setInterval(() => p.evaluate(() => [...(document.getElementById("__freenet_perm_overlay")?.querySelectorAll("button") ?? [])].find(x => x.innerText.trim() === "Allow")?.click()).catch(() => {}), 2000);
   p.on("close", () => clearInterval(allow));
   await p.goto(site(port) + hash);

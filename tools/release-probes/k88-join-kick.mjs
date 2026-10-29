@@ -2,6 +2,9 @@
 // each reads what the other writes after the join. A KICKS B: the space's tree takes B out, A writes on, B reads
 // nothing A writes after, and what B writes after is not read by A.   node k88-join-kick.mjs <fresh>
 const { chromium } = await import(process.env.PLAYWRIGHT ?? `${process.env.HOME}/dev/atelier/node_modules/playwright-core/index.mjs`);
+const { traced, traceDir } = await import(new URL("./trace.mjs", import.meta.url));
+const TRACE = traceDir(import.meta.url);
+let pageN = 0;
 const [fresh, phase = "all"] = process.argv.slice(2);
 // A PIN is the node's: each run its own (a PIN registered by an earlier run is taken).
 const PIN = { a: `${fresh}1`, b: `${fresh}2`, c: `${fresh}3`, z: `${fresh}4` };
@@ -16,6 +19,7 @@ const wantV = port => { if (!wants.has(port)) wants.set(port, fetch(`http://127.
 async function open(port, hash = "#/settings") {
   const ctx = await b.newContext();
   const p = await ctx.newPage();
+  await traced(p, `${port}-${++pageN}`, TRACE);
   // (The node's permission prompt — Background, for wake-ups — allowed.)
   const allow = setInterval(() => p.evaluate(() => [...(document.getElementById("__freenet_perm_overlay")?.querySelectorAll("button") ?? [])].find(x => x.innerText.trim() === "Allow")?.click()).catch(() => {}), 2000);
   p.on("close", () => clearInterval(allow));
