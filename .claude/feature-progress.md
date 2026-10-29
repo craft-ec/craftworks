@@ -3268,6 +3268,16 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
 - Also: old builds' wake-up cost on nodes; the node rebuilds its trees every round (unmeasured — measure, then fix the
   cause); crypto crates' opt-level (with 6c's identity build).
 
+- [x] 10-29 v453 LIVE (241ed95; manifest 1203657bc368; gates 3/3, release probes 8/8, 43/43 findable, delivery
+  1499/1507 unrebuildable 0; identity changed: one PIN entry). v452 left the owner's MLS-era device holding a device
+  seed its credential does not name (82e94b9a; credential 5a08c2ab) — never placed in the account's tree, every account
+  write refused. Fix: the MLS signer's seed FIRST where the member holds MLS state; a minted seed gives way to the
+  carried one; the hand-over logs the seed outcome. The replay (k89, v446→v451→v452→v453) did NOT reproduce the
+  break — how v452 got the wrong seed is unmeasured; the fix covers the measured END STATE (identity test).
+  OWED: the owner unlocks on v453 → read their account (owner-keys) — placed, writes go through.
+- [x] 10-29 v452 LIVE (8033e2f; manifest d8e6edfa02b3): keys seal-side rule; gates 3/3, probes 8/8, 222/222 findable.
+- VERSIONS (owner 10-29): no semver while this is a beta — the site's version counter only; semver from the first
+  stable build (MAJOR = the identity build changes: hand-over + one PIN entry).
 - [x] 10-27 v451 — K8.6 6b SPACES OFF MLS LIVE (90cac6c; manifest bb211bf5db0a; gates 3/3 + frames; identity changed:
   one PIN entry). Carries the device-seed hand-over fix for accounts made on v450. NEXT: 6c (MLS code removed).
   - [ ] 6c. MLS code removed (delegate requests, dead catch-up, `mls` crate + wasm); KEPT as pre-tree history: seed
