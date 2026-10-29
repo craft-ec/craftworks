@@ -244,6 +244,10 @@ pub struct MergedAll {
     /// WHY each still waits (`waiting_why`): what it waits on, said — a count alone named nothing (10-28: 3 of 6 waited on
     /// both devices, for good, and nothing said which or on what).
     pub waits: Vec<String>,
+    /// The ACTS named by adds that wait on their member's CARD (not read here): whose card to read NOW — the one who
+    /// added them read it (10-29, fz: a node asked a new member's card once before it was written, then waited 10 min
+    /// to ask again, and its tree never placed them).
+    pub waiting_cards: Vec<[u8; 32]>,
 }
 
 /// What merging an operation did.
@@ -396,10 +400,19 @@ impl Group {
     /// `None`: not clean — the reconcile takes them out first (its removal, then a key change); writes stay on the last
     /// clean generation meanwhile. Every other generation reached is for READING only.
     pub fn writable(&mut self, check: &impl Check) -> Option<(u64, [u8; 32])> {
-        if !check.whole() || !self.members().iter().all(|m| self.in_now(check, m)) {
-            return None;
+        self.writable_why(check).ok()
+    }
+    /// `writable`, or WHY NOT (the node's trace says it — 10-29: a re-key held on a mark never written, cause unread).
+    pub fn writable_why(&mut self, check: &impl Check) -> Result<(u64, [u8; 32]), String> {
+        if !check.whole() {
+            return Err("the check judges nothing (no current device)".into());
         }
-        self.current_now()
+        let out: Vec<String> = self.members().iter().filter(|m| !self.in_now(check, m)).map(|m| ::hex::encode(&m[..4])).collect();
+        if !out.is_empty() {
+            return Err(format!("placed but not in now: {}", out.join(",")));
+        }
+        let (h, k) = self.cgka.current_generation_why().map_err(|e| format!("no current generation: {e}"))?;
+        Ok((self.number(&h), k.0.to_bytes()))
     }
     /// IN NOW (`Check::in_now`) — a member no card names any more judged by WHOSE it was when taken (`known`): listed now,
     /// or not (then out — the reconcile takes it out by its account's act).
@@ -439,6 +452,14 @@ impl Group {
         out.waiting = pending.len();
         let waiting: std::collections::BTreeSet<[u8; 32]> = pending.iter().filter_map(|op| op_info(op).map(|x| x.0)).collect();
         out.waits = pending.iter().map(|op| waiting_why(op, check, &refused, &waiting)).collect();
+        out.waiting_cards = pending
+            .iter()
+            .filter_map(|op| bincode::deserialize::<Signed<CgkaOperation>>(op).ok())
+            .filter_map(|op| match op.payload {
+                CgkaOperation::Add { added_id, authorization: CgkaAuthorization::Delegation(act), .. } if check.account_of(&added_id.0.to_bytes()).is_none() && act != [0; 32] => Some(act),
+                _ => None,
+            })
+            .collect();
         out
     }
 
@@ -468,6 +489,11 @@ impl Group {
         self.add_member(member, &ShareKey::from(x25519_dalek::PublicKey::from(*leaf)), act)
     }
     /// A KEY CHANGE drawing from `seed` (the node's randomness: upkeep's pool — K5).
+    /// NO CURRENT ROOT here (after a pending replay): a removal blanked it, or the heads are concurrent — a key change due.
+    pub fn rootless(&mut self) -> bool {
+        self.cgka.current_heads();
+        !self.cgka.has_tree_root_secret()
+    }
     pub fn rotate_seeded(&mut self, seed: [u8; 32]) -> Result<Vec<u8>, String> {
         use rand::SeedableRng;
         Ok(self.rotate(&mut rand::rngs::StdRng::from_seed(seed))?.0)
@@ -565,7 +591,13 @@ impl Group {
     /// (`seed`: its randomness). Only from a WHOLE read of the list: the caller's guard.
     /// WHETHER A RECONCILE WOULD CHANGE ANYTHING (page and node — before drawing randomness): a listed card's member the
     /// tree does not place, or a placed one no longer listed that an act put out. `reconcile`'s own conditions.
+    /// (And a tree with NO CURRENT ROOT — a removal blanked it, or concurrent heads — is due its one key change: the
+    /// removed one cannot make it, and none in step would; 10-29, fz: a self-leave left it rootless, the re-key held
+    /// forever on the clean mark only a root gives. `current`'s rule, page and node.)
     pub fn due(&mut self, cards: &[Card], listed: &dyn Fn(&str) -> bool, outs: &std::collections::BTreeMap<String, [u8; 32]>) -> bool {
+        if self.rootless() {
+            return true;
+        }
         let placed = self.members();
         cards.iter().any(|(did, id, _)| wants_in(&placed, id, did, listed)) || placed.iter().any(|id| cards.iter().find(|c| c.1 == *id).map(|c| c.0.clone()).or_else(|| self.known.get(id).cloned()).is_some_and(|did| wants_out(&did, listed, outs)))
     }
@@ -597,7 +629,7 @@ impl Group {
                 Err(why) => r.not.push(format!("{did}: not removed — {why}")),
             }
         }
-        if !r.ops.is_empty() {
+        if !r.ops.is_empty() || self.rootless() {
             match self.rotate_seeded(seed) {
                 Ok(op) => r.ops.push(op),
                 Err(why) => r.not.push(format!("no key change — {why}")),

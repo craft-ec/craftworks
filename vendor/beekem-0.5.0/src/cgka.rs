@@ -234,6 +234,28 @@ impl Cgka {
         self.record_tree_root_secret()
     }
 
+    /// `current_generation`, or WHY NONE (the node traces it — 10-29: a clean mark never written, cause unread).
+    pub fn current_generation_why(&mut self) -> Result<(Digest<Signed<CgkaOperation>>, PcsKey), alloc::string::String> {
+        self.replay_if_pending().map_err(|e| alloc::format!("replay failed: {e}"))?;
+        let heads = self.ops_graph.cgka_op_heads.len();
+        if heads != 1 {
+            return Err(alloc::format!("{heads} heads"));
+        }
+        if !self.tree.has_root_key() {
+            return Err("the tree has no root key (no update since a change)".into());
+        }
+        let ancestors = self.ops_graph.nearest_update_ancestors(&self.ops_graph.cgka_op_heads);
+        if ancestors.len() != 1 {
+            return Err(alloc::format!("{} nearest updates", ancestors.len()));
+        }
+        let op_hash = *ancestors.iter().next().expect("one");
+        if let Some(pcs_key) = self.root_secrets.get(&op_hash) {
+            return Ok((op_hash, pcs_key));
+        }
+        let pcs_key = self.decrypt_tree_root_secret().map_err(|e| alloc::format!("the root does not decrypt here: {e}"))?;
+        if self.record_root_secret_for(pcs_key, op_hash) { Ok((op_hash, pcs_key)) } else { Err("the root secret was not recorded".into()) }
+    }
+
     /// The current HEADS (what an update made now names as its predecessors), sorted — after a pending replay.
     pub fn current_heads(&mut self) -> Vec<Digest<Signed<CgkaOperation>>> {
         let _ = self.replay_if_pending();

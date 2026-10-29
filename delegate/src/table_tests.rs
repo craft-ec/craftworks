@@ -778,10 +778,9 @@ fn with_no_page_open_a_removal_rotates_the_salt_and_the_spaces_files_re_key() {
 
 #[test]
 fn where_a_delegates_new_contracts_stay_on_its_node_the_salt_rotates_and_the_file_is_left_to_a_page() {
-    // freenet ≤ 0.2.141 (`upkeep::NEW_CONTRACTS_REACH_THE_NETWORK`): the salt is a row of a feed already there — written;
-    // the file's new pieces would be new contracts — left to a page, its row and old pieces as they were.
-    assert!(!upkeep::NEW_CONTRACTS_REACH_THE_NETWORK);
-    let a = round_after_a_removal(upkeep::NEW_CONTRACTS_REACH_THE_NETWORK);
+    // freenet ≤ 0.2.141 (`upkeep::NEW_CONTRACTS_REACH_THE_NETWORK` false there): the salt is a row of a feed already
+    // there — written; the file's new pieces would be new contracts — left to a page, its row and old pieces as they were.
+    let a = round_after_a_removal(false);
     let said = &a.said;
     let files_rows = files_after(&a);
     let st = rekey::salt(&files_rows).expect("a salt");

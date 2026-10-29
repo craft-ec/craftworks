@@ -9,22 +9,17 @@
 //   old key still reads) — an uploader keeps their files.
 //
 // Rows only move forward (salt `n` up, public to salted, adopted to owned), so a member on an older view never undoes
-// one. WHO DOES A ROW: every member ranks the members for it the same way (a hash of the row and each DID: no claim,
-// no message) — the first does it now; the next takes it over when it has not moved for TAKEOVER (a member away),
-// and so on — going on from its progress in the space's table. Two members doing one row anyway make the same
-// fragments (the key is derived): wasted work, never a wrong result. Triggers: the page's start, each space's table
-// and roles changing, a new epoch (`craftworks:keys`), and a takeover falling due. A row that failed is tried again on
-// the next trigger, not in a loop.
+// one. WHO DOES A ROW: every member who sees it due, at once (`rules::rekey::plan`, the node's too) — two doing one
+// row make the same fragments (key and secret derived from the file and the salt): no turns, no timer (10-29: a
+// 2-minute takeover held a node behind a closed page). Triggers: the page's start, each space's table and roles
+// changing, a new epoch (`craftworks:keys`). A row that failed is tried again on the next trigger, not in a loop.
 export async function start(ctx) {
   const [space, files, roles, storage, driveStore] = await Promise.all(["space", "files", "roles", "storage", "drive-store"].map(n => ctx.require(n)));
   const shared = space.shared;
   const label = sp => (shared(sp) ? space.shown(sp) : "your files");
   const failed = new Map(); // row → the trigger count it failed at
   let triggers = 0;
-  // (This person's place for a row comes in the plan: 0 does it; k takes over after k × TAKEOVER of no movement.)
   const { glue } = await ctx.require("node");
-  const later = new Map(); // row → its takeover timer
-  const seen = new Map(); // row → when this page first saw it due
 
   // A NEW SALT, when the plan says one is due (`rules::rekey::plan`): written once NOBODY PUT OUT still holds a place
   // in the key group (their removal committed — 10-21: a circle's salt rotated while the unfriended still held the
@@ -84,20 +79,10 @@ export async function start(ctx) {
     })));
     // (A rotation due and not written yet: the rows wait for it — they re-key under the new salt.)
     if (plan.rotate != null && !(await rotate(sp, plan.rotate))) return true;
-    for (const { id, pub, rank, moved } of plan.due) {
+    for (const { id, pub } of plan.due) {
       const row = rows.find(x => x.id === id);
       const k = `${sp?.id ?? ""}/${id}`;
       if (!row || failed.get(k) === triggers) continue;
-      if (rank > 0) {
-        // From when it last moved, or when this page first saw it due (a row due since a removal carries an old time).
-        if (!seen.has(k)) seen.set(k, Date.now());
-        // (The one turn wait: `guards::turn_wait`.)
-        const wait = glue.turn_wait(rank, Math.max(seen.get(k), moved), Date.now());
-        if (wait > 0) {
-          if (!later.has(k)) later.set(k, setTimeout(() => (later.delete(k), kick()), wait + 1000));
-          continue;
-        }
-      }
       try {
         await files.recode(sp, row, { pub });
         failed.delete(k);

@@ -345,6 +345,8 @@ pub enum Request {
     /// mark set to it — `None`: CLEARED (the tree places one the list puts out: nothing is written until it is clean).
     /// Answered `MlsSaved`; not held: `Refused(NotSaved)`. Home only.
     EpochWrite { space: Option<[u8; 32]>, epoch: Option<u64> },
+    /// THE NODE's DEBUG TRACE (`upkeep_trace`): its last lines. Answered `Trace`. (Appended LAST: indices kept.)
+    UpkeepTrace,
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`): the codes' hashes
@@ -473,6 +475,8 @@ pub enum Answer {
     HandedNames { names: Option<[u8; 32]>, old: Vec<[u8; 32]> },
     /// A rotation begun and not finished (`DataPendingRead`): its new seed and seq.
     DataPendingIs { pending: Option<([u8; 32], u32)> },
+    /// The node's debug trace (`UpkeepTrace`), oldest first. (Appended LAST: indices kept.)
+    Trace { lines: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -884,6 +888,23 @@ pub fn upkeep_set_clock<H: Host>(h: &mut H, now: u64) {
 /// Now, in seconds, ROUGHLY: the page's last time plus a minute per wake-up since. The node fires a little early at times
 /// (measured: +12 s over 3 wake-ups) and not at all while it sleeps (slow): good for MLS lifetimes (days), not for
 /// ordering. None before a page has handed one over.
+/// THE NODE's DEBUG TRACE (owner 10-29: "why don't you log to debug?"): every request the delegate sends, every answer it
+/// gets, every decision — the last `TRACE_CAP` lines, each stamped with the wake-up and the node's clock. Read by a page
+/// (`UpkeepTrace`); a failure is READ from it, never guessed at.
+pub const UPKEEP_TRACE: &[u8] = b"identity_upkeep/trace";
+pub const TRACE_CAP: usize = 3000;
+pub fn upkeep_trace<H: Host>(h: &mut H, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
+    let mut all: Vec<String> = h.get_secret(UPKEEP_TRACE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
+    let (w, now) = (u64_of(h.get_secret(UPKEEP_WAKEUPS)).unwrap_or(0), upkeep_now(h).unwrap_or(0));
+    all.extend(lines.iter().map(|l| format!("w{w} t{now} {l}")));
+    if all.len() > TRACE_CAP {
+        all.drain(..all.len() - TRACE_CAP);
+    }
+    h.set_secret(UPKEEP_TRACE, &bincode::serialize(&all).expect("lines encode"));
+}
 pub fn upkeep_now<H: Host>(h: &H) -> Option<u64> {
     let c = h.get_secret(UPKEEP_CLOCK)?;
     let (then, at) = (u64_of(Some(c.get(..8)?.to_vec()))?, u64_of(Some(c.get(8..16)?.to_vec()))?);
@@ -1818,6 +1839,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             upkeep_status(h, Some(&a.public()))
         }
         Request::UpkeepStatus => upkeep_status(h, session(h, &app).map(|a| a.public()).as_ref()),
+        Request::UpkeepTrace => Trace { lines: h.get_secret(UPKEEP_TRACE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default() },
         Request::TokenSign { message } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };
             if a.home != app {

@@ -3261,8 +3261,16 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
           from cards, retired by any placed member, an unplaced listed account enters by itself (page)
 - [ ] 3. A removed device reads nothing written after: account and spaces (probes k85-two, remove-control-bk) + the
         forged/rogue-writer cases of (1)–(2).
-- [ ] 4. Every page CLOSED, the node: places a new device (k85-node), takes out a removed one, re-keys a space's files
-        after a removal (fx probe — today a unit test only).
+- [~] 4. Every page CLOSED, the node: places a new device (k85-node), takes out a removed one, re-keys a space's files
+        after a removal. 10-29 k90-kick-closed PASS on fx/fy/fz (probes-k90u): A's node took B out (+1 s), re-keyed
+        the file under a new salt and burned 23 old pieces (one wake-up), C on fx read its 200 000 bytes whole. Causes
+        fixed on the way, each READ from the node's own trace (`UpkeepTrace`, new): the node's account in its check;
+        self-joiners read from the bag; the card-reader race; a tree a removal left ROOTLESS is due its key change
+        (`Group::rootless`/`due`, page and node); a re-key starts on the answer that marks the tree clean (`run_now`,
+        not the next wake-up); NO re-key turns (`rules::rekey::plan`: the same pieces whoever makes them — the
+        2-minute takeover timer gone); `NEW_CONTRACTS_REACH_THE_NETWORK` = true (measured on 0.2.146). OPEN: the node
+        idles 2 wake-ups after the page's last tick (`PAGE_AWAY`) — the remaining delay after a page closes; k85-node
+        not re-run; release not cut.
 - [ ] 5. Upgrades keep everything (keys, device seed, spaces, history): the three gates on every release.
 - [ ] 6. 6c: MLS code removed but the migration pieces; no dead MLS path in page, node or identity.
 - Also: old builds' wake-up cost on nodes; the node rebuilds its trees every round (unmeasured — measure, then fix the

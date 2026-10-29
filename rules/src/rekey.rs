@@ -3,7 +3,7 @@
 //! (10-19, inventory #7/#8: the page had its own `due`/`rotateIfRemoved` — it ranked members the acts had put out,
 //! and planned a rotation where the node would not; now both call this.)
 
-use crate::{admission, guards};
+use crate::admission;
 
 /// A key row of `files` (`k/<id>`) as the plan reads it: its salt number (`n`: -2 adopted, -1 public), whether it is
 /// public, its app (domain), and when it last MOVED (its row's time, its progress — the later).
@@ -53,7 +53,7 @@ pub struct Plan {
 /// (a group held from before a removal still lists them, and one ranked first would hold every row up).
 /// `reads_anyone(app)`: whether that domain's content reads in public.
 #[allow(clippy::too_many_arguments)]
-pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone: &[String], banned: &[String], rows: &[Row], reads_anyone: &dyn Fn(&str) -> bool, me: &str, now_ms: u64) -> Plan {
+pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone: &[String], banned: &[String], rows: &[Row], reads_anyone: &dyn Fn(&str) -> bool, me: &str, _now_ms: u64) -> Plan {
     let rotate = salt.and_then(|(_, removals)| (out.len() > removals && !members.iter().any(|m| out[removals..].contains(m))).then_some(out.len()));
     let n_now = salt.map(|(n, _)| n).unwrap_or(0) + i64::from(rotate.is_some());
     let ranked: Vec<String> = members.iter().filter(|m| !gone.contains(m) && !banned.contains(m)).cloned().collect();
@@ -61,9 +61,14 @@ pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone
     for row in rows {
         let public = row.public && reads_anyone(&row.app);
         let is_due = row.n == -2 || (if row.n == -1 { !public } else { row.n < n_now });
-        let Ok(rank) = u64::try_from(admission::turn(&row.id, &ranked, me)) else { continue };
+        // (Only one who may — never one put out. NO TURNS: a re-key is the same pieces whoever makes it — key and secret
+        // from the file and the salt — so each who sees a row due re-keys it AT ONCE; 10-29: a 2-minute takeover timer
+        // held the node behind a member whose page was closed.)
+        if admission::turn(&row.id, &ranked, me) < 0 {
+            continue;
+        }
         if is_due {
-            due.push(Due { id: row.id.clone(), public: row.n == -2 && public, rank, wait: guards::turn_wait(rank, row.moved, now_ms, guards::TAKEOVER_MS), moved: row.moved });
+            due.push(Due { id: row.id.clone(), public: row.n == -2 && public, rank: 0, wait: 0, moved: row.moved });
         }
     }
     Plan { rotate, due }

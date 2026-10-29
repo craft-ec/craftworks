@@ -1052,3 +1052,50 @@ fn a_waiting_operation_says_its_predecessor_was_refused() {
     assert_eq!(said.waiting, 1, "{said:?}");
     assert!(said.waits[0].contains("on no feed read here"), "{said:?}");
 }
+
+/// An add waiting on its member's CARD names the act that let them in (`waiting_cards`): the node reads that account's
+/// card next round, not after its 10-minute "asked, none there" wait (10-29, fz). CONTROL: the card known, the add applies
+/// and nothing is named.
+#[test]
+fn an_add_waiting_on_a_card_names_its_act() {
+    let (owner, member) = (account(31), account(32));
+    let full = list(&[(&owner, "did:owner"), (&member, "did:member")]);
+    let (mut go, root) = Group::create(&SPACE, owner.clone()).unwrap();
+    let add = go.add_member(&id(&member), &member.leaf_key(), &act_in(&member)).unwrap().unwrap();
+    // The member's card not read: whose it is unknown.
+    let mut no_card = list(&[(&owner, "did:owner"), (&member, "did:member")]);
+    no_card.accounts.remove(&id(&member));
+    let mut g = Group::empty(&SPACE, owner.clone());
+    let said = g.merge_all(&[root.clone(), add.clone()], &no_card);
+    assert_eq!(said.waiting, 1, "{said:?}");
+    assert_eq!(said.waiting_cards, vec![act_in(&member)], "{said:?}");
+    let mut gc = Group::empty(&SPACE, owner);
+    let said = gc.merge_all(&[root, add], &full);
+    assert_eq!((said.waiting, said.waiting_cards.len()), (0, 0), "{said:?}");
+}
+
+/// A REMOVAL LEAVES THE TREE ROOTLESS — the removed member cannot make the key change and every other one is in step:
+/// `due` says so and `reconcile` makes the one key change, after which the tree is writable (10-29, fz: a self-leave held
+/// the node's re-key forever).
+#[test]
+fn a_tree_a_removal_left_rootless_is_due_its_key_change() {
+    let mut rng = StdRng::seed_from_u64(9);
+    let (a, b) = (account(1), account(2));
+    let mut l = list(&[(&a, "did:a")]);
+    l.act([7; 32], (true, id(&b)));
+    l.act([6; 32], (false, id(&b)));
+    let (mut ga, _) = Group::create(&SPACE, a.clone()).unwrap();
+    ga.add_member(&id(&b), &b.leaf_key(), &[7; 32]).unwrap().unwrap();
+    ga.rotate(&mut rng).unwrap();
+    ga.remove_member(&id(&b), &[6; 32]).unwrap().unwrap();
+    let cards: Vec<Card> = vec![("did:a".to_string(), id(&a), a.leaf_key().to_bytes())];
+    let outs = std::collections::BTreeMap::new();
+    let listed = |d: &str| d == "did:a";
+    assert!(ga.writable(&l).is_none(), "rootless: nothing to write with");
+    assert!(ga.rootless());
+    assert!(ga.due(&cards, &listed, &outs), "a rootless tree is due its key change, the list already placed");
+    let r = ga.reconcile(&cards, &listed, &std::collections::BTreeMap::new(), &outs, [4; 32]);
+    assert_eq!(r.ops.len(), 1, "one key change, nothing added or removed: {:?}", r.not);
+    assert!(ga.writable(&l).is_some(), "rooted again: writable");
+    assert!(!ga.due(&cards, &listed, &outs), "in step: nothing due");
+}

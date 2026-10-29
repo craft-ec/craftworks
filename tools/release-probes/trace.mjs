@@ -31,3 +31,11 @@ export async function traced(page, label, dir) {
   }, 2000);
   page.on("close", () => clearInterval(hook));
 }
+
+// THE NODE's OWN DEBUG TRACE (its delegate: every request, answer and decision), read through a logged-in page of it and
+// written beside the page traces as <dir>/node-<label>.trace.
+export async function nodeTrace(u, label, dir) {
+  const lines = await u.ev(async () => (await (await app.require("auth")).identity.upkeepTrace())?.trace?.lines ?? null).catch(e => [`ERR ${e.message}`]);
+  fs.writeFileSync(path.join(dir, `node-${label}.trace`), (lines ?? ["(no trace answered)"]).join("\n") + "\n");
+  return lines?.length ?? 0;
+}

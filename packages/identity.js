@@ -232,6 +232,8 @@ export async function start(ctx) {
     // With it, the page's randomness and time: the delegate has neither of its own.
     upkeepWatch: inbox => call(core.frames_upkeep_watch(inbox, crypto.getRandomValues(new Uint8Array(32)), Date.now()), "handing upkeep the inbox"),
     upkeepStatus: () => call(core.frames_upkeep_status(), "upkeep's status"),
+    // THE NODE's DEBUG TRACE: every request its rounds sent, every answer, every decision (the last 3000 lines).
+    upkeepTrace: () => call(core.frames_upkeep_trace(), "the node's debug trace"),
     upkeepCodes: (bag, tail, idlog, sealed, piece, block, devices) => call(core.frames_upkeep_codes(bag, tail, idlog, sealed, piece, block, devices), "handing upkeep the contracts"),
     upkeepMandate: (me, spaces) => call(core.frames_upkeep_mandate(me, JSON.stringify(spaces)), "handing upkeep the mandate"),
     // The groups this page loaded (space ids, hex): no longer reported as moved.

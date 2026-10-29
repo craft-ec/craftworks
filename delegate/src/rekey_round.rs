@@ -35,6 +35,27 @@ const SEEN: &[u8] = b"identity_upkeep/rekey/seen";
 const NEXT_AT: &[u8] = b"identity_upkeep/rekey/next";
 /// Wake-ups between rounds (one a minute: every ten minutes).
 pub const EVERY: u64 = 10;
+/// A re-key HELD for a clean key tree (`KEYS_WAIT`): begun THE MOMENT the keys round marks the tree clean (`clean_now`,
+/// then `run_now` on the same answer) — waited on the condition, never on a wake-up (10-29, fz: held at wake-up 2, the
+/// tree clean from wake-up 1, the next round due at 12; then one wake-up — a minute — per step).
+const WAITS_CLEAN: &[u8] = b"identity_upkeep/rekey/waits-clean";
+const RUN_NOW: &[u8] = b"identity_upkeep/rekey/run-now";
+pub(crate) fn clean_now<H: Host>(h: &mut H) {
+    if h.get_secret(WAITS_CLEAN).is_some_and(|b| b == [1]) {
+        let w = identity::upkeep_wakeups(h);
+        h.set_secret(NEXT_AT, &w.to_le_bytes());
+        h.set_secret(WAITS_CLEAN, &[]);
+        h.set_secret(RUN_NOW, &[1]);
+    }
+}
+/// The re-key `clean_now` brought forward, begun now (on the answer that marked the tree clean).
+pub fn run_now<H: Host>(h: &mut H) -> Vec<Io> {
+    if !h.get_secret(RUN_NOW).is_some_and(|b| b == [1]) {
+        return Vec::new();
+    }
+    h.set_secret(RUN_NOW, &[]);
+    woke(h)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum Step {
@@ -368,9 +389,18 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
         // (THE KEY TREE CLEAN FIRST — the page's gate too: the new salt sealed with the generation written with only once
         // the tree found clean at THAT mark placed no account off the list now; else the keys round goes first — 10-28
         // review: the salt was sealed with a generation the one removed held.)
-        let clean = crate::account_round::clean_at(h, &r.member, &r.space).is_some_and(|(n, placed)| identity::latest_epoch(h, &r.member, r.space) == Some(n) && placed.iter().all(|d| r.roster.contains(d)));
+        let at = crate::account_round::clean_at(h, &r.member, &r.space);
+        let latest = identity::latest_epoch(h, &r.member, r.space);
+        let clean = at.as_ref().is_some_and(|(n, placed)| latest == Some(*n) && placed.iter().all(|d| r.roster.contains(d)));
         if !clean {
-            crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: a member removed — the new salt waits for the key tree to be clean", r.name));
+            // (Which way not clean — said: no clean merge marked, the mark on another generation, or one off the list.)
+            let why = match &at {
+                None => "no merge with nothing waiting marked yet".to_string(),
+                Some((n, _)) if latest != Some(*n) => format!("marked at {n}, writing {latest:?}"),
+                Some((_, placed)) => format!("{} placed off the list", placed.iter().filter(|d| !r.roster.contains(d)).count()),
+            };
+            crate::upkeep::followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_WAIT, &format!("{}: a member removed — the new salt waits for the key tree to be clean ({why})", r.name));
+            h.set_secret(WAITS_CLEAN, &[1]);
             return next_space(h, c, r.member, r.me.clone(), r.rest.clone());
         }
         let Some(new) = identity::upkeep_random(h) else { return next_space(h, c, r.member, r.me.clone(), r.rest.clone()) };

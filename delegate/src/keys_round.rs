@@ -37,6 +37,16 @@ const ASKED: &[u8] = b"identity_upkeep/beekem-asked/";
 pub(super) fn asked<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<(String, u64)> {
     h.get_secret(&[ASKED, &member[..], &space[..]].concat()).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
+/// ASKED AGAIN NOW: accounts whose card an operation waits on (`MergedAll::waiting_cards`) — the one who added them
+/// read it — out of the "asked, none there" list, so the next round reads their card (10-29, fz: asked once before the
+/// card had its member, then ten minutes before asking again; the tree never placed them).
+fn ask_now<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], dids: &[String]) {
+    if dids.is_empty() {
+        return;
+    }
+    let all: Vec<(String, u64)> = asked(h, member, space).into_iter().filter(|(d, _)| !dids.contains(d)).collect();
+    h.set_secret(&[ASKED, &member[..], &space[..]].concat(), &bincode::serialize(&all).expect("a list encodes"));
+}
 pub(super) fn asking<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], dids: &[String], now_ms: u64) {
     let mut all: Vec<(String, u64)> = asked(h, member, space).into_iter().filter(|(d, t)| !dids.contains(d) && !craftworks_rules::members::card_due(Some((*t, false)), now_ms)).collect();
     all.extend(dids.iter().map(|d| (d.clone(), now_ms)));
@@ -167,6 +177,9 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     }
     // (`Group::merge_all`: the one loop, the page's too.)
     let merged = g.merge_all(&ops, &list);
+    // (Each add waiting on a card: that account's card read next round — by the act the add names.)
+    let card_now: Vec<String> = merged.waiting_cards.iter().filter_map(|a| list.acts.get(a)).filter(|(inn, _)| *inn).map(|(_, d)| d.clone()).collect();
+    ask_now(h, &r.member, &r.space, &card_now);
     // A SHORT LIST still MERGES what our check takes (K4 fix, the page's too): an operation taken on a short read is taken
     // on the whole one too; one it does not take waits for the whole list (DEFERRED, never refused). Its generations
     // kept; nothing reconciled — judged against a list read short, the adds of every account it missed would be
@@ -174,7 +187,7 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     // lacked, its list never read whole.)
     if let Err(why) = whole(&r, &gov) {
         crate::account_round::keep_generations(h, &r.member, Some(r.space), &mut g, None::<&ListCheck>);
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — what the check takes merged, {} deferred; nothing reconciled this round", m.name, merged.refused.len()));
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_SHORT, &format!("{}: {why} — what the check takes merged, {} deferred; nothing reconciled this round{}", m.name, merged.refused.len(), if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) }));
         return next_space(h, c, r);
     }
     let (refused, waiting) = (merged.refused.len(), merged.waiting);
@@ -203,7 +216,18 @@ pub(super) fn reconcile<H: Host>(h: &mut H, c: &Held, r: Round, m: &Mandate, now
     let retiring: Vec<[u8; 32]> = superseded.iter().map(|(_, id, _)| *id).filter(|id| placed.contains(id)).collect();
     // (`Group::due`: reconcile's own conditions, the page's too.)
     if retiring.is_empty() && !g.due(&members, &|d| list.listed(d), &outs) {
-        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting, {refused} refused)", m.name, placed.len(), waiting));
+        let waits_said = if merged.waits.is_empty() { String::new() } else { format!(": {}", merged.waits.iter().take(3).map(|w| w.chars().take(90).collect::<String>()).collect::<Vec<_>>().join(" / ")) };
+        let cards_said = if r.reading.card_says.is_empty() { String::new() } else { format!("; cards: {}", r.reading.card_says.join(", ")) };
+        // (WHOM it reads by — the list, the members learned with their ids, this read's cards: where a card is lost, said.)
+        let short = |d: &str| d.get(12..20).unwrap_or(d).to_string();
+        let hex8 = |b: &[u8; 32]| b[..4].iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let cards_said = format!(
+            "{cards_said}; listed {}; learned {}; read now {}",
+            gov.roster.iter().map(|d| short(d)).collect::<Vec<_>>().join(","),
+            members.iter().map(|(d, id, _)| format!("{}={}", short(d), hex8(id))).collect::<Vec<_>>().join(","),
+            r.reading.beekem.iter().map(|(d, id, _)| format!("{}={}", short(d), hex8(id))).collect::<Vec<_>>().join(","),
+        );
+        followed(h, &r.member, &r.space, craftworks_rules::steps::KEYS_IN_STEP, &format!("{}: the tree places the list ({} placed, {} waiting{waits_said}, {refused} refused){cards_said}", m.name, placed.len(), waiting));
         return next_space(h, c, r);
     }
     // (A delegate has no randomness of its own: a key change draws from upkeep's pool.)

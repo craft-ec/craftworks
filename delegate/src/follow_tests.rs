@@ -484,7 +484,8 @@ fn k5_the_node_adds_a_listed_member_every_page_closed() {
     // CONTROL: no act lets B in — nothing added.
     let mut c = bee_world(&[], &b);
     c.run();
-    assert_eq!(owner_ops(&c).len(), 1, "nobody added: {:?}", c.said());
+    // (The creation alone has no root: its one key change made — `Group::due`, a rootless tree — and nobody added.)
+    assert_eq!(owner_ops(&c).len(), 2, "nobody added, one key change: {:?}", c.said());
     assert!(!merged(&b, &owner_ops(&c)).placed());
 }
 
@@ -625,13 +626,14 @@ fn k5_a_key_operation_stored_as_a_file_is_read_and_merged() {
 /// K5, a LARGE key operation made by the node (here every one, by the test's switch): STORED AS A FILE
 /// (`file_io::FileWrite`, as a page's put), its row naming it, the file listed in the space's `files` table — and the
 /// next round reads it back (in step, nothing written). On a network where a contract made here does not reach the
-/// others (`upkeep::creates`, live today): the change is left to a page, and no generation of it kept.
+/// others (`upkeep::creates`; freenet ≤ 0.2.141): the change is left to a page, and no generation of it kept.
 #[test]
 fn k5_a_large_operation_is_stored_as_a_file_and_read_back() {
     let b = person(0x55);
     let acts = [json!({ "act": "added", "did": b.id(), "at": 10 })];
     crate::upkeep::ALL_AS_FILES.with(|f| f.set(true));
-    // Live today: nothing made here reaches the others — left to a page, nothing kept.
+    // Where nothing made here reaches the others (freenet ≤ 0.2.141): left to a page, nothing kept.
+    crate::upkeep::CREATES.with(|f| f.set(false));
     let mut c = bee_world(&acts, &b);
     let before = identity::kept_epochs(&c.h, &c.member, &Some(SPACE)).len();
     c.run();

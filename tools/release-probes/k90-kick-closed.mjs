@@ -1,9 +1,10 @@
-// K90 KICK WITH EVERY PAGE CLOSED, on fx/fy/fz: A (fx) owner, B (fy) and C (fz) members; A uploads a file; A KICKS B and
+// K90 KICK WITH EVERY PAGE CLOSED, on fx/fy/fz: A (fz — a node under freenet's 64-per-app background cap) owner, B (fy)
+// and C (fx) members; A uploads a file; A KICKS B and
 // every A and C page closes at once. With no A or C page open, a NODE takes B out of the space's tree and re-keys its
 // files: their feeds change while closed (raw GETs from B's page), then C, reopened, reads (no reconcile) B out and the
 // file under the new salt.   node k90-kick-closed.mjs <fresh>
 const { chromium } = await import(process.env.PLAYWRIGHT ?? `${process.env.HOME}/dev/atelier/node_modules/playwright-core/index.mjs`);
-const { traced, traceDir } = await import(new URL("./trace.mjs", import.meta.url));
+const { traced, traceDir, nodeTrace } = await import(new URL("./trace.mjs", import.meta.url));
 const TRACE = traceDir(import.meta.url);
 let pageN = 0;
 const [fresh, phase = "all"] = process.argv.slice(2);
@@ -79,12 +80,12 @@ const acceptRun = u => u.ev(async () => (await (await app.require("conversation"
 const step = async (what, p, ms = 180000) => { say("…", what); let t; try { return await Promise.race([p, new Promise((_, no) => (t = setTimeout(() => no(new Error(`STALLED at: ${what}`)), ms)))]); } finally { clearTimeout(t); } };
 const fails = [];
 const check = (what, ok, got) => (say(ok ? "PASS" : "FAIL", what, JSON.stringify(got)?.slice(0, 500)), ok || fails.push(what));
-const A = await open(17691);
-const aDid = await step("A registers on fx", register(A, PIN.a, "alice"), 300000);
+const A = await open(17693);
+const aDid = await step("A registers on fz", register(A, PIN.a, "alice"), 300000);
 const B = await open(17692);
 const bDid = await step("B registers on fy", register(B, PIN.b, "bob"), 300000);
-const C = await open(17693);
-const cDid = await step("C registers on fz", register(C, PIN.c, "carol"), 300000);
+const C = await open(17691);
+const cDid = await step("C registers on fx", register(C, PIN.c, "carol"), 300000);
 say("A", aDid.slice(12, 20), "B", bDid.slice(12, 20), "C", cDid.slice(12, 20));
 const sid = await step("A makes a space", A.ev(async () => (await (await app.require("space")).create("server", "Kick space")).id), 120000).catch(e => say("space:", e.message));
 const spOf = `(await (await app.require("space")).mine()).find(s => s.id === id)`;
@@ -129,46 +130,68 @@ const feedsOf = u => u.ev(async id => {
 const watched = [...(await feedsOf(A)).map(f => ({ ...f, who: "A" })), ...(await feedsOf(C)).map(f => ({ ...f, who: "C" }))];
 say("watched feeds:", JSON.stringify(watched.map(w => `${w.who}:${w.app}:${String(w.id).slice(0, 8)}`)));
 const fp = () => B.ev(async ids => { const n = await app.require("node"); const out = {}; for (const c of ids) { const j = JSON.stringify(await n.ask(n.core.frames_get(n.bytes(c))[1], x => x.id === c, "raw get", 10000).catch(() => null)); out[c] = j ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(j)))).slice(0, 4).map(x => x.toString(16).padStart(2, "0")).join("") : null; } return out; }, watched.map(w => w.id)).catch(e => ({ ERR: e.message }));
-// THE KICK — then every A and C page closed. (Feeds watched only to know when to look: a baseline BEFORE the kick.)
-const base = await fp();
+// A BASELINE ONCE THE FEEDS ARE STILL (10-29: A's upload, still spreading, counted as the node's work): two equal
+// reads in a row, before the kick.
+let base = await fp();
+for (let end = Date.now() + 180000; Date.now() < end; ) {
+  await wait(15000);
+  const again = await fp();
+  if (JSON.stringify(again) === JSON.stringify(base)) break;
+  base = again;
+}
+// THE KICK — then every A and C page closed.
 const tKick = Date.now();
 await step("A kicks B", A.ev(async ([id, did]) => { const sp = (await (await app.require("space")).mine()).find(s => s.id === id); return (await (await app.require("moderation")).of(sp)).remove(did); }, [sid, bDid]), 180000).catch(e => say("kick:", e.message));
 await A.p.goto("about:blank");
 await C.p.goto("about:blank");
 const tClosed = Date.now();
 say("closed", Math.round((tClosed - tKick) / 1000), "s after the kick began");
-const moved = {};
+// WAITED ON THE FILES FEED MOVING from the still baseline, then STILL again (the node's new salt and the row it
+// re-keyed — one wake-up, one or two updates; 10-29: waiting for two sat out the deadline). Deadline 15 min.
+const changes = {}, last = { ...base };
+let filesMoved = false;
 for (let end = Date.now() + 900000; Date.now() < end; ) {
-  await wait(20000);
+  await wait(10000);
   const now = await fp();
-  for (const w of watched) if (now[w.id] && base[w.id] && now[w.id] !== base[w.id] && !moved[w.id]) moved[w.id] = Math.round((Date.now() - tKick) / 1000);
-  if (watched.some(w => !/keyops$/.test(w.app) && moved[w.id])) break;
+  let movedNow = false;
+  for (const w of watched) if (now[w.id] && last[w.id] && now[w.id] !== last[w.id]) { changes[w.id] = (changes[w.id] ?? 0) + 1; last[w.id] = now[w.id]; movedNow = true; say("moved:", `${w.who}:${w.app}`, Math.round((Date.now() - tKick) / 1000), "s after the kick"); }
+  if (filesMoved && !movedNow) break;
+  filesMoved ||= watched.some(w => !/keyops$/.test(w.app) && changes[w.id]);
 }
-say("feeds moved (s after the kick):", JSON.stringify(watched.map(w => `${w.who}:${w.app}: ${moved[w.id] ?? "no"}`)));
 // C REOPENED: what the nodes wrote, read (merged, no reconcile of its own first).
-await C.p.goto(site(17693) + "#/settings");
+await C.p.goto(site(17691) + "#/settings");
 await wait(25000);
 const tK = await treeOf(C, false);
 check("B is out of the space's tree (read by C, no reconcile)", !!tK?.members && !tK.members.includes(tB?.me) && tK.members.includes(tA?.me) && tK.members.includes(tC?.me), { tK, b: tB?.me });
 const f1 = await filesOf(C);
 check("the file is re-keyed under a new salt", f1?.salt > f0?.salt && f1.files.every(f => f.n === f1.salt), { f0, f1 });
+// C — on another node — READS the file as it is now (its re-keyed pieces fetched over the network): the bytes A put.
+const readBack = await C.ev(async ref => {
+  const F = await app.require("files");
+  const got = new Uint8Array(await (await F.get(await F.current(ref))).arrayBuffer());
+  return { size: got.length, same: got.length === 200000 && got.every((x, i) => x === ((i * 31) & 255)), ref: JSON.stringify(await F.current(ref)).slice(0, 120) };
+}, fileRef).catch(e => ({ ERR: e.message }));
+check("C reads the file's bytes after the re-key (from another node)", readBack?.same === true, readBack);
 // THE NODES' OWN RECORD (always): what each node's rounds decided — the judge of who did it.
 const nodeOf = u => u.ev(async () => (await (await app.require("auth")).identity.upkeepStatus())?.upkeep ?? null).catch(e => ({ ERR: e.message }));
 const cNode = await nodeOf(C);
 say("C's node:", JSON.stringify(cNode));
 const tReopenA = Date.now();
-await A.p.goto(site(17691) + "#/settings");
+await A.p.goto(site(17693) + "#/settings");
 await wait(25000);
 const aNode = await nodeOf(A);
 say("A's node:", JSON.stringify(aNode));
+say("node traces:", "A (fz)", await nodeTrace(A, "A-fz", TRACE), "line(s); C (fx)", await nodeTrace(C, "C-fx", TRACE), "line(s)");
 const spHex = await C.ev(async id => (await (await app.require("space")).mine()).find(s => s.id === id)?.id ?? null, sid).catch(() => null);
 const after = d => (d?.decided ?? []).filter(x => x.at >= tKick && (!spHex || x.space === spHex || x.space?.startsWith?.(String(spHex).slice(0, 12))));
 const decided = [...after(aNode).map(x => ({ node: "A", ...x })), ...after(cNode).map(x => ({ node: "C", ...x }))];
-check("a NODE took B out (keys-reconciled, 1 removed, after the kick)", decided.some(x => x.step === "keys-reconciled" && /1 removed/.test(x.why ?? "")), decided.map(x => `${x.node} ${x.step}: ${String(x.why).slice(0, 90)}`));
+// (Who took B out is reported, not judged: B's own page — open, for the raw reads — takes its member out when kicked;
+// otherwise a node does. That B is out is checked above.)
+say("B taken out by:", decided.some(x => x.step === "keys-reconciled" && /1 removed/.test(x.why ?? "")) ? "a node" : "B's own page (kicked, it leaves)");
 check("a NODE re-keyed the space's files (files-rekeyed, after the kick)", decided.some(x => x.step === "files-rekeyed"), decided.map(x => `${x.node} ${x.step}: ${String(x.why).slice(0, 90)}`));
 // A's PAGE did no key change after the kick (its whole trace, on file).
 const fsm = await import("node:fs");
-const aTrace = (() => { try { return fsm.readFileSync(`${TRACE}/17691-1.trace`, "utf8"); } catch { return ""; } })();
+const aTrace = (() => { try { return fsm.readFileSync(`${TRACE}/17693-1.trace`, "utf8"); } catch { return ""; } })();
 const tag = String(spHex ?? "").slice(0, 12), hhmmss = new Date(tKick).toISOString().slice(11, 19);
 const reopened = new Date(tReopenA).toISOString().slice(11, 19);
 const pageAfter = aTrace.split("\n").filter(l => l.slice(0, 8) >= hhmmss && l.slice(0, 8) < reopened && l.includes(tag) && /keys-reconciled|keys-tree-entered/.test(l));

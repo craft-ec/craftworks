@@ -120,16 +120,16 @@ fn mandate<H: Host>(h: &H, r: &Round) -> Option<Mandate> {
 /// THE ROUND's step over a space (`identity::Decided`: the `group` lifecycle's `follow-<step>` move, by the node — its
 /// plan, its commit, an entry skipped, a stall, each with why). Never free text beside it.
 pub(crate) fn followed<H: Host>(h: &mut H, member: &[u8; 32], space: &[u8; 32], step: &str, why: &str) {
+    identity::upkeep_trace(h, &[format!("decided {step} [{}]: {why}", space[..6].iter().map(|b| format!("{b:02x}")).collect::<String>())]);
     let at = identity::upkeep_now_ms(h);
     identity::upkeep_decide(h, member, identity::Decided { seq: 0, space: *space, did: String::new(), q: [0; 16], at, step: step.into(), why: why.into() });
 }
 
-/// Whether a contract this delegate CREATES reaches the network. Not on freenet ≤ 0.2.141 (measured 10-05 on a test
-/// node: a delegate's `PutContractRequest` is stored on its own node, then broadcast only to peers already interested in
-/// it — a new contract has none (`BROADCAST_NO_TARGETS`, giving up), and a GET from anywhere, its own node's pages too,
-/// answers NotFound; freenet #5542). So upkeep writes only to contracts already there: anything that makes one — a
-/// file's new pieces, a new feed or catalog, a flush's tree blocks — is left to a page.
-pub const NEW_CONTRACTS_REACH_THE_NETWORK: bool = false;
+/// Whether a contract this delegate CREATES reaches the network. Yes on freenet 0.2.146 (measured 10-29, k90 on fx/fy/fz:
+/// the node on fz re-keyed a file with every page closed — new pieces — and a page on fx read its 200 000 bytes whole).
+/// Not on ≤ 0.2.141 (measured 10-05: stored on its own node only, `BROADCAST_NO_TARGETS`; freenet #5542) — there,
+/// anything that makes one (a file's new pieces, a new feed or catalog, a flush's tree blocks) is left to a page.
+pub const NEW_CONTRACTS_REACH_THE_NETWORK: bool = true;
 #[cfg(test)]
 thread_local! {
     /// A test's network that does take them (the paths that create, exercised).
@@ -155,7 +155,16 @@ pub(crate) fn readers<H: Host>(h: &H, member: &[u8; 32], m: &Mandate) -> (std::c
     // (Only accounts whose card names their member — `keys_round::known`: one never carded, or gone, is never read
     // round after round; fx 10-18, the per-round cap.)
     let known: Vec<String> = keys_round::known(h, member, &m.space).into_iter().map(|k| k.0).collect();
-    let listed: Vec<String> = roster_kept(h, member, &m.space).into_iter().filter(|d| known.contains(d)).collect();
+    let mut listed: Vec<String> = roster_kept(h, member, &m.space).into_iter().filter(|d| known.contains(d)).collect();
+    // …and the accounts the writers bag NAMES that the list does not (K8.3, the page's rule — `storage.currentWriters`): a
+    // self-joiner's `join` act is in ITS OWN feed, read before the list names it; its devices confirm it (only the devices
+    // its key log and card name are read). (10-29, fz: B and C joined by a code; the node's list stayed the owner alone —
+    // their acts never read — and it never placed them, took nobody out, re-keyed nothing.)
+    for d in bag_named(h, member, &m.space) {
+        if !listed.contains(&d) {
+            listed.push(d);
+        }
+    }
     let dids = craftworks_account::reading_dids(&listed, Some(&m.owner)).iter().filter_map(|d| craftworks_account::did_bytes(d)).collect();
     (epochs, dids)
 }
@@ -183,6 +192,11 @@ pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, r: Round) -> Vec<Io> {
 pub(crate) fn governance<H: Host>(h: &mut H, r: &Round, now_ms: u64) -> Option<craftworks_gov::Gov> {
     let m = mandate(h, r)?;
     let gov = crate::rekey::governance(&r.reading, &r.reading.writer_dids, &m.owner, now_ms);
+    // (The bag's named accounts the list does not hold yet: the next round reads them — see `readers`.)
+    if !r.reading.bag_dids.is_empty() {
+        let named: Vec<&String> = r.reading.bag_dids.iter().filter(|d| !gov.roster.contains(*d)).collect();
+        let _ = h.set_secret(&[BAG_NAMED, &r.member[..], &r.space[..]].concat(), &serde_json::to_vec(&named).unwrap_or_default());
+    }
     if whole(r, &gov).is_ok() {
         let list: Vec<&String> = gov.roster.iter().collect();
         let _ = h.set_secret(&roster_key(&r.member, &r.space), &serde_json::to_vec(&list).unwrap_or_default());
@@ -219,6 +233,11 @@ pub(crate) fn read_got<H: Host>(h: &mut H, reading: &mut Reading, space: &[u8; 3
         keep_absent(h, space, &reading.absent);
     }
     io
+}
+/// The accounts a space's writers bag NAMED at the last read that its list did not (`Reading::bag_dids`): read next round.
+const BAG_NAMED: &[u8] = b"identity_upkeep/bag-named/";
+pub(crate) fn bag_named<H: Host>(h: &H, member: &[u8; 32], space: &[u8; 32]) -> Vec<String> {
+    h.get_secret(&[BAG_NAMED, &member[..], &space[..]].concat()).and_then(|v| serde_json::from_slice(&v).ok()).unwrap_or_default()
 }
 const ROSTER: &[u8] = b"identity_upkeep/roster/";
 pub(crate) fn roster_key(member: &[u8; 32], space: &[u8; 32]) -> Vec<u8> {

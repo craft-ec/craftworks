@@ -1217,3 +1217,21 @@ fn a_carried_seed_replaces_one_minted_here_never_one_carried() {
     assert_eq!(serve(&mut m, Request::DeviceSeedKeep { seed: [0x55; 32] }, APP), Answer::Refused(Why::NotThisKey), "a carried one is never replaced");
     assert_eq!(serve(&mut m, Request::DeviceMember { fresh: [0x66; 32] }, APP), Answer::DeviceMember { seed: [0x33; 32] });
 }
+
+/// THE NODE's DEBUG TRACE: lines kept in order, the oldest dropped past the cap, answered whole (`UpkeepTrace`).
+#[test]
+fn the_nodes_trace_keeps_the_last_lines_and_answers_them() {
+    let mut m = Map::default();
+    upkeep_trace(&mut m, &["first".into()]);
+    for i in 0..TRACE_CAP {
+        upkeep_trace(&mut m, &[format!("line {i}")]);
+    }
+    match serve(&mut m, Request::UpkeepTrace, APP) {
+        Answer::Trace { lines } => {
+            assert_eq!(lines.len(), TRACE_CAP);
+            assert!(!lines.iter().any(|l| l.ends_with(" first")), "the oldest dropped");
+            assert!(lines.last().unwrap().ends_with(&format!("line {}", TRACE_CAP - 1)), "the newest last");
+        }
+        other => panic!("{other:?}"),
+    }
+}

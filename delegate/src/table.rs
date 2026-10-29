@@ -108,6 +108,10 @@ pub struct Reading {
     /// the keys round, never a short read.
     #[serde(default)]
     pub card_says: Vec<String>,
+    /// The ACCOUNTS the writers bag names (`did` beside a device, K8.3: a self-joiner names its account there): read on
+    /// the next round for the self-judged tables, as the page reads them (`storage.currentWriters`).
+    #[serde(default)]
+    pub bag_dids: Vec<String>,
     /// What did not read, as the one rule takes it (`guards::list_whole`): members' devices, and feeds `(table, why)`.
     #[serde(default)]
     pub devices_unread: Vec<String>,
@@ -211,6 +215,7 @@ impl Reading {
             beekem: Vec::new(),
             superseded: Vec::new(),
             card_says: Vec::new(),
+            bag_dids: Vec::new(),
             devices_unread: Vec::new(),
             feeds_unread: Vec::new(),
             cards_only: false,
@@ -285,13 +290,28 @@ impl Reading {
                 o.public = true;
                 let state_was_none = state.is_none();
                 let tree = self.card_trees.iter().position(|t| t.0 == did);
+                // (Its tree's blocks ASKED and not all answered: an answer of the card itself again — a second frame, a
+                // push — waits for them; concluding then read "still needs 1 block(s) after 0 fetched", 10-29, fz.)
+                if tree.is_some_and(|k| !self.card_trees[k].3.is_empty()) {
+                    return Vec::new();
+                }
                 let absorbed = state.as_ref().is_some_and(|st| o.absorb(st));
                 if let Some(k) = tree {
                     for (cid, st) in &self.card_trees[k].2 {
                         o.absorb_block(cid, st);
                     }
                 }
-                let rows = match (absorbed, o.opened()) {
+                let opened = o.opened();
+                // (What the reader made of it, said when the card does not read — 10-29: "its tree's blocks missing" with every
+                // block answered: the step itself, never a guess.)
+                let said_open = match (&opened, tree) {
+                    (Ok(data::Step::Need(c)), Some(k)) => format!("still needs {} block(s) after {} fetched", c.len(), self.card_trees[k].2.len()),
+                    (Ok(data::Step::Need(c)), None) => format!("needs {} block(s)", c.len()),
+                    (Ok(data::Step::Keys(e)), _) => format!("needs the keys of {} epoch(s)", e.len()),
+                    (Ok(data::Step::Ready(_)), _) => "ready".into(),
+                    (Err(e), _) => format!("error: {e}"),
+                };
+                let rows = match (absorbed, opened) {
                     (true, Ok(data::Step::Ready(rows))) => Some(rows),
                     // ITS TREE's BLOCKS fetched (once: a block still missing after that is a card that does not read).
                     (true, Ok(data::Step::Need(cids))) if tree.is_none() => {
@@ -321,7 +341,9 @@ impl Reading {
                     },
                     Some(None) => self.card_says.push(format!("{}: no member on its card", name.get(12..20).unwrap_or(&name))),
                     None if self.cards_only => self.card_says.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else { "unopened" })),
-                    None => {}
+                    // (The list's read too: WHICH way it did not read — 10-29, fz: a node's list read short on "their card
+                    // not read" for 15 min, nothing saying whether the card was missing, its blocks, or sealed.)
+                    None => self.card_says.push(format!("{}: its card did not read ({})", name.get(12..20).unwrap_or(&name), if state_was_none { "not there" } else if !absorbed { "its state did not take" } else if tree.is_some() { "its tree's blocks missing" } else { "unopened" }) + &format!(" — {said_open}")),
                 }
                 if self.cards_only {
                     self.resolving.remove(at);
@@ -539,8 +561,14 @@ impl Reading {
             let t = &mut self.card_trees[k];
             let at = t.3.iter().position(|(w, _)| *w == id).expect("found");
             let (_, cid) = t.3.remove(at);
-            if let Some(st) = state {
-                t.2.push((cid, st));
+            match state {
+                Some(st) => t.2.push((cid, st)),
+                // (WHICH block, by its contract: followed across the nodes' logs — 10-29, fz: a card's tree blocks missing
+                // every round for 15 min, nothing naming them.)
+                None => {
+                    let who = craftworks_account::did(&t.0);
+                    self.card_says.push(format!("{}: card block {} not found", who.get(12..20).unwrap_or(&who), id.iter().map(|b| format!("{b:02x}")).collect::<String>()));
+                }
             }
             if !t.3.is_empty() {
                 return Vec::new();
@@ -563,6 +591,9 @@ impl Reading {
                     let Some(v) = open_bag_item(&self.space, &self.epochs, "writers", craftworks_bag_contract::payload(&p)) else { continue };
                     let Some(w) = v["w"].as_str().and_then(unhex32) else { continue };
                     listed.insert(w);
+                    if let Some(d) = v["did"].as_str().filter(|d| !self.bag_dids.iter().any(|x| x == d)) {
+                        self.bag_dids.push(d.to_string());
+                    }
                     named.extend(v["pub"].as_str().map(|t| (w, t.to_string())));
                 }
             }

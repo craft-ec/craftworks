@@ -145,6 +145,19 @@ mod entry {
         out
     }
 
+    /// THE NODE's DEBUG TRACE at the one door: what came in, and every request this call sends out (`identity::upkeep_trace`).
+    fn traced(c: &mut Ctx, inbound: String, io: &[crate::upkeep::Io]) {
+        use crate::upkeep::Io;
+        let h8 = |b: &[u8; 32]| b[..4].iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let mut lines = vec![format!("in {inbound}")];
+        lines.extend(io.iter().map(|x| match x {
+            Io::Get { id, subscribe } => format!("out GET {}{}", h8(id), if *subscribe { " +sub" } else { "" }),
+            Io::Put { code, params, state } => format!("out PUT {code:?} params {}B state {}B", params.len(), state.len()),
+            Io::Update { id, delta } => format!("out UPDATE {} {}B", h8(id), delta.len()),
+        }));
+        identity::upkeep_trace(c, &lines);
+    }
+
     fn reply(answer: Vec<u8>) -> OutboundDelegateMsg {
         OutboundDelegateMsg::ApplicationMessage(ApplicationMessage::new(answer).processed(true))
     }
@@ -177,6 +190,7 @@ mod entry {
                             if let Some(member) = identity::upkeep_take_now(&mut c) {
                                 let now = clock_now(&c);
                                 let io = crate::upkeep::now(&mut c, member, now);
+                                traced(&mut c, "a page asked: the round now".into(), &io);
                                 out.extend(send(&c, io));
                             }
                             Ok(out)
@@ -210,20 +224,17 @@ mod entry {
                         None => Vec::new(),
                     };
                     let now = clock_now(&c);
-                    let io = crate::upkeep::woke(&mut c, now);
-                    out.extend(send(&c, io));
+                    let mut all = crate::upkeep::woke(&mut c, now);
                     // RE-KEYS (a space's files after a removal), side by side with admissions.
-                    let io = crate::rekey_round::woke(&mut c);
-                    out.extend(send(&c, io));
+                    all.extend(crate::rekey_round::woke(&mut c));
                     // WITNESSING (TOKEN §7a), by the member's mandate, with no page open.
-                    let io = crate::witness_round::woke(&mut c);
-                    out.extend(send(&c, io));
+                    all.extend(crate::witness_round::woke(&mut c));
                     // KEEPING (TOKEN §7a): the beacon's challenges answered, by the member's mandate, with no page open.
-                    let io = crate::keeper_round::woke(&mut c);
-                    out.extend(send(&c, io));
+                    all.extend(crate::keeper_round::woke(&mut c));
                     // THE ACCOUNT's TREE (K8.5): a device added or taken out, with no page of the account open.
-                    let io = crate::account_round::woke(&mut c);
-                    out.extend(send(&c, io));
+                    all.extend(crate::account_round::woke(&mut c));
+                    traced(&mut c, "wake-up".into(), &all);
+                    out.extend(send(&c, all));
                     Ok(out)
                 }
                 // The inbox as the node holds it; anything else, an answer upkeep waits for.
@@ -238,19 +249,28 @@ mod entry {
                     let mut io = crate::witness_round::replied(&mut c, &reply);
                     io.extend(crate::keeper_round::replied(&mut c, &reply));
                     io.extend(crate::account_round::replied(&mut c, &reply));
+                    let got = match &reply { crate::upkeep::Reply::Got { state: Some(st), .. } => format!("{}B", st.len()), _ => "NOT FOUND".into() };
                     io.extend(crate::upkeep::replied(&mut c, reply, now));
+                    io.extend(crate::rekey_round::run_now(&mut c));
+                    traced(&mut c, format!("GOT {} {got}", id[..4].iter().map(|x| format!("{x:02x}")).collect::<String>()), &io);
                     Ok(send(&c, io))
                 }
                 InboundDelegateMsg::PutContractResponse(r) => {
                     let mut c = Ctx(ctx);
                     let now = clock_now(&c);
-                    let io = crate::upkeep::replied(&mut c, crate::upkeep::Reply::Put { id: *r.contract_id, ok: r.result.is_ok() }, now);
+                    let (id, ok): ([u8; 32], bool) = (*r.contract_id, r.result.is_ok());
+                    let mut io = crate::upkeep::replied(&mut c, crate::upkeep::Reply::Put { id, ok }, now);
+                    io.extend(crate::rekey_round::run_now(&mut c));
+                    traced(&mut c, format!("PUT {} {}", id[..4].iter().map(|x| format!("{x:02x}")).collect::<String>(), if ok { "ok" } else { "REFUSED" }), &io);
                     Ok(send(&c, io))
                 }
                 InboundDelegateMsg::UpdateContractResponse(r) => {
                     let mut c = Ctx(ctx);
                     let now = clock_now(&c);
-                    let io = crate::upkeep::replied(&mut c, crate::upkeep::Reply::Updated { id: *r.contract_id, ok: r.result.is_ok() }, now);
+                    let (id, ok): ([u8; 32], bool) = (*r.contract_id, r.result.is_ok());
+                    let mut io = crate::upkeep::replied(&mut c, crate::upkeep::Reply::Updated { id, ok }, now);
+                    io.extend(crate::rekey_round::run_now(&mut c));
+                    traced(&mut c, format!("UPDATED {} {}", id[..4].iter().map(|x| format!("{x:02x}")).collect::<String>(), if ok { "ok" } else { "REFUSED" }), &io);
                     Ok(send(&c, io))
                 }
                 InboundDelegateMsg::Lifecycle(_) => Ok(Vec::new()),

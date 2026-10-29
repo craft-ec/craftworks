@@ -36,12 +36,18 @@ pub(crate) fn keep_generations<H: Host>(h: &mut H, member: &[u8; 32], space: Opt
     // operations is never marked from, 10-28 review — a clean tree's current generation; or, not clean, the mark
     // CLEARED: nothing written with a generation one put out holds.)
     if let Some(c) = check {
-        let w = g.writable(c);
+        let why = g.writable_why(c);
+        if let (Some(sp), Err(e)) = (space, &why) {
+            identity::upkeep_trace(h, &[format!("not marked clean [{}]: {e}", sp[..6].iter().map(|b| format!("{b:02x}")).collect::<String>())]);
+        }
+        let w = why.ok();
         identity::write_epoch(h, member, space, w.map(|(n, _)| n));
         // (A space's: WHICH ACCOUNTS the clean tree placed at that mark — the re-key's gate, `clean_at`.)
         if let (Some(sp), Some((n, _))) = (space, w) {
             let placed: Vec<String> = g.members().iter().filter_map(|m| c.account_of(m).or_else(|| g.whose(m).map(str::to_string))).collect();
             let _ = h.set_secret(&[CLEAN_AT, &member[..], &sp[..]].concat(), &bincode::serialize(&(n, placed)).expect("encodes"));
+            // (A re-key held for this: brought forward to the next wake-up.)
+            crate::rekey_round::clean_now(h);
         }
     }
 }

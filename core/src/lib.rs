@@ -46,6 +46,7 @@ pub fn answer_json(a: &Answer) -> Value {
         } }),
         Answer::DeviceMember { seed } => json!({ "deviceMember": { "seed": hex(seed) } }),
         Answer::DataPendingIs { pending } => json!({ "dataPending": pending.map(|(d, seq)| json!({ "data": hex(&d), "seq": seq })) }),
+        Answer::Trace { lines } => json!({ "trace": { "lines": lines } }),
         Answer::HandedNames { names, old } => json!({ "handedNames": { "names": names.map(|n| hex(&n)), "old": old.iter().map(|o| hex(o)).collect::<Vec<_>>() } }),
         Answer::Upkeep {
             wakeups,
@@ -1207,6 +1208,10 @@ mod js {
         }
         pub fn frames_upkeep_status(&mut self) -> Result<js_sys::Array, JsValue> {
             self.ask(Request::UpkeepStatus)
+        }
+        /// The node's debug trace (`identity::upkeep_trace`).
+        pub fn frames_upkeep_trace(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::UpkeepTrace)
         }
         /// The contracts upkeep writes (bag, tail: their code) and reads (the key log: its code's hash).
         pub fn frames_upkeep_codes(
