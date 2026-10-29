@@ -45,9 +45,11 @@ pub(crate) fn keep_generations<H: Host>(h: &mut H, member: &[u8; 32], space: Opt
         // (A space's: WHICH ACCOUNTS the clean tree placed at that mark — the re-key's gate, `clean_at`.)
         if let (Some(sp), Some((n, _))) = (space, w) {
             let placed: Vec<String> = g.members().iter().filter_map(|m| c.account_of(m).or_else(|| g.whose(m).map(str::to_string))).collect();
+            let moved = clean_at(h, member, &sp).map(|(was, _)| was) != Some(n);
             let _ = h.set_secret(&[CLEAN_AT, &member[..], &sp[..]].concat(), &bincode::serialize(&(n, placed)).expect("encodes"));
-            // (A re-key held for this: brought forward to the next wake-up.)
-            crate::rekey_round::clean_now(h);
+            // (A re-key held for this, or the generation MOVED — a removal's key change: the re-key begun now, never
+            // the next ten-minute round.)
+            crate::rekey_round::clean_now(h, moved);
         }
     }
 }

@@ -40,8 +40,8 @@ pub const EVERY: u64 = 10;
 /// tree clean from wake-up 1, the next round due at 12; then one wake-up — a minute — per step).
 const WAITS_CLEAN: &[u8] = b"identity_upkeep/rekey/waits-clean";
 const RUN_NOW: &[u8] = b"identity_upkeep/rekey/run-now";
-pub(crate) fn clean_now<H: Host>(h: &mut H) {
-    if h.get_secret(WAITS_CLEAN).is_some_and(|b| b == [1]) {
+pub(crate) fn clean_now<H: Host>(h: &mut H, moved: bool) {
+    if moved || h.get_secret(WAITS_CLEAN).is_some_and(|b| b == [1]) {
         let w = identity::upkeep_wakeups(h);
         h.set_secret(NEXT_AT, &w.to_le_bytes());
         h.set_secret(WAITS_CLEAN, &[]);
@@ -230,11 +230,10 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     }
     // (A member passed over: why, recorded — quiet; the same reason once.)
     let idle = |h: &mut H, m: &[u8; 32], why: &str| crate::upkeep::followed(h, m, &craftworks_rules::steps::ACCOUNT, craftworks_rules::steps::REKEY_IDLE, why);
+    // (A PAGE OPEN is no reason to wait: a re-key is the same pieces whoever makes it — `rules::rekey::plan` — so the
+    // node re-keys beside it. 10-30: it stayed out of the way for two wake-ups after every page closed, and a page
+    // going cannot tell it — measured on fz: a frame sent from `pagehide` never reaches the node.)
     for member in members {
-        if identity::upkeep_since_tick(h, &member) < crate::upkeep::PAGE_AWAY {
-            idle(h, &member, "a page is open: it re-keys");
-            continue;
-        }
         let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else {
             idle(h, &member, "no mandate handed over");
             continue;

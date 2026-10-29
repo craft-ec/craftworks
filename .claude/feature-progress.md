@@ -3268,9 +3268,11 @@ Phases (each: build → fx tests → commit → gate 3/3 → release):
         self-joiners read from the bag; the card-reader race; a tree a removal left ROOTLESS is due its key change
         (`Group::rootless`/`due`, page and node); a re-key starts on the answer that marks the tree clean (`run_now`,
         not the next wake-up); NO re-key turns (`rules::rekey::plan`: the same pieces whoever makes them — the
-        2-minute takeover timer gone); `NEW_CONTRACTS_REACH_THE_NETWORK` = true (measured on 0.2.146). OPEN: the node
-        idles 2 wake-ups after the page's last tick (`PAGE_AWAY`) — the remaining delay after a page closes; k85-node
-        not re-run; release not cut.
+        2-minute takeover timer gone); `NEW_CONTRACTS_REACH_THE_NETWORK` = true (measured on 0.2.146). 10-30 (k90w): the
+        re-key no longer waits for an open page (same pieces, so beside it) and begins when the clean generation MOVES
+        — B out at +0 s, files re-keyed at +60 s (the next wake-up; was +120 s). A page cannot tell the node it is
+        going: a frame sent from `pagehide` never reached it (measured on fz; a synthetic pagehide did) — dropped.
+        OPEN: k85-node not re-run; release not cut.
 - [ ] 5. Upgrades keep everything (keys, device seed, spaces, history): the three gates on every release.
 - [ ] 6. 6c: MLS code removed but the migration pieces; no dead MLS path in page, node or identity.
 - Also: old builds' wake-up cost on nodes; the node rebuilds its trees every round (unmeasured — measure, then fix the
