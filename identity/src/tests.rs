@@ -1186,3 +1186,34 @@ fn the_old_epoch_ranges_are_walked_once_into_the_index() {
     assert!(hold_epoch(&mut m, &me, None, 4, &[4; 32]));
     assert_eq!(kept_epochs(&m, &me, &None), vec![3, 4], "held: indexed");
 }
+
+/// An MLS state whose signer's seed is `seed` (`CWMS ‖ len ‖ seed`, as `mls_signer_seed` reads it).
+fn mls_state(seed: [u8; 32]) -> Vec<u8> {
+    [&b"CWMS"[..], &32u32.to_le_bytes(), &seed].concat()
+}
+
+/// 10-29, live v452: the owner's MLS-era device unlocked on a new build, and a seed was MINTED (`DeviceMember` with the
+/// page's fresh bytes) before the hand-over carried its MLS state — the device's credential names its MLS signer's key,
+/// so the minted seed was never placed and every account write was refused. The signer's seed, once held, is the one.
+#[test]
+fn an_mls_device_keeps_its_signer_seed_though_one_was_minted_first() {
+    let mut m = Map::default();
+    assert_eq!(provision(&mut m, ALICE, ALICE_DID, ALICE_PIN, APP), alice());
+    assert_eq!(serve(&mut m, Request::DeviceMember { fresh: [0x11; 32] }, APP), Answer::DeviceMember { seed: [0x11; 32] }, "nothing held: the fresh one kept");
+    assert_eq!(serve(&mut m, Request::MlsSave { space: None, state: mls_state([0x5A; 32]), epoch: 3, secret: [3; 32] }, APP), Answer::MlsSaved);
+    assert_eq!(serve(&mut m, Request::DeviceMember { fresh: [0x22; 32] }, APP), Answer::DeviceMember { seed: [0x5A; 32] }, "the signer's seed, the key its credential names");
+    assert_eq!(upkeep_device_seed(&m, &public(ALICE)), Some([0x5A; 32]), "the node's the same");
+}
+
+/// The seed the member moved from (`DeviceSeedKeep`, the hand-over) replaces one MINTED here meanwhile — a page asked
+/// before the hand-over carried it (10-29) — never one carried before.
+#[test]
+fn a_carried_seed_replaces_one_minted_here_never_one_carried() {
+    let mut m = Map::default();
+    assert_eq!(provision(&mut m, ALICE, ALICE_DID, ALICE_PIN, APP), alice());
+    assert_eq!(serve(&mut m, Request::DeviceMember { fresh: [0x11; 32] }, APP), Answer::DeviceMember { seed: [0x11; 32] });
+    assert_eq!(serve(&mut m, Request::DeviceSeedKeep { seed: [0x33; 32] }, APP), Answer::DeviceMember { seed: [0x33; 32] }, "the carried one replaces the minted one");
+    assert_eq!(serve(&mut m, Request::DeviceMember { fresh: [0x44; 32] }, APP), Answer::DeviceMember { seed: [0x33; 32] }, "and is kept");
+    assert_eq!(serve(&mut m, Request::DeviceSeedKeep { seed: [0x55; 32] }, APP), Answer::Refused(Why::NotThisKey), "a carried one is never replaced");
+    assert_eq!(serve(&mut m, Request::DeviceMember { fresh: [0x66; 32] }, APP), Answer::DeviceMember { seed: [0x33; 32] });
+}

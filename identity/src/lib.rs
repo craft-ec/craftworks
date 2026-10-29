@@ -1708,11 +1708,15 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if a.home != app {
                 return Refused(Why::NotHome);
             }
-            match h.get_secret(&of(DEVICE, &a.public())).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
-                Some(kept) if kept != seed => Refused(Why::NotThisKey),
-                Some(kept) => DeviceMember { seed: kept },
-                None if h.set_secret(&of(DEVICE, &a.public()), &seed) => DeviceMember { seed },
-                None => Refused(Why::NotSaved),
+            // (A seed MINTED here — a page asked before the hand-over carried this one — gives way to it; one carried
+            // before never does.)
+            let m = a.public();
+            let minted = h.get_secret(&of(DEVICE_MINTED, &m)).is_some_and(|b| b == [1]);
+            match h.get_secret(&of(DEVICE, &m)).and_then(|b| <[u8; 32]>::try_from(b).ok()) {
+                Some(kept) if kept != seed && !minted => Refused(Why::NotThisKey),
+                Some(kept) if kept == seed => DeviceMember { seed: kept },
+                _ if h.set_secret(&of(DEVICE, &m), &seed) && h.set_secret(&of(DEVICE_MINTED, &m), &[]) => DeviceMember { seed },
+                _ => Refused(Why::NotSaved),
             }
         }
         Request::UpkeepWatch { inbox, seed, now } => {
@@ -2088,21 +2092,26 @@ pub fn mls_signer_seed(state: &[u8]) -> Option<[u8; 32]> {
     let n = u32::from_le_bytes(n.try_into().ok()?) as usize;
     r.get(..n)?.get(..32)?.try_into().ok()
 }
-/// THIS DEVICE's MEMBER SEED in the account's tree (K8.6), kept per member: the one kept here; else its account MLS
-/// state's signer (its credential names that key); else `fresh`, kept as it (none given: none).
+/// THIS DEVICE's MEMBER SEED in the account's tree (K8.6), kept per member: its account MLS state's signer FIRST, where
+/// it holds one (its credential names that key); else the one kept here; else `fresh`, kept as it — MINTED (marked:
+/// `DeviceSeedKeep` replaces a minted one with the seed the member moved from). None given: none.
+/// (10-29, live v452: the owner's MLS-era device was asked for its seed on a new build before the hand-over carried its
+/// MLS state; a fresh seed was kept and won over the signer's — never placed again, every account write refused.)
 const DEVICE: &[u8] = b"identity_device/";
+const DEVICE_MINTED: &[u8] = b"identity_device_minted/";
 fn device_seed<H: Host>(h: &mut H, m: &[u8; KEY_LEN], fresh: Option<[u8; 32]>) -> Option<[u8; 32]> {
     if let Some(s) = upkeep_device_seed(h, m) {
         return Some(s);
     }
     let s = fresh?;
-    h.set_secret(&of(DEVICE, m), &s).then_some(s)
+    (h.set_secret(&of(DEVICE, m), &s) && h.set_secret(&of(DEVICE_MINTED, m), &[1])).then_some(s)
 }
 /// UPKEEP's DEVICE SEED (K8.6): as a page's `DeviceMember` gives it, never minting one.
 pub fn upkeep_device_seed<H: Host>(h: &H, m: &[u8; KEY_LEN]) -> Option<[u8; 32]> {
-    h.get_secret(&of(DEVICE, m))
-        .and_then(|b| <[u8; 32]>::try_from(b).ok())
-        .or_else(|| h.get_secret(&in_space(MLS, m, &None)).filter(|s| !s.is_empty()).and_then(|st| mls_signer_seed(&st)))
+    h.get_secret(&in_space(MLS, m, &None))
+        .filter(|s| !s.is_empty())
+        .and_then(|st| mls_signer_seed(&st))
+        .or_else(|| h.get_secret(&of(DEVICE, m)).and_then(|b| <[u8; 32]>::try_from(b).ok()))
 }
 
 /// THE NEW DATA SEED kept for a member (K8.7 — `DataKeep`, the page's; `upkeep_data_keep`, the node's): its names seed

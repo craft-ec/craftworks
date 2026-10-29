@@ -168,7 +168,7 @@ export async function start(ctx) {
       p.movedFrom = prior;
       if (p.unlocked) {
         const k = await id.moveKeysFrom(prior, pin).catch(e => ({ moved: 0, said: e.message }));
-        ctx.log("member moved", { what: `its keys: ${k.group ? "the account's group and " : ""}${k.moved} epoch(s), ${k.spaces ?? 0} space(s)${k.said ? ` (${k.said})` : ""}` });
+        ctx.log("member moved", { what: `its keys: ${k.group ? "the account's group and " : ""}${k.moved} epoch(s), ${k.spaces ?? 0} space(s), this device's member seed ${k.seed ?? "not asked"}${k.said ? ` (${k.said})` : ""}` });
       }
       return p;
     };
