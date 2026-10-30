@@ -80,8 +80,12 @@ const bDid = await step("B registers on fy", register(B, PIN.b, "bob"), 300000);
 say("A", aDid.slice(12, 20), "B", bDid.slice(12, 20));
 const sid = await step("A makes a space", A.ev(async () => (await (await app.require("space")).create("server", "Join space")).id), 120000).catch(e => say("space:", e.message));
 const board = (u, put) => u.ev(async ([id, put]) => {
-  const sp = (await (await app.require("space")).mine()).find(x => x.id === id);
+  // (The space as this page last held it: a KICKED member writes anyway — what a client ignoring the kick does — so the
+  // check is of A's reading, never of whether B's page had dropped the space yet; 10-30: two runs passed only because
+  // B's page had, "NO SPACE", and wrote nothing.)
+  const sp = (await (await app.require("space")).mine()).find(x => x.id === id) ?? window.__probeSpace;
   if (!sp) return "NO SPACE";
+  window.__probeSpace = sp;
   const t = await (await app.require("storage")).table((await app.require("space")).board(sp).messages, sp);
   await t.settled;
   if (put) await t.put(put[0], put[1]);
@@ -135,6 +139,16 @@ say("B still lists (control):", JSON.stringify(bNow));
 // WHAT B WRITES AFTER is not read by A.
 say("B's write after the kick:", JSON.stringify(await board(B, ["b-after-kick", "B after it was kicked"])));
 check("A does not read what B writes after the kick", !(await seen(A, "b-after-kick", 90000)), await board(A));
+// (WHY, always: A's departed rows, the writer caps it derives, and B's feeds' heads now — read from A's page.)
+const why = await A.ev(async ([id, bDid]) => {
+  const sp = (await (await app.require("space")).mine()).find(s => s.id === id);
+  const S = await app.require("storage"), dir = await app.require("directory");
+  const t = await S.table((await app.require("space")).tableOf(sp, "departed"), sp); await t.settled;
+  const w = await S.writersOf(sp);
+  const bNodes = await dir.devices.strict(bDid);
+  return { departed: t.rows().map(r => [r.key.slice(0, 10), r.value]), caps: [...w.byNode].filter(([n]) => bNodes.includes(n)).map(([n, x]) => [n.slice(0, 10), x]), bNodes: bNodes.map(n => n.slice(0, 10)), bHeads: await S.headsOf(sp, bNodes) };
+}, [sid, bDid]).catch(e => ({ ERR: e.message }));
+say("A's view of B (departed, caps, heads):", JSON.stringify(why).slice(0, 2500));
 check("A still reads what B wrote as a member", (await board(A)).includes?.("b-member"), await board(A));
 say("RESULT", fails.length ? "FAIL " + fails.join("; ") : "PASS");
 await b.close();

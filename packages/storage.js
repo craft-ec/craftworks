@@ -1415,7 +1415,11 @@ export async function start(ctx) {
           const cat = await ctx.optional("storage: scope.catalogOf", scope.catalogOf(node), () => null);
           await cat?.answer();
           const f = await theirs(node, true, cat);
-          if (f) take(capped(f, cap));
+          if (!f) continue;
+          // ITS FEED AS A MEMBER, taken in UNCAPPED before it left, REPLACED by the capped one — beside it, every row
+          // it wrote after leaving still merged (10-30, k88: A read a kicked B's later write; its cap was right, 1 of 3).
+          for (let i = all.length - 1; i >= 0; i--) if (all[i].owner === node) all.splice(i, 1);
+          take(capped(f, cap));
         }
       };
       const gathering = Promise.all([...others.filter(listed).map(o => ctx.background("storage: gather", gather(o))), gatherDeparted().catch(e => ctx.failed("feed not read", e, `${name}: departed writers: ${e.message}`))]);
