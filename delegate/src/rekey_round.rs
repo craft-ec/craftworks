@@ -194,7 +194,8 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, space: [u8;
 fn next_space<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: Vec<[u8; 32]>) -> Vec<Io> {
     if rest.is_empty() {
         keep(h, None);
-        return Vec::new();
+        // (This member's spaces done: the next member's, in the same pass — every member each round, never one.)
+        return pass(h, c);
     }
     let space = rest.remove(0);
     begin(h, c, member, me, space, rest)
@@ -223,7 +224,18 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         }
         return Vec::new();
     };
-    // Members take turns: the one after the member served last first.
+    // A NEW PASS over every member (the one after the member served last first).
+    h.set_secret(PASS_DONE, &[]);
+    let io = pass(h, &c);
+    issue(h, &c, io)
+}
+
+/// The members THIS PASS has served (a round goes on from one member's spaces to the next's: `next_space`).
+const PASS_DONE: &[u8] = b"identity_upkeep/rekey/pass-done";
+/// THE PASS, on: the next member not served in it yet — none left, the round ends.
+fn pass<H: Host>(h: &mut H, c: &Held) -> Vec<Io> {
+    let w = identity::upkeep_wakeups(h);
+    let mut done: Vec<[u8; 32]> = h.get_secret(PASS_DONE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
     let mut members = identity::upkeep_members(h);
     if let Some(i) = h.get_secret(LAST_MEMBER).and_then(|l| members.iter().position(|m| m.as_slice() == l.as_slice())) {
         members.rotate_left(i + 1);
@@ -234,6 +246,11 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     // node re-keys beside it. 10-30: it stayed out of the way for two wake-ups after every page closed, and a page
     // going cannot tell it — measured on fz: a frame sent from `pagehide` never reaches the node.)
     for member in members {
+        if done.contains(&member) {
+            continue;
+        }
+        done.push(member);
+        h.set_secret(PASS_DONE, &bincode::serialize(&done).expect("ids encode"));
         let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else {
             idle(h, &member, "no mandate handed over");
             continue;
@@ -246,8 +263,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
         h.set_secret(LAST, &w.to_le_bytes());
         h.set_secret(LAST_MEMBER, &member);
         let first = all.remove(0);
-        let io = begin(h, &c, member, me, first, all);
-        return issue(h, &c, io);
+        return begin(h, c, member, me, first, all);
     }
     Vec::new()
 }

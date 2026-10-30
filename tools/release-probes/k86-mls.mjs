@@ -110,7 +110,10 @@ async function pinned(u, port, hash = "#/settings") {
     const v = await fr()?.evaluate(() => app.siteV).catch(() => null);
     if (!target || v === target) return;
     if (Date.now() > end) throw new Error(`the page on ${port} runs ${v ?? "nothing"}, not the build just published (${target})`);
-    say(`  page on ${port} runs ${v ?? "nothing yet"}, waiting for ${target}`);
+    // (What the NODE serves now, beside what the page runs: a page behind its node, or a node gone back — 10-30, twice
+    // in a full run the page on fx ran the build before for 5 min.)
+    const served = execSync(`curl -sf -m 60 "http://127.0.0.1:${port}/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/manifest.json" | shasum -a 256 | cut -c1-12`, { encoding: "utf8" }).trim();
+    say(`  page on ${port} runs ${v ?? "nothing yet"}, the node serves ${served}, waiting for ${target}`);
   }
 }
 const fails = [];

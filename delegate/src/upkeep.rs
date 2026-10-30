@@ -184,7 +184,13 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
     Vec::new()
 }
 pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, r: Round) -> Vec<Io> {
-    begin(h, c, r.member, r.me, r.rest)
+    let io = begin(h, c, r.member, r.me, r.rest);
+    // (This member's spaces done: the NEXT member's round now, on this answer — every member each wake-up, never one
+    // a wake-up; 10-30, fz: a member's kick waited ~20 min behind the node's other members, one a minute.)
+    if io.is_empty() && round(h).is_none() {
+        return start(h);
+    }
+    io
 }
 
 /// The space's list as its acts say (`gov`'s replay, the page's too). Read WHOLE, it is KEPT (`roster_kept`): whose
@@ -306,7 +312,8 @@ pub fn stuck<H: Host>(h: &H, moved: u64, moved_ms: u64) -> bool {
 /// A round not moved for this long (the node's time) is stalled.
 const STUCK_MS: u64 = 3 * 60 * 1000;
 
-/// The next member's round (each person in turn), over every space of theirs.
+/// The next member's round (each person in turn), over every space of theirs — each member ONCE a wake-up (one served
+/// this wake-up already is passed over: `next_space` goes on to the next as each finishes).
 fn start<H: Host>(h: &mut H) -> Vec<Io> {
     let Some(c) = Held::of(h) else { return Vec::new() };
     let w = identity::upkeep_wakeups(h);
@@ -314,6 +321,9 @@ fn start<H: Host>(h: &mut H) -> Vec<Io> {
     let last = h.get_secret(LAST_SERVED).and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
     let from = last.and_then(|l| members.iter().position(|m| *m == l)).map_or(0, |i| i + 1);
     for member in members.iter().cycle().skip(from).take(members.len()).copied() {
+        if identity::upkeep_round_at(h, &member) == Some(w) {
+            continue;
+        }
         let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else { continue };
         let all: Vec<[u8; 32]> = spaces.iter().map(|m| m.space).collect();
         if all.is_empty() {
