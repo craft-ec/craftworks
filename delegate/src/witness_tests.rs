@@ -63,10 +63,9 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did, pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
     let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool, standing: [43; 32], block: [44; 32] };
     assert_eq!(identity::serve(&mut h, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
-    // The page still ticking: no round (it witnesses for itself).
-    assert!(run(&mut h, &got).is_empty(), "no round while the page is open");
-    // The page away: the round signs the entry into its place's signatures container.
-    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 1).to_le_bytes());
+    // (A page open or not: the node witnesses — 10-30, `PAGE_AWAY` gone; the page's signature of the same entry by the
+    // same key is deduplicated by the container, `witness::state`.) The round signs the entry into its place's container.
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(2u64 + 1).to_le_bytes());
     let puts = run(&mut h, &got);
     let wp = container(&ctx, &tl, &got, &chain, q.seq);
     let [Io::Update { id, delta }] = &puts[..] else {
@@ -80,7 +79,7 @@ fn a_drawn_member_away_from_their_page_witnesses_a_queued_entry_once() {
     assert_eq!((sig.chain, sig.seq, sig.entry), (chain, q.seq, entry));
     key.verifying_key().verify(&identity::witness_message(&chain, q.seq, &entry, sig.at), &Signature::from_bytes(&sig.sig)).expect("signed by the member");
     // SETTLED: the next wake-up asks again but signs nothing more.
-    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 2).to_le_bytes());
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(2u64 + 2).to_le_bytes());
     assert!(run(&mut h, &got).is_empty(), "an entry witnessed once");
 }
 
@@ -104,11 +103,11 @@ fn an_entry_queued_before_its_lot_is_drawn_is_signed_once_it_is() {
     assert!(matches!(identity::serve(&mut h, Request::Provision { seed, did: [0x22; 32], pin: "246810".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
     let mandate = WitnessMandate { token: ctx.code_hash, idlog: ctx.idlog, bag: tl.lot.bag, beacon_code: tl.lot.beacon_code, beacon: ctx.beacon, pool: tl.lot.pool, standing: [43; 32], block: [44; 32] };
     assert_eq!(identity::serve(&mut h, Request::WitnessMandate { mandate }, APP), Answer::WitnessMandated);
-    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 1).to_le_bytes());
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(2u64 + 1).to_le_bytes());
     assert!(run(&mut h, &got).is_empty(), "nothing to sign before its lot");
     // The beacon PAST it: signed.
     got.insert(ctx.beacon, at(testlot::E1 + 20));
-    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + 2).to_le_bytes());
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(2u64 + 2).to_le_bytes());
     let puts = run(&mut h, &got);
     let wp = container(&ctx, &tl, &got, &chain, q.seq);
     assert!(matches!(&puts[..], [Io::Update { id, .. }] if *id == wp.id()), "signed once its lot is drawn: {puts:?}");

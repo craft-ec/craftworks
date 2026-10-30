@@ -54,7 +54,7 @@ pub fn woke<H: Host>(h: &mut H) -> Vec<Io> {
     if reads::busy(h, ROUND) {
         return Vec::new();
     }
-    let all: Vec<[u8; 32]> = identity::upkeep_members(h).into_iter().filter(|m| identity::upkeep_keeper_mandate(h, m).is_some() && identity::upkeep_since_tick(h, m) >= crate::upkeep::PAGE_AWAY).collect();
+    let all: Vec<[u8; 32]> = identity::upkeep_members(h).into_iter().filter(|m| identity::upkeep_keeper_mandate(h, m).is_some()).collect();
     let Some(member) = reads::next(h, LAST, &all) else {
         reads::save(h, ROUND, None);
         return Vec::new();

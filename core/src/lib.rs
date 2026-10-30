@@ -2540,7 +2540,7 @@ mod js {
         let rows: Vec<craftworks_rules::rekey::Row> = v["rows"].as_array().map(|a| a.iter().filter_map(|r| Some(craftworks_rules::rekey::Row { id: r["id"].as_str()?.to_string(), n: r["n"].as_i64().unwrap_or(-2), public: r["pub"].as_bool().unwrap_or(false), app: craftworks_rules::rekey::subject(r["dom"].as_str(), r["app"].as_str()), moved: r["moved"].as_u64().unwrap_or(0) })).collect()).unwrap_or_default();
         let anyone = strs("anyone");
         let p = craftworks_rules::rekey::plan(salt, &strs("out"), &strs("members"), &strs("gone"), &strs("banned"), &rows, &|app| anyone.iter().any(|a| a == app), v["me"].as_str().unwrap_or(""), v["now"].as_u64().unwrap_or(0));
-        Ok(json!({ "rotate": p.rotate, "due": p.due.iter().map(|d| json!({ "id": d.id, "pub": d.public, "rank": d.rank, "wait": d.wait, "moved": d.moved })).collect::<Vec<_>>() }).to_string())
+        Ok(json!({ "rotate": p.rotate, "due": p.due.iter().map(|d| json!({ "id": d.id, "pub": d.public, "moved": d.moved })).collect::<Vec<_>>() }).to_string())
     }
     /// AN ACCOUNT's BEEKEM MEMBER from its card (`account::beekem_member`, the node's too): its DID, its data key (hex),
     /// the card's `beekem` value → JSON `{ id, leaf }` (hex) or `{ why }`.

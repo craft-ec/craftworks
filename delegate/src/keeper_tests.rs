@@ -76,14 +76,14 @@ fn an_away_page_s_node_answers_its_sampled_height_one_seal_a_wake_up() {
         assert!(!reads::busy(h, keeper_round::ROUND), "the round ends each wake-up");
         sent
     };
-    assert!(wake(&mut h, 0, &got).is_empty(), "the page open: no round");
-    // AWAY: a piece sealed each wake-up, nothing put until every pick is; then the answer.
+    // (A page open or not: the node keeps — 10-30, `PAGE_AWAY` gone; the same answer from both merges to one, the
+    // standing record's `merge` dedups.) A piece sealed each wake-up, nothing put until every pick is; then the answer.
     let picks = keeper::asked(&k, &|x| got.get(x).cloned(), &public, first, &out(first), &hosted).unwrap();
     let Step::Done(Some(ids)) = picks else { panic!("asked") };
     let distinct = ids.iter().collect::<std::collections::BTreeSet<_>>().len();
     let mut put = None;
     for n in 0..distinct as u64 {
-        let sent = wake(&mut h, crate::upkeep::PAGE_AWAY + n, &got);
+        let sent = wake(&mut h, 2 + n, &got);
         let sealed = keeper_round::at(&h, &public).pending.map_or(0, |p| p.hashes.len());
         if n + 1 < distinct as u64 {
             assert!(sent.is_empty(), "nothing put before every pick is sealed");
@@ -102,7 +102,7 @@ fn an_away_page_s_node_answers_its_sampled_height_one_seal_a_wake_up() {
     assert_eq!(keeper_round::at(&h, &public).upto, first);
     // ANSWERED: the record with it, the next wake-up has nothing to answer.
     got.insert(rid, delta);
-    assert!(wake(&mut h, crate::upkeep::PAGE_AWAY + 100, &got).is_empty(), "answered once");
+    assert!(wake(&mut h, 2 + 100, &got).is_empty(), "answered once");
 }
 
 /// LISTED WITH NO PAGE OPEN (audit 10-11): a node whose page is away lists its account in the epoch's keepers registry
@@ -136,12 +136,12 @@ fn an_away_page_s_node_lists_its_account_in_the_epoch_s_keepers_registry() {
         sent
     };
     let listing = craftworks_reputation::keepers::Keeper { did: [0x44; 32], cred: vec![1, 2, 3], key_seq: 0 }.encode();
-    let sent = wake(&mut h, crate::upkeep::PAGE_AWAY, &got);
+    let sent = wake(&mut h, 2, &got);
     let [Io::Put { code: crate::upkeep::Code::Bag, params, state }] = &sent[..] else { panic!("its listing put: {sent:?}") };
     assert_eq!(params[..], ka[..]);
     let items = craftworks_bag_contract::read(&ka, state).unwrap();
     assert_eq!(craftworks_bag_contract::payload(&items[0]), &listing[..]);
     // The registry with it (the node merged the put): listed — nothing more.
     got.insert(kid, state.clone());
-    assert!(wake(&mut h, crate::upkeep::PAGE_AWAY + 1, &got).is_empty(), "listed once");
+    assert!(wake(&mut h, 2 + 1, &got).is_empty(), "listed once");
 }

@@ -163,7 +163,7 @@ fn page_root_with(w: &World, misdeeds: &[(u64, Vec<u8>)]) -> ([u8; 32], usize) {
 
 /// One wake-up's round driven to where it stops (its reads answered from `got`): every PUT and UPDATE it sent.
 fn wake(h: &mut Map, got: &HashMap<[u8; 32], Vec<u8>>, n: u64) -> Vec<Io> {
-    h.set_secret(identity::UPKEEP_WAKEUPS, &(crate::upkeep::PAGE_AWAY + n).to_le_bytes());
+    h.set_secret(identity::UPKEEP_WAKEUPS, &(2u64 + n).to_le_bytes());
     let mut sent = Vec::new();
     let mut todo = witness_round::woke(h);
     let mut calls = 0;

@@ -100,9 +100,6 @@ pub(crate) struct Round {
 }
 
 pub const ROUND: &[u8] = b"identity_upkeep/round";
-/// A page that handed the mandate over this recently is running (the keeper and witness rounds stay out of its way; the
-/// follower and the re-key do not).
-pub const PAGE_AWAY: u64 = 2;
 pub const STUCK: u64 = 3;
 /// The member whose round ran last (the next round starts after it: each person in turn).
 const LAST_SERVED: &[u8] = b"identity_upkeep/last-served";

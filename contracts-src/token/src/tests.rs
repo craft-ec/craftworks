@@ -4061,3 +4061,18 @@ fn a_supersede_is_the_owners_alone_and_never_splits_another() {
     put_at(n.chain(id_a(), 2), 51, Body::Supersede { from: 4 }, Some(2), SUPERSEDE_AT);
     assert_eq!(n.check(id_a(), 2), Err("a supersede of nothing held"));
 }
+
+/// ONE SIGNATURE A KEY AN ENTRY (10-30: a page and its node both witness, `PAGE_AWAY` gone): the same key signing the
+/// same entry at two beacon heights — two different signatures — is kept ONCE by the place's container; a second key's
+/// is kept beside it (control).
+#[test]
+fn a_key_signing_one_entry_twice_is_kept_once() {
+    let (c, seq, e) = ([7u8; 32], 3u64, [9u8; 32]);
+    let p = witness::Params { code_hash: [1; 32], pool: [2; 32], beacon: [3; 32], idlog: [4; 32], epoch: 0, chain: c, seq };
+    let at = |by: u8, h: u64| witness::WitnessSig { chain: c, seq, entry: e, at: h, sig: key(by).sign(&witness::WitnessSig::message(&c, seq, &e, h)).to_bytes() };
+    let k = |by: u8| key(by).verifying_key().to_bytes();
+    let one = p.state(&[(k(1), [0; 32], at(1, 10)), (k(1), [0; 32], at(1, 11))]);
+    assert_eq!(p.sigs(&one).len(), 1, "page and node, one key: once");
+    let two = p.state(&[(k(1), [0; 32], at(1, 10)), (k(2), [0; 32], at(2, 10))]);
+    assert_eq!(p.sigs(&two).len(), 2, "control: two keys, both");
+}

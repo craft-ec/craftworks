@@ -76,7 +76,10 @@ const acceptRun = u => u.ev(async () => (await (await app.require("conversation"
 
 const step = async (what, p, ms = 180000) => { say("…", what); let t; try { return await Promise.race([p, new Promise((_, no) => (t = setTimeout(() => no(new Error(`STALLED at: ${what}`)), ms)))]); } finally { clearTimeout(t); } };
 // A on fx: registered — its WORDS captured as the dialog shows them once.
-const A = await open(17691);
+// A's NODE: fz (10-30: fx's v446 is locked by wrong PINs from earlier runs — no words were kept to open it; an old
+// build locked is opened only with an account's words, so every account's words are kept now, `WORDS_FILE`).
+const AP = 17693;
+const A = await open(AP);
 let words = null;
 A.p.on("framenavigated", () => {});
 const capture = setInterval(async () => { if (words) return; const w = await A.f.locator("form.words-once .shown li").allTextContents().catch(() => []); if (w.length >= 12) words = w.join(" "); }, 300);
@@ -103,8 +106,8 @@ const here = new URL(".", import.meta.url).pathname;
 // stops (10-29: the "old build" phase registered on the newer build — a fixed wait after a reload, and a hash cached
 // from before the publish).
 const pub = dir => {
-  say("publish", dir.split("/").pop(), execSync(`bash ${here}publish-to.sh ${dir} 17691`, { encoding: "utf8" }).trim().replace(/\n/g, " | "));
-  target = execSync(`curl -sf -m 60 "http://127.0.0.1:17691/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/manifest.json" | shasum -a 256 | cut -c1-12`, { encoding: "utf8" }).trim();
+  say("publish", dir.split("/").pop(), execSync(`bash ${here}publish-to.sh ${dir} ${AP}`, { encoding: "utf8" }).trim().replace(/\n/g, " | "));
+  target = execSync(`curl -sf -m 60 "http://127.0.0.1:${AP}/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/manifest.json" | shasum -a 256 | cut -c1-12`, { encoding: "utf8" }).trim();
   say("  the build now:", target);
 };
 async function pinned(u, port, hash = "#/settings") {
@@ -133,12 +136,21 @@ const check = (what, ok, got) => (say(ok ? "PASS" : "FAIL", what, JSON.stringify
 // 1. THE OLD BUILD: two devices of one account, no tree.
 pub(process.env.OLD);
 // (The page reopened on the build just published.)
-await pinned(A, 17691);
-const aDid = await step("A registers on fx (old build)", register(A, PIN.a, "alice"), 300000);
+await pinned(A, AP);
+const aDid = await step("A registers on fz (old build)", register(A, PIN.a, "alice"), 300000);
 clearInterval(capture);
 say("A", aDid.slice(12, 20), "| words captured:", !!words);
+// (KEPT, per node and account — test data on this machine: an old build locked by wrong PINs opens only with words.)
+{
+  const fs = await import("node:fs");
+  const WORDS_FILE = `${process.env.HOME}/.cache/craftworks-probes/words.json`;
+  fs.mkdirSync(WORDS_FILE.replace(/\/[^/]+$/, ""), { recursive: true });
+  const kept = (() => { try { return JSON.parse(fs.readFileSync(WORDS_FILE, "utf8")); } catch { return {}; } })();
+  if (words) (kept[AP] ??= []).push({ did: aDid, words, at: new Date().toISOString() });
+  fs.writeFileSync(WORDS_FILE, JSON.stringify(kept, null, 1));
+}
 const e0 = await A.ev(async () => ({ newest: (await (await app.require("access")).keyAt("pins", -1, {})).epoch, mls: (await (await app.require("keys")).ready())?.epoch, did: (await (await app.require("space")).account())?.id?.slice(12, 20) })).catch(e => ({ ERR: e.message }));
-say("fx right after registering (old build):", JSON.stringify(e0));
+say("fz right after registering (old build):", JSON.stringify(e0));
 const F = await open(17692);
 if (await F.f.getByRole("button", { name: "Log out" }).count()) {
   await F.f.getByRole("button", { name: "Log out" }).first().click({ force: true });
@@ -161,7 +173,7 @@ await F.p.goto("about:blank");
 await A.p.goto("about:blank");
 // 2. THE CANDIDATE: fx alone makes the tree and writes; then closes.
 pub(process.env.NEW);
-await unlockAs(A, 17691, PIN.a, aDid);
+await unlockAs(A, AP, PIN.a, aDid);
 const didOf = u => u.ev(async () => (await (await app.require("space")).account())?.id ?? null).catch(() => null);
 check("fx, reloaded on the new build, is the account just registered", (await didOf(A)) === aDid, { now: (await didOf(A))?.slice(12, 20), registered: aDid.slice(12, 20) });
 const a1 = await step("fx: the account's tree", A.ev(async () => { const t = await (await app.require("members")).account(); await t.reconcile(); return { placed: t.placed(), members: t.members().length, gens: t.generationNumbers() }; }), 300000).catch(e => ({ ERR: e.message }));
