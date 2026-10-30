@@ -53,7 +53,7 @@ async function register(u, pin, handle) {
   await dlg.locator("[data-panel=register] input[name=again]").fill(pin);
   await dlg.locator('[data-panel=register] button:has-text("Next")').click();
   await u.p.waitForTimeout(5000);
-  await dlg.locator("input[name=kept]").check();
+  await dlg.locator("input[name=kept]").check({ timeout: 60000 }).catch(async e => { say("register: the words step did not show — the dialog says:", JSON.stringify((await dlg.innerText().catch(() => "?")).slice(0, 600))); throw e; });
   await dlg.locator('button:has-text("Create my account")').click();
   // Logged in (the account known), not a fixed wait: registration waits on the identity build up to 180 s.
   for (let i = 0; i < 48; i++) {
@@ -61,6 +61,12 @@ async function register(u, pin, handle) {
     if (await u.ev(async () => !!(await (await app.require("space")).account())).catch(() => false)) break;
   }
   await u.p.waitForTimeout(10000);
+  // (NOT logged in after it — an old build logs little to the trace: what the page SHOWS, kept — 10-30, v446 on fx.)
+  if (!(await u.ev(async () => !!(await (await app.require("space")).account())).catch(() => false))) {
+    const shot = `${process.env.OUT ?? "/tmp"}/k86-mls-${handle}-register.png`;
+    await u.p.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    say(handle, "registration did not finish — screenshot", shot, "— the dialog:", JSON.stringify((await dlg.innerText().catch(() => "(no dialog)")).slice(0, 600)));
+  }
   await u.ev(async () => (await app.require("directory")).publish()).catch(e => say(handle, "card publish:", e.message));
   return u.ev(async () => (await (await app.require("space")).account()).id);
 }

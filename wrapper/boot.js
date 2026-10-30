@@ -28,7 +28,10 @@ const LOADING_LIMIT = 120_000;
 async function get(url, what) {
   const t = performance.now();
   for (let tries = 1; ; tries++) {
-    const r = await fetch(url);
+    // (ASKED OF THE NODE every time — revalidated, a 304 when unchanged: the node sends no cache-control, so a browser
+    // reused the manifest by heuristic for a tenth of its age and ran the version before after a release; 10-30, k86-mls:
+    // the node served the build just published, the page ran the one before for 5 min.)
+    const r = await fetch(url, { cache: "no-cache" });
     if (r.ok) return { bytes: new Uint8Array(await r.arrayBuffer()), ms: Math.round(performance.now() - t) };
     const waited = Math.round(performance.now() - t);
     if (r.status !== 503 || waited > LOADING_LIMIT) throw new Error(`${what}: HTTP ${r.status} from ${url.pathname} after ${waited} ms`);
