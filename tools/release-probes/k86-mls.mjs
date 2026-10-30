@@ -110,6 +110,10 @@ const pub = dir => {
 async function pinned(u, port, hash = "#/settings") {
   const fr = () => u.p.frames().find(x => x !== u.p.mainFrame() && x.url() !== "about:srcdoc");
   for (let end = Date.now() + 300000; ; ) {
+    // (A build switched BACK to v446 runs v446's wrapper, which never revalidates the manifest — so this browser's cached
+    // one stood for minutes; 10-30, measured in the page: the node served v446, the page ran the build before. People
+    // only move forward, onto a wrapper that revalidates: the cache here cleared as a fresh install's would be.)
+    await (await u.p.context().newCDPSession(u.p)).send("Network.clearBrowserCache").catch(() => {});
     await u.p.goto("about:blank");
     await u.p.goto(site(port) + hash);
     await u.p.waitForTimeout(25000);
@@ -119,7 +123,9 @@ async function pinned(u, port, hash = "#/settings") {
     // (What the NODE serves now, beside what the page runs: a page behind its node, or a node gone back — 10-30, twice
     // in a full run the page on fx ran the build before for 5 min.)
     const served = execSync(`curl -sf -m 60 "http://127.0.0.1:${port}/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/manifest.json" | shasum -a 256 | cut -c1-12`, { encoding: "utf8" }).trim();
-    say(`  page on ${port} runs ${v ?? "nothing yet"}, the node serves ${served}, waiting for ${target}`);
+    // (And what the PAGE gets asking for it, revalidated and not cached at all; and whether its wrapper revalidates.)
+    const inPage = await u.p.evaluate(async () => { const h = async o => { const b = await (await fetch("manifest.json", o)).arrayBuffer(); return [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].slice(0, 6).map(x => x.toString(16).padStart(2, "0")).join(""); }; const boot = await (await fetch("boot.js", { cache: "only-if-cached", mode: "same-origin" }).catch(() => null))?.text?.().catch(() => "") ?? ""; return { noCache: await h({ cache: "no-cache" }), noStore: await h({ cache: "no-store" }), bootRevalidates: boot ? /no-cache/.test(boot) : "not cached" }; }).catch(e => ({ ERR: e.message }));
+    say(`  page on ${port} runs ${v ?? "nothing yet"}, the node serves ${served}, waiting for ${target}; in the page: ${JSON.stringify(inPage)}`);
   }
 }
 const fails = [];

@@ -8,7 +8,7 @@
 // reopened lets nobody in again (the node's record read).
 //   node admit.mjs <fresh> [phase]
 const { chromium } = await import(process.env.PLAYWRIGHT ?? `${process.env.HOME}/dev/atelier/node_modules/playwright-core/index.mjs`);
-const { traced, traceDir } = await import(new URL("./trace.mjs", import.meta.url));
+const { traced, traceDir, nodeTrace } = await import(new URL("./trace.mjs", import.meta.url));
 const TRACE = traceDir(import.meta.url);
 let pageN = 0;
 const [fresh, phase = "all"] = process.argv.slice(2);
@@ -259,6 +259,8 @@ await Z2p.waitForTimeout(45000);
 const Z2 = { p: Z2p, port: 17693, ev: (fn, arg) => Z2p.frames().find(x => x !== Z2p.mainFrame() && x.url() !== "about:srcdoc").evaluate(fn, arg) };
 const zNode = await step("fz's node", Z2.ev(async () => (await (await app.require("auth")).identity.upkeepStatus())?.upkeep?.accountTree ?? null), 60000).catch(e => "ERR " + e.message);
 say("fz's node account round:", JSON.stringify(zNode));
+// (The node's OWN record of the window, always: every request, answer and decision — read, never guessed.)
+say("fz node trace:", await nodeTrace(Z2, "fz", TRACE), "line(s)");
 check("fz's NODE adopted the new data key with its page closed", /adopted by the node/.test(String(zNode)), zNode);
 const zf = await facts(Z2);
 say("fz after:", JSON.stringify(zf));

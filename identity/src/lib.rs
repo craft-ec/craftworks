@@ -2167,6 +2167,8 @@ pub const ACCOUNT_TREE_LAST: &[u8] = b"identity_account_tree/last/";
 pub fn upkeep_account_tree_said<H: Host>(h: &mut H, m: &[u8; KEY_LEN], said: &str) {
     let w = upkeep_wakeups(h);
     h.set_secret(&of(ACCOUNT_TREE_LAST, m), format!("wake-up {w}: {said}").as_bytes());
+    // (In the node's debug trace too, by member — 10-30: the account round's every word lived only in this one slot.)
+    upkeep_trace(h, &[format!("account [{}]: {said}", m[..6].iter().map(|b| format!("{b:02x}")).collect::<String>())]);
 }
 
 /// UPKEEP's ACCOUNT MLS STATE (K8.5): the account's group as kept here for the member — its signer is this device's
