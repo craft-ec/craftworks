@@ -2457,13 +2457,6 @@ mod js {
         }
     }
 
-    /// WHO DOES A THING (`rules::admission::turn`, the one ranking — `ordering.turn` is this): `dids` JSON `[did…]`.
-    #[wasm_bindgen]
-    pub fn admission_turn(id: &str, dids: &str, me: &str) -> i32 {
-        let dids: Vec<String> = serde_json::from_str(dids).unwrap_or_default();
-        craftworks_rules::admission::turn(id, &dids, me) as i32
-    }
-
     /// AN ORDERED LOG's rows (`rules::ordering`, the identity delegate's too): the rows of position `n` begin with this.
     #[wasm_bindgen]
     pub fn ordering_position_prefix(prefix: &str, n: f64) -> String {
@@ -2497,16 +2490,6 @@ mod js {
     #[wasm_bindgen]
     pub fn group_cannot_read(state: &str) -> bool {
         craftworks_rules::guards::cannot_read(state)
-    }
-    /// The one TAKEOVER (ms): how long one in turn has before another takes over (`guards::TAKEOVER_MS`).
-    #[wasm_bindgen]
-    pub fn takeover_ms() -> f64 {
-        craftworks_rules::guards::TAKEOVER_MS as f64
-    }
-    /// THE TURN's WAIT (`guards::turn_wait`): ranked `k`, since `since` — ms left before it acts.
-    #[wasm_bindgen]
-    pub fn turn_wait(k: f64, since: f64, now: f64) -> f64 {
-        craftworks_rules::guards::turn_wait(k.max(0.0) as u64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS) as f64
     }
     /// WHETHER THIS ACCOUNT PUBLISHES an epoch's group info (`members::publishes_info` over `members::followers`, the
     /// node's too): the owner always; else two followers in turn. `listed`, `in_group`: JSON DID lists.
@@ -2616,11 +2599,6 @@ mod js {
         let d: Vec<String> = serde_json::from_str(devices).map_err(|e| JsValue::from_str(&format!("devices: {e}")))?;
         let f: Vec<(String, String)> = serde_json::from_str(feeds).map_err(|e| JsValue::from_str(&format!("feeds: {e}")))?;
         Ok(craftworks_rules::guards::list_whole(&d, &f, missing as usize).err())
-    }
-    /// THE GUARD "a lapse's turn" (`guards::lapse_turn`): why not now, or `undefined`.
-    #[wasm_bindgen]
-    pub fn guard_lapse_turn(k: f64, since: f64, now: f64) -> Option<String> {
-        craftworks_rules::guards::lapse_turn(k as i64, since as u64, now as u64, craftworks_rules::guards::TAKEOVER_MS).err()
     }
     /// AN MLS MEMBER's CREDENTIAL read (`identity::read_credential`, its signature checked): JSON `{ did, owner, node }`
     /// (the account, its owner key, the DEVICE's node key — hex), or `undefined`.

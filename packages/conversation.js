@@ -477,7 +477,8 @@ export async function start(ctx) {
   async function levelWhy(did, need) {
     let had = levelsRead.get(did);
     if (!had || Date.now() - had.at >= 600000) {
-      const card = await directory.card(did, { fresh: true });
+      // (Decided whole and current, or nothing decided: a short read never lapses anyone.)
+      const card = await directory.card(did, { fresh: true, sure: true });
       if (!card) return undefined;
       had = { at: Date.now(), contrib: JSON.stringify(card.contrib ?? []) };
       levelsRead.set(did, had);
@@ -497,25 +498,21 @@ export async function start(ctx) {
     const r = await (await ctx.require("roles")).of.strict(sp);
     const lv = levelOfGroup(r);
     if (!me || !lv || r.left || !r.role(me.id)) return [];
-    const ordering = await ctx.require("ordering");
     const members = r.members().map(m => m.did);
     const out = [];
     for (const did of members) {
       if (did === me.id || did === r.owner) continue;
       const why = await levelWhy(did, lv);
       if (why == null) continue;
-      const k = `lapse|${sp.id}|${did}`;
-      if (!pendingSince.has(k)) pendingSince.set(k, Date.now());
-      // MY TURN (the guard), ranked among the OTHER members (the lapsed one never acts on itself).
-      if (glueOf().guard_lapse_turn(ordering.turn(k, members.filter(d => d !== did), me.id), pendingSince.get(k), Date.now())) continue;
+      // AT ONCE, by whoever sees it (owner 10-30: no grace period, no turns) — a second `lapsed` for one already out is
+      // not counted by the replay (`gov`: `!removed.contains(d)`), so two members acting together change nothing more.
       await r.act({ act: "lapsed", did }).then(
-        () => (pendingSince.delete(k), out.push(did), ctx.log("conversation", { what: `${sp.name}: ${short(did)}'s level ran out — taken out (they enter again when they give again)` })),
+        () => (out.push(did), ctx.log("conversation", { what: `${sp.name}: ${short(did)}'s level ran out — taken out (they enter again when they give again)` })),
         e => ctx.failed("conversation", e, `${sp.name}: lapsing ${short(did)}: ${e.message}`),
       );
     }
     return out;
   }
-  const pendingSince = new Map(); // what `lapse` saw pending: when this page first saw it
   // JOINING A SPACE SEEN FROM OUTSIDE (Discover, a profile): by its join policy — the OPEN door ("anyone"): entered at
   // once by itself; "ask": a REQUEST its people decide.
   async function joinOpen(desc) {
@@ -659,7 +656,6 @@ export async function start(ctx) {
   // (so they may add and remove), and an admin acts on a change still due IN ITS TURN (`guards::lapse_turn`, the one
   // turn rule: the maker first, then one admin at a time — before, every admin at the same 10 minutes, which two pages
   // committing at once would fork).
-  const dueSince = new Map(); // `${group}|${did}|in|out` → when first seen due here
   async function keepReaders(sp) {
     const me = await space.me.strict();
     const [groups, roles] = await Promise.all(["groups", "roles"].map(n => ctx.require(n)));
@@ -685,15 +681,11 @@ export async function start(ctx) {
         continue;
       }
       if (gr.role(me) !== "admin" || !gr.can(me, "invite") || !gr.can(me, "remove")) continue;
-      // Not its maker: only what is still due after the grace (the maker had their chance).
+      // Not its maker, an admin: what is due, kept AT ONCE (owner 10-30: no grace, no turns) — an act already in force
+      // is not counted again by the replay, so the maker and an admin keeping it together change nothing more.
       const have = new Set(gr.members().map(m => m.did));
-      const due = [...want].filter(d => !have.has(d)).map(d => `${g.id}|${d}|in`).concat([...have].filter(d => !want.has(d) && d !== g.governance?.owner && d !== me).map(d => `${g.id}|${d}|out`));
-      const now = Date.now();
-      for (const k of due) if (!dueSince.has(k)) dueSince.set(k, now);
-      for (const k of [...dueSince.keys()]) if (k.startsWith(`${g.id}|`) && !due.includes(k)) dueSince.delete(k);
-      const since = Math.min(...due.map(k => dueSince.get(k)));
-      const admins = gr.members().map(m => m.did).filter(d => d !== g.governance?.owner && gr.role(d) === "admin");
-      if (!due.length || glueOf().guard_lapse_turn((await ctx.require("ordering")).turn(`keep|${g.id}`, admins, me), since, now)) continue;
+      const due = [...want].filter(d => !have.has(d)).concat([...have].filter(d => !want.has(d) && d !== g.governance?.owner && d !== me));
+      if (!due.length) continue;
       ctx.log("audiences", { what: `${space.shown(sp)}: its maker away — keeping ${g.name ?? "an audience"} in step` });
       await groups.keep(g, want);
     }

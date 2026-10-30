@@ -117,11 +117,14 @@ export async function start(ctx) {
   // a table's whole name (a name is at most 32 bytes: `cred-<token>` never fit).
   const credTable = (owner, token) => publicOf(owner, String(token), { unlisted: true });
 
-  async function card(did, { fresh = false } = {}) {
+  // (`sure`: only a read DECIDED whole and current — `present` — else null: what a decision against someone stands on;
+  // 10-30, a level's lapse, which once waited a takeover in case a read came short.)
+  async function card(did, { fresh = false, sure = false } = {}) {
     const t = await publicOf(did, CARD);
     await t?.answer?.();
     if (fresh) await ctx.background("directory: t?.reread", t?.reread?.());
     if (!t || t.absent) return null;
+    if (sure && (await t.decided?.())?.s !== "present") return null;
     return { did: typeof did === "string" ? did : glue.did_of(did), ...read(t) };
   }
 

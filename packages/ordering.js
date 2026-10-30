@@ -80,10 +80,7 @@ export async function start(ctx) {
     return make(spec);
   }
 
-  // TURNS: `rules::admission::turn` through the core — the ONE ranking (the identity delegate runs it too).
-  // The one TAKEOVER (`guards::TAKEOVER_MS`, the node's too).
-  const TAKEOVER = glue.takeover_ms();
-  const turn = (id, dids, me) => glue.admission_turn(String(id), JSON.stringify([...dids]), String(me));
-
-  return { open, types: Object.keys(types), order, turn, TAKEOVER };
+  // (No TURNS: whoever sees a thing due does it at once — owner 10-30, no clock waits; what two do together is
+  // counted once by its replay.)
+  return { open, types: Object.keys(types), order };
 }

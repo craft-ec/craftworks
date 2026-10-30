@@ -25,32 +25,6 @@ pub fn standing(g: &craftworks_gov::Gov, did: &str, at: u64) -> Verdict {
     }
 }
 
-/// How long one in turn waits before another takes over (a member away): the one value, everywhere.
-pub const TAKEOVER_MS: u64 = 2 * 60 * 1000;
-
-/// THE TURN's WAIT: ranked `k` (≥ 0), how long is left before it acts — the first at once, the k-th once nothing has
-/// moved for k × `takeover_ms` since `since` (when the thing was asked or last moved).
-pub fn turn_wait(k: u64, since: u64, now: u64, takeover_ms: u64) -> u64 {
-    k.saturating_mul(takeover_ms).saturating_sub(now.saturating_sub(since))
-}
-
-/// MY TURN: ranked `k` among those who may (`turn`: -1 not among them) — now, or not yet (`turn_wait`).
-pub fn my_turn(k: i64, since: u64, now: u64, takeover_ms: u64) -> Verdict {
-    if k < 0 {
-        return no("not one who may");
-    }
-    if turn_wait(k as u64, since, now, takeover_ms) > 0 {
-        return no("another member's turn first");
-    }
-    Ok(())
-}
-
-/// A LAPSE's turn: like `my_turn`, but even the first waits one takeover (a card read once below its level may be a
-/// read that came short — the next member's look confirms it).
-pub fn lapse_turn(k: i64, since: u64, now: u64, takeover_ms: u64) -> Verdict {
-    my_turn(if k < 0 { k } else { k + 1 }, since, now, takeover_ms)
-}
-
 /// ON THE LIST TO BE: a member may put `did` on the list (an invite, a Let in) — never the banned (removed people come
 /// back exactly this way).
 pub fn may_list(g: &craftworks_gov::Gov, did: &str) -> Verdict {
@@ -209,6 +183,5 @@ mod tests {
         assert!(standing(&g, "n", 1).is_ok());
         g.gone.remove("r");
         assert!(standing(&g, "r", 99).is_ok(), "re-added");
-        assert!(my_turn(0, 0, 1, 120).is_ok() && my_turn(2, 0, 100, 120).is_err() && my_turn(2, 0, 240, 120).is_ok() && my_turn(-1, 0, 9, 1).is_err());
     }
 }
