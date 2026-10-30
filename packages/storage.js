@@ -515,6 +515,7 @@ export async function start(ctx) {
       decided: () => decide(),
     };
     let answered = false; // the last read had the node's answer (the tail, or "not found"), not silence
+    let stopAbsent = null; // ABSENT and followed: the door asks again until it appears
     let st = { s: "unknown" }; // the read state (FOUNDATION.md §2)
     let deciding = null; // the second, long read of an undecided tail (shared)
     let longReadAt = 0; // when the last long read ended still undecided (not tried again within a minute)
@@ -665,7 +666,14 @@ export async function start(ctx) {
       st = said.kind === "tail" ? { s: "present" } : { s: "absent" };
       waiting.delete(idHex);
       if (said.kind === "tail") took(said.tail);
-      else core.tail_absent(id);
+      else {
+        core.tail_absent(id);
+        // ABSENT AND FOLLOWED (a member's read): asked again on the door's one backoff until it appears, then read —
+        // the way an absent catalog is (`absentCatalog`). 10-30, k87-rot: fx opened fy's pins feed as fy's first write
+        // was still on its way ("asked, not there") and never asked again — fy's row never read until a reload.
+        if (follows && !stopAbsent)
+          stopAbsent = onContract(idHex, () => ctx.background("storage: an absent feed appeared", read().then(() => !t.absent && (stopAbsent?.(), (stopAbsent = null)))));
+      }
     }
 
     // How long a step the identity signed, not yet on the network as read here, is waited for before it counts as
