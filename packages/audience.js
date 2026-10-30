@@ -72,7 +72,7 @@ export async function start(ctx) {
       if (sel.value !== "list:new") return void (was = sel.value);
       const picked = await choosePeople(sp, r, me);
       if (!picked?.length) return void (sel.value = was);
-      const id = node.newHex(6);
+      const id = await node.newHex(6);
       await r.act({ act: "list", list: id, people: picked });
       const o = h("option", { value: `list:${id}`, textContent: `🔐 ${picked.map(d => directory.shown(d)).join(", ").slice(0, 60)}` });
       sel.querySelector('option[value="list:new"]').before(o);

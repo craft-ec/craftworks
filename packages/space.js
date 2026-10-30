@@ -50,8 +50,11 @@ const isGroup = sp => !!(sp?.circle || sp?.group);
 // SHARED (a space, not the person's own): a pure check — in a frame too, never a proxied call (10-30, a person's Drive:
 // through the proxy it was a Promise, always true, so their own drive read as the space `null`).
 const shared = sp => !!sp && sp.kind !== "account";
+// MADE BY `did` (its owner; a channel's: its space's) — a pure check, a frame helper too (10-30: through the proxy a
+// Promise, always true — every circle "made by me" in Form, Vote and Wiki).
+const madeBy = (sp, did) => !!did && (sp?.parent ?? sp)?.governance?.owner === did;
 export function frame() {
-  return { shown, tableOf, board, isGroup, shared };
+  return { shown, tableOf, board, isGroup, shared, madeBy };
 }
 
 export async function start(ctx) {
@@ -166,7 +169,6 @@ export async function start(ctx) {
   const describe = async (id, v) => made(id, v, await account());
 
   // MADE BY `did` (its id proves who made it: a circle's, a group's, a level group's maker — never handed on).
-  const madeBy = (sp, did) => !!did && (sp?.parent ?? sp)?.governance?.owner === did;
   // The id an owner's space has with a nonce.
   const idOf = async (owner, nonce) => hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`craftworks space\0${owner}\0${nonce}`))));
   const owner = async sp => {

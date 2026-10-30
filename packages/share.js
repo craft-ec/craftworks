@@ -30,14 +30,17 @@ const buttonOf = open => it => {
   b.onclick = e => (e.stopPropagation(), e.preventDefault(), open(it.ref));
   return b;
 };
-export function frame(cap) {
-  return { button: buttonOf(ref => cap.open(ref)) };
+// ITS SPACE (a space's item: its group's key names it, `item:<space>/<id>`; yours: none) — a pure check, a frame helper
+// too (10-30: through the proxy a Promise, compared with \`===\`: Drive never listed a person's shared files).
+const KEY = "item:";
+const parentIdBy = homeIdOf => g => (String(g?.group ?? "").startsWith(KEY) ? homeIdOf(g.group) : null);
+export async function frame(cap, ctx) {
+  return { button: buttonOf(ref => cap.open(ref)), parentId: parentIdBy((await ctx.require("items")).homeIdOf) };
 }
 
 export async function start(ctx) {
   const [space, roles, items, groups, directory] = await Promise.all(["space", "roles", "items", "groups", "directory"].map(n => ctx.require(n)));
   const ROLE = "editor";
-  const KEY = "item:";
   const spaceOf = ref => (String(ref).startsWith("space:") ? String(ref).slice(6, String(ref).indexOf("/")) : null);
   const mine = async () => (await space.mine.strict()).filter(s => s.group?.startsWith(KEY));
   const groupOf = async ref => {
@@ -47,7 +50,7 @@ export async function start(ctx) {
   const isShared = async ref => !!(await groupOf(ref));
   // ITS SPACE (a space's item: its group's key names it, `item:<space>/<id>` — what an invite carries; yours: none).
   // (The one parser of a group's key: `items.homeIdOf`.)
-  const parentId = g => (String(g?.group ?? "").startsWith(KEY) ? items.homeIdOf(g.group) : null);
+  const parentId = parentIdBy(items.homeIdOf);
   const parentOf = async g => {
     const id = parentId(g);
     return id ? ((await space.mine.strict()).find(s => s.id === id) ?? null) : null;

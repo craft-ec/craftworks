@@ -37,6 +37,12 @@
 //     sm.may()  await sm.enabled()  await sm.enable()  (its owner)  await sm.send(to, subject, body, re, files)
 //     await sm.fetch()  await sm.list("in" | "sent")  sm.onChange(fn)
 //   (`to` may name a space: `space:<id>` — of a space this person knows, or one whose mail they had.)
+// IN AN APP's FRAME: MAIL (`mail`, an object of calls) through the one call `mailbox` — its calls come back as handles.
+// (10-30: through the proxy `conversation.mail` was a call, its `.accepts` undefined — Form's responses could not go.)
+export function frame(cap) {
+  return { mail: new Proxy({}, { get: (_, k) => (typeof k === "string" && k !== "then" ? (...a) => cap.mailbox().then(m => m[k](...a)) : undefined) }) };
+}
+
 export async function start(ctx) {
   const [space, directory, index, content, storage, node] = await Promise.all(["space", "directory", "index", "content", "storage", "node"].map(n => ctx.require(n)));
   // The core: the one place each rule and guard is (`rules`, through the core).
@@ -1010,5 +1016,5 @@ export async function start(ctx) {
     onChange: async f => (await kept()).onChange(f),
   };
 
-  return { direct, group, invite, relist, accept, joinLevel, lapse, bagOf, keyStatus, reportReads, selfState, observe, list, members: ctx.total("conversation.members", () => [], members), person: ctx.total("conversation.person", () => null, person), mail, createInvite, revokeInvite, join, joinOpen, requestJoin, cancelJoin, asked: ctx.total("conversation.asked", () => null, asked), waiting: ctx.total("conversation.waiting", () => [], waiting), requestsOf, letIn, reject, setJoin, befriend, friendRequests: ctx.total("conversation.friendRequests", () => [], friendRequests), answerFriend, unfriend, channels , keepReaders, audience };
+  return { direct, group, invite, relist, accept, joinLevel, lapse, bagOf, keyStatus, reportReads, selfState, observe, list, members: ctx.total("conversation.members", () => [], members), person: ctx.total("conversation.person", () => null, person), mail, mailbox: () => mail, createInvite, revokeInvite, join, joinOpen, requestJoin, cancelJoin, asked: ctx.total("conversation.asked", () => null, asked), waiting: ctx.total("conversation.waiting", () => [], waiting), requestsOf, letIn, reject, setJoin, befriend, friendRequests: ctx.total("conversation.friendRequests", () => [], friendRequests), answerFriend, unfriend, channels , keepReaders, audience };
 }

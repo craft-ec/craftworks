@@ -374,7 +374,9 @@ export async function start(ctx) {
       // (10-20: Docs — a document's text and marks as they are now, `codoc.state`.)
       "state",
       // (10-30, a person's Drive: `share.groups` — the item groups they are in — refused as a write.)
-      "groups", "isShared", "parentId"]);
+      "groups", "isShared", "parentId",
+      // (10-30, the frame sweep: an item page's editions section, a mention's people, a video's id; mail's reads.)
+      "section", "mentionable", "videoId", "mailbox", "accepts", "addresses"]);
     const WRITES = { test: name => !READS.has(name) };
     // The files this frame READ through its door (by their root), and the calls that read one.
     const readHere = new Set();

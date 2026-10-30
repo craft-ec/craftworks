@@ -71,8 +71,10 @@ function pure(kinds, site) {
   return { appOf, pageOf, linkOf, refOf };
 }
 // IN AN APP's FRAME: the pure parts beside the host's proxy (the site's address: the host's, `ctx.site`).
+// A GROUP KEY's home space (`item:<space>/…`, `audience:<space>/…`): the one parser — a frame helper too.
+const homeIdOf = key => /^(?:item|audience):([0-9a-f]{64})\//.exec(String(key ?? ""))?.[1] ?? null;
 export async function frame(cap, ctx) {
-  return { ...pure(await ctx.require("kinds"), () => ctx.site), spaceIdOf, tagsOf, normalTags, isNsfw };
+  return { ...pure(await ctx.require("kinds"), () => ctx.site), spaceIdOf, tagsOf, normalTags, isNsfw, homeIdOf };
 }
 
 // AN ITEM's REFERENCE — the one builder: `<writer>/<id>` (its writer's DID or node, its id in their feed). (Not
@@ -886,7 +888,6 @@ export async function start(ctx) {
   };
   // A GROUP's HOME SPACE, by its key (`item:<space>/…` — a space's item shared or kept private; `audience:<space>/…`):
   // the one parser of that key (`share.parentId` too). Null: a person's own.
-  const homeIdOf = key => /^(?:item|audience):([0-9a-f]{64})\//.exec(String(key ?? ""))?.[1] ?? null;
   async function placeOf(ref) {
     const it = typeof ref === "string" ? await get(ref, { outside: await outsideOf(ref) }) : ref;
     if (!it) throw Object.assign(new Error("that item is not here"), { kind: "absent" });
