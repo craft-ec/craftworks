@@ -77,7 +77,9 @@ const acceptRun = u => u.ev(async () => (await (await app.require("conversation"
 const step = async (what, p, ms = 180000) => { say("…", what); let t; try { return await Promise.race([p, new Promise((_, no) => (t = setTimeout(() => no(new Error(`STALLED at: ${what}`)), ms)))]); } finally { clearTimeout(t); } };
 // A on fx: registered — its WORDS captured as the dialog shows them once.
 // A's NODE: fz (10-30: fx's v446 is locked by wrong PINs from earlier runs — no words were kept to open it; an old
-// build locked is opened only with an account's words, so every account's words are kept now, `WORDS_FILE`).
+// build locked is opened only with an account's words, so every account's words are kept now, `WORDS_FILE`). Builds are
+// PUBLISHED through fx (fz holds no publishing key: its signer was never provisioned) and reach fz by the network —
+// `pinned` waits for A's page to run the one published.
 const AP = 17693;
 const A = await open(AP);
 let words = null;
@@ -94,7 +96,7 @@ async function unlockAs(u, port, pin, did) {
     await u.p.waitForTimeout(10000);
     await pinned(u, port);
   }
-  const r = await u.ev(async pin => (await app.require("auth")).unlock(pin).then(x => JSON.stringify(x).slice(0, 120), e => "ERR " + e.message), pin).catch(e => e.message);
+  const r = await u.ev(async ([pin, did]) => (await app.require("auth")).unlock(pin, did).then(x => JSON.stringify(x).slice(0, 120), e => "ERR " + e.message), [pin, did]).catch(e => e.message);
   say("unlock", port, r);
   await pinned(u, port);
   await u.p.waitForTimeout(15000);
@@ -106,8 +108,8 @@ const here = new URL(".", import.meta.url).pathname;
 // stops (10-29: the "old build" phase registered on the newer build — a fixed wait after a reload, and a hash cached
 // from before the publish).
 const pub = dir => {
-  say("publish", dir.split("/").pop(), execSync(`bash ${here}publish-to.sh ${dir} ${AP}`, { encoding: "utf8" }).trim().replace(/\n/g, " | "));
-  target = execSync(`curl -sf -m 60 "http://127.0.0.1:${AP}/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/manifest.json" | shasum -a 256 | cut -c1-12`, { encoding: "utf8" }).trim();
+  say("publish", dir.split("/").pop(), execSync(`bash ${here}publish-to.sh ${dir} 17691`, { encoding: "utf8" }).trim().replace(/\n/g, " | "));
+  target = execSync(`curl -sf -m 60 "http://127.0.0.1:17691/v1/contract/web/EckhKsQWCG6hSJqhRvxXqBEkFMBCm41YHTKnKRmMznpJ/manifest.json" | shasum -a 256 | cut -c1-12`, { encoding: "utf8" }).trim();
   say("  the build now:", target);
 };
 async function pinned(u, port, hash = "#/settings") {

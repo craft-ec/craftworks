@@ -87,7 +87,7 @@ async function unlockAs(u, port, pin, did) {
     await u.p.waitForTimeout(10000);
     await pinned(u, port);
   }
-  const r = await u.ev(async pin => (await app.require("auth")).unlock(pin).then(x => JSON.stringify(x).slice(0, 120), e => "ERR " + e.message), pin).catch(e => e.message);
+  const r = await u.ev(async ([pin, did]) => (await app.require("auth")).unlock(pin, did).then(x => JSON.stringify(x).slice(0, 120), e => "ERR " + e.message), [pin, did]).catch(e => e.message);
   say("unlock", port, r);
   await pinned(u, port);
   await u.p.waitForTimeout(15000);

@@ -47,6 +47,7 @@ pub fn answer_json(a: &Answer) -> Value {
         Answer::DeviceMember { seed } => json!({ "deviceMember": { "seed": hex(seed) } }),
         Answer::DataPendingIs { pending } => json!({ "dataPending": pending.map(|(d, seq)| json!({ "data": hex(&d), "seq": seq })) }),
         Answer::Trace { lines } => json!({ "trace": { "lines": lines } }),
+        Answer::Accounts { dids } => json!({ "accounts": dids.iter().map(|d| account::did(d)).collect::<Vec<_>>() }),
         Answer::HandedNames { names, old } => json!({ "handedNames": { "names": names.map(|n| hex(&n)), "old": old.iter().map(|o| hex(o)).collect::<Vec<_>>() } }),
         Answer::Upkeep {
             wakeups,
@@ -228,6 +229,8 @@ impl Core {
                 | Request::DeviceMember { .. }
                 // The account's NAMES seed there (K8.7: a build that kept two after a rotation).
                 | Request::HandoverNames { .. }
+                // THE ACCOUNTS it holds (no PIN): which build a chosen account's PIN goes to (10-30).
+                | Request::Accounts
         ) && !matches!(req, Request::UpkeepMandate { spaces, .. } if spaces.is_empty())
         {
             return Err("an earlier build is asked only to hand a member over, to give a space's earlier keys, or to retire its upkeep".into());
@@ -1011,6 +1014,14 @@ mod js {
         }
         /// `[id, frames]` of an EMPTY mandate handed to an earlier build (its session's member): its upkeep does nothing
         /// more for them.
+        /// The accounts this build holds (`Accounts`), and an earlier build's (`<key>:<code hash>`).
+        pub fn frames_accounts(&mut self) -> Result<js_sys::Array, JsValue> {
+            self.ask(Request::Accounts)
+        }
+        pub fn frames_accounts_from(&mut self, prior: &str) -> Result<js_sys::Array, JsValue> {
+            let (id, f) = self.0.frames_prior(prior, &Request::Accounts).map_err(err)?;
+            Ok([JsValue::from(id), JsValue::from(frames(f))].into_iter().collect())
+        }
         pub fn frames_retire_upkeep_from(&mut self, prior: &str) -> Result<js_sys::Array, JsValue> {
             let (id, f) = self
                 .0

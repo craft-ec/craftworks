@@ -1235,3 +1235,18 @@ fn the_nodes_trace_keeps_the_last_lines_and_answers_them() {
         other => panic!("{other:?}"),
     }
 }
+
+/// THE ACCOUNTS ON THIS NODE (`Accounts`, no PIN — what a login lists, so a PIN goes only to the build holding the
+/// account chosen): each account provisioned is listed once — a second member of the same account (another device's
+/// PIN) adds no second entry.
+#[test]
+fn the_accounts_here_are_listed_once_each_without_a_pin() {
+    let mut m = Map::default();
+    assert!(matches!(serve(&mut m, Request::Accounts, APP), Answer::Accounts { ref dids } if dids.is_empty()), "none yet");
+    let (a, b) = ([0xA1; 32], [0xB2; 32]);
+    assert!(matches!(serve(&mut m, Request::Provision { seed: [1; 32], did: a, pin: "111111".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
+    assert!(matches!(serve(&mut m, Request::Provision { seed: [2; 32], did: b, pin: "222222".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
+    assert!(matches!(serve(&mut m, Request::Provision { seed: [3; 32], did: a, pin: "333333".into(), data: vec![] }, APP), Answer::Unlocked { .. }));
+    let Answer::Accounts { dids } = serve(&mut m, Request::Accounts, APP) else { panic!("accounts") };
+    assert_eq!(dids, vec![a, b], "each once, as provisioned");
+}

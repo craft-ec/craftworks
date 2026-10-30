@@ -146,7 +146,7 @@ try {
         await u.p.goto(site(u.port) + "#/settings");
         await u.p.waitForTimeout(25000);
       }
-      const r = await sub(`${n} unlocks`, u.ev(async pin => (await app.require("auth")).unlock(pin).then(x => JSON.stringify(x).slice(0, 200), e => "ERR " + e.message), pin), 300000).catch(e => e.message);
+      const r = await sub(`${n} unlocks`, u.ev(async ([pin, did]) => (await app.require("auth")).unlock(pin, did).then(x => JSON.stringify(x).slice(0, 200), e => "ERR " + e.message), [pin, did]), 300000).catch(e => e.message);
       // (A session opened: the page loaded again, as a login does.)
       await u.p.goto("about:blank");
       await u.p.goto(site(u.port) + "#/settings");

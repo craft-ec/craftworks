@@ -59,8 +59,8 @@ export async function start(ctx) {
   // Log in with the PIN. A member made by an EARLIER build of the identity delegate is not in this one (a delegate's
   // secrets stay with its build): on a PIN this build does not know, the earlier builds are asked, newest first, and
   // the member the PIN opens there is moved here, so an update never costs anyone their login.
-  async function unlock(pin) {
-    const r = await unlock_(pin);
+  async function unlock(pin, did = null) {
+    const r = await unlock_(pin, did);
     // The EARLIER builds retired and their keys gathered BEFORE the login returns: a login loads the page again at
     // once (`login`), which ended this work when it ran behind (10-18, fx: no earlier build retired, epoch 0 never
     // recovered — the space's acts and channels unreadable after an update). Bounded: a build silent past it is left.
@@ -71,7 +71,7 @@ export async function start(ctx) {
       await ctx.optional("auth: the account ready to write", async () => (await (await ctx.require("members")).account()).readyToWrite(), () => null);
       let timer;
       await Promise.race([
-        retireEarlier(pin, r.movedFrom ?? null).catch(e => ctx.log("earlier build", { what: `not finished: ${e?.message ?? e}` })),
+        retireEarlier(pin, r.movedFrom ?? null, did).catch(e => ctx.log("earlier build", { what: `not finished: ${e?.message ?? e}` })),
         new Promise(res => (timer = setTimeout(() => (ctx.log("earlier build", { what: "still working after 120 s: the rest left" }), res()), 120_000))),
       ]).finally(() => clearTimeout(timer));
       // Its moves kept before the login reloads the page.
@@ -87,7 +87,7 @@ export async function start(ctx) {
   // On the way, every earlier build holding the member hands the EPOCH KEYS this build lacks (`epochsOnly`): the member
   // may have been moved from an older one (a newer build slow to answer), and a key only a newer build got — a space's
   // later epoch — would otherwise be lost (seen: "no key here for epoch 17").
-  async function retireEarlier(pin, movedFrom) {
+  async function retireEarlier(pin, movedFrom, did = null) {
     // One earlier build: retired, its epoch keys this build lacks gathered — the handover's (`epochsOnly`), and every
     // space's MLS epochs asked by number (`epochsFrom`: an earlier build's handover walked only the numbers just below
     // its latest epoch — once a space's epochs were BeeKEM generations, its MLS epochs were left behind: v401 → v403,
@@ -128,7 +128,12 @@ export async function start(ctx) {
     // retired (10-20: a build published only to a test node, newer than the release before, stopped every retirement).
     let silent = [];
     const from = movedFrom ? ctx.identityPrior.indexOf(movedFrom) : -1;
-    for (const prior of from > 0 ? ctx.identityPrior.slice(from) : ctx.identityPrior) {
+    // (The account KNOWN: a build that lists its accounts and not this one is never asked — no PIN, no try; one that
+    // cannot list them, from before the question, is walked as before.)
+    const lists = new Map();
+    if (did) for (const prior of ctx.identityPrior) lists.set(prior, (await ctx.optional("auth: accountsFrom", id.accountsFrom(prior), () => null))?.accounts ?? null);
+    const holds = prior => !did || !lists.get(prior) || lists.get(prior).includes(did);
+    for (const prior of (from > 0 ? ctx.identityPrior.slice(from) : ctx.identityPrior).filter(holds)) {
       const r = await one(prior);
       if (r.silent) silent.push(prior);
       else if (!r.retired && !r.missing) break;
@@ -146,9 +151,20 @@ export async function start(ctx) {
     // Keys gathered: what reads with them is read again.
     dispatchEvent(new CustomEvent("craftworks:keys"));
   }
-  async function unlock_(pin) {
-    const r = await id.unlock(pin);
-    if (!r.wrongPin) return r;
+  // THE ACCOUNTS ON THIS NODE, each with the build holding it (`prior`: null — this one): what a login lists, so a PIN
+  // goes only to the build that holds the account chosen (10-30, measured on fy: one login asked ~30 earlier builds
+  // with its PIN; each holding another account counted a wrong try, most were locked). A build from before the
+  // question lists nothing: its accounts are reached by "another account" (the PIN asked of each, as before).
+  async function accounts() {
+    const out = new Map();
+    for (const did of (await ctx.optional("auth: accounts", id.accounts(), () => null))?.accounts ?? []) out.set(did, null);
+    for (const prior of ctx.identityPrior) {
+      const a = await ctx.optional("auth: accountsFrom", id.accountsFrom(prior), () => null);
+      for (const did of a?.accounts ?? []) if (!out.has(did)) out.set(did, prior);
+    }
+    return [...out].map(([did, prior]) => ({ did, prior }));
+  }
+  async function unlock_(pin, did = null) {
     // ONE ASK of an earlier build: what it said (`silent`: not answering yet — a build the node is still loading).
     const askOnce = prior => ctx.optional("earlier build", id.handoverFrom(prior, pin), null);
     // The member an earlier build hands over, moved here with its keys (the account's group, the epochs it could read)
@@ -172,6 +188,18 @@ export async function start(ctx) {
       }
       return p;
     };
+    // AN ACCOUNT CHOSEN: its PIN to the ONE build holding it — this one, or the earlier one that lists it. Never to
+    // another (a wrong PIN there counts against a build that holds someone else).
+    if (did) {
+      const held = (await accounts()).find(a => a.did === did);
+      if (held && !held.prior) return id.unlock(pin);
+      if (held) {
+        const h = await askOnce(held.prior);
+        return h?.handed ? moveIn(held.prior, h) : (h ?? { missing: true });
+      }
+    }
+    const r = await id.unlock(pin);
+    if (!r.wrongPin) return r;
     // Newest first, each once; the SILENT ones asked again, 10 s apart, for a minute — a slow node compiles a build in
     // about that (10-12: every earlier build of the owner's node was passed over at once, and the login went to the
     // recovery words — a new member without the account's keys).
@@ -242,7 +270,7 @@ export async function start(ctx) {
 
   return {
     loggedInHere: () => !!current && startedOut === true,
-    check: ctx.total("auth.check", () => null, check), accept: opened, unlock, join, logout, current: () => current, identity: id,
+    check: ctx.total("auth.check", () => null, check), accept: opened, unlock, accounts, join, logout, current: () => current, identity: id,
     // `fn({ entropy, did, node, fresh })`, called after a words login or a registration, before the words are wiped.
     onJoined: f => joined.push(f),
   };

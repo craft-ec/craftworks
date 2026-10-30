@@ -347,6 +347,10 @@ pub enum Request {
     EpochWrite { space: Option<[u8; 32]>, epoch: Option<u64> },
     /// THE NODE's DEBUG TRACE (`upkeep_trace`): its last lines. Answered `Trace`. (Appended LAST: indices kept.)
     UpkeepTrace,
+    /// THE ACCOUNTS this build holds (their DIDs) — no PIN: what a login lists to choose from, so a PIN goes only to
+    /// the build holding the account chosen (10-30, measured on fy: one login asked ~30 earlier builds with its PIN,
+    /// each holding another account counting a wrong try, most locked). Answered `Accounts`. (Appended LAST.)
+    Accounts,
 }
 
 /// What the delegate's WITNESS round needs (handed over by a page: `Request::WitnessMandate`): the codes' hashes
@@ -477,6 +481,8 @@ pub enum Answer {
     DataPendingIs { pending: Option<([u8; 32], u32)> },
     /// The node's debug trace (`UpkeepTrace`), oldest first. (Appended LAST: indices kept.)
     Trace { lines: Vec<String> },
+    /// The accounts held (`Accounts`): their DIDs. (Appended LAST: indices kept.)
+    Accounts { dids: Vec<[u8; 32]> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -926,6 +932,19 @@ pub const TRIES: &[u8] = b"identity_tries";
 /// Set once this build holds a member (provisioned, or handed over from an earlier build): before, a PIN has nothing to
 /// open here, so an unknown one is not a guess and is not counted (a new build, its members still to move in).
 pub const ANY_MEMBER: &[u8] = b"identity_any_member";
+/// The ACCOUNTS held here (DIDs, each once): kept as each is provisioned — registered, moved in, a device joined.
+pub const ACCOUNTS: &[u8] = b"identity_accounts";
+pub fn accounts<H: Host>(h: &H) -> Vec<[u8; 32]> {
+    h.get_secret(ACCOUNTS).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
+}
+fn note_account<H: Host>(h: &mut H, did: &[u8; 32]) -> bool {
+    let mut all = accounts(h);
+    if all.contains(did) {
+        return true;
+    }
+    all.push(*did);
+    h.set_secret(ACCOUNTS, &bincode::serialize(&all).expect("dids encode"))
+}
 /// `SESSION ‖ app contract id` → the public key of the member it opened (empty: closed).
 pub const SESSION: &[u8] = b"identity_session/";
 /// `GUARD ‖ params hash` → `seq ‖ value hash` of the last signature for that record.
@@ -1462,6 +1481,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             if !h.set_secret(&[MEMBER, &public[..]].concat(), &a.encode())
                 || !h.set_secret(&[PIN, &pin[..]].concat(), &public)
                 || !h.set_secret(ANY_MEMBER, &[1])
+                || !note_account(h, &a.did)
                 || a.names_seed().is_some_and(|d| !h.set_secret(&[ACCOUNT_CHECK, &a.did[..]].concat(), &account_check(&d)))
             {
                 return Refused(Why::NotSaved);
@@ -1839,6 +1859,7 @@ pub fn serve<H: Host>(h: &mut H, req: Request, app: [u8; 32]) -> Answer {
             upkeep_status(h, Some(&a.public()))
         }
         Request::UpkeepStatus => upkeep_status(h, session(h, &app).map(|a| a.public()).as_ref()),
+        Request::Accounts => Accounts { dids: accounts(h) },
         Request::UpkeepTrace => Trace { lines: h.get_secret(UPKEEP_TRACE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default() },
         Request::TokenSign { message } => {
             let Some(a) = session(h, &app) else { return Refused(Why::NoSession) };

@@ -50,6 +50,7 @@ export async function start(ctx) {
           <div data-panel="login">
             <form class="device">
               <strong>Log in with this node</strong>
+              <div class="accounts" role="radiogroup" aria-label="Your account"></div>
               <label>PIN <input name="pin" type="password" inputmode="numeric" autocomplete="off" required></label>
               <button>Log in</button>
               <p class="said"></p>
@@ -157,7 +158,38 @@ export async function start(ctx) {
         });
       }
       const device = q("form.device");
-      on(device, () => auth.unlock(device.pin.value));
+      // WHICH ACCOUNT (the accounts on this node, by the build holding each — `auth.accounts`): the PIN goes only to
+      // that one's build, never tried against another person's (10-30). "Another account": one from before the builds
+      // listed their accounts — the PIN asked of each, as before.
+      const LAST = "craftworks.login.account";
+      const picked = () => device.querySelector("input[name=acct]:checked")?.value || null;
+      ctx.background("login: accounts", (async () => {
+        const list = await ctx.optional("login: auth.accounts", auth.accounts(), () => []);
+        if (!list.length) return;
+        const directory = await ctx.optional("login: directory", ctx.require("directory"), () => null);
+        let last = null;
+        try {
+          last = localStorage.getItem(LAST);
+        } catch {}
+        const choice = (value, text, on) => {
+          const l = document.createElement("label");
+          const i = Object.assign(document.createElement("input"), { type: "radio", name: "acct", value, checked: on });
+          l.append(i, ` ${text}`);
+          return l;
+        };
+        const named = list.map(a => choice(a.did, directory?.shown?.(a.did) || `${a.did.slice(12, 20)}…`, false));
+        named.push(choice("", "Another account (from an earlier version)", false));
+        (named.find(l => l.querySelector("input").value === last) ?? named[0]).querySelector("input").checked = true;
+        device.querySelector(".accounts").replaceChildren(...named);
+      })());
+      on(device, async () => {
+        const did = picked();
+        const r = await auth.unlock(device.pin.value, did);
+        if (r?.unlocked && did) try {
+          localStorage.setItem(LAST, did);
+        } catch {}
+        return r;
+      });
 
       const words = q("form.words");
       on(words, async () => {
