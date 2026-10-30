@@ -20,10 +20,13 @@ export async function start(ctx) {
     ), () => ({ kind: "silent" }));
     // No answer in time (the node still loading that build — a compile can take a minute): said so, never taken for
     // "it does not know this PIN".
-    if (said.kind === "silent") return { silent: true };
+    // (EVERY ASK and its answer, in the trace — 10-30: an earlier build locked by wrong PINs, and nothing said which
+    // ask had cost it a try.)
+    const told = r => (ctx.log("identity: earlier build", { what: `${key.slice(0, 12)}… asked for ${what}: ${r && typeof r === "object" ? Object.keys(r)[0] + (r.wrongPin ? ` (${JSON.stringify(r.wrongPin)})` : "") : String(r)}` }), r);
+    if (said.kind === "silent") return told({ silent: true });
     // NOT ON THIS NODE (it never ran that build): said at once, and nothing to ask again.
-    if (said.kind === "delegate-missing") return { missing: true };
-    return said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer ?? null : null;
+    if (said.kind === "delegate-missing") return told({ missing: true });
+    return told(said.kind === "identity" ? said.answers.find(a => a.id === id)?.answer ?? null : null);
   }
   const node = await ctx.require("node");
   const { core, glue, ask } = node;

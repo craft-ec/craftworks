@@ -376,7 +376,14 @@ export async function start(ctx) {
       // (10-30, a person's Drive: `share.groups` — the item groups they are in — refused as a write.)
       "groups", "isShared", "parentId",
       // (10-30, the frame sweep: an item page's editions section, a mention's people, a video's id; mail's reads.)
-      "section", "mentionable", "videoId", "mailbox", "accepts", "addresses"]);
+      "section", "mentionable", "videoId", "mailbox", "accepts", "addresses",
+      // (10-30, the frame rules: an id made, bytes as hex — pure; an audience list made with no click was refused.)
+      "hex", "newHex"]);
+    // THE WRITES (the person's gesture): every call an app's frame makes that is not a READ is named here — the build's
+    // frame rules (`tools/app-check.mjs`) fail a call on neither list, so a read is never refused for want of a name
+    // (10-30: \`share.groups\`, \`editions.section\` were). The gate itself: anything not a READ.
+    const WRITES_DECLARED = new Set(["appPage", "approve", "publish", "review", "saveDraft", "create", "mark", "set", "splice", "cancelJoin", "joinLevel", "joinOpen", "adopt", "put", "attach", "comment", "editItem", "remove", "signal", "submit", "vote", "watched", "session", "open", "openMention", "moveTo", "track", "trackItem", "make", "createPoll", "setOpen", "copyToMine", "propose"]);
+    void WRITES_DECLARED;
     const WRITES = { test: name => !READS.has(name) };
     // The files this frame READ through its door (by their root), and the calls that read one.
     const readHere = new Set();

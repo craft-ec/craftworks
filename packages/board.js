@@ -253,7 +253,7 @@ export async function mount(ctx, el) {
     const w = route();
     // On screen: this space's board (both tables) is read as it arrives (`activity`).
     const onBoard = w.board ? await posts.boardOf(w.board) : null;
-    ctx.background("board: ctx.require", ctx.require("activity").then(a => a.showing(onBoard ? [space.board(onBoard), space.board(onBoard, { pub: true })] : null)));
+    ctx.background("board: ctx.require", ctx.require("activity").then(activity => activity.showing(onBoard ? [space.board(onBoard), space.board(onBoard, { pub: true })] : null)));
     await setActions(w);
     here = discovering() ? null : w.board ? await posts.boardOf(w.board) : w.post?.startsWith("space:") ? await posts.boardOf(w.post) : null;
     const parts = await (w.post ? postPage(w.post) : w.submit ? submitPage(w.board) : listPage(w));

@@ -150,9 +150,64 @@ const grantsOf = app => {
   return [...grants].sort();
 };
 const syncReads = new Set();
+// THE FRAME RULES (10-30, after a person's Drive, upload and Form broke in their frames): every host call an app's frame
+// makes is (1) ASYNC by its definition in the host package — `async`, or `ctx.total(…)` — or one of that package's frame
+// helpers / constants (a plain function or an object through the proxy is a Promise or nothing there: `space.shared`,
+// `conversation.mail`); and (2) CLASSIFIED in `apphost.js`: a READ (no gesture) or a WRITE (the person's gesture) — never
+// neither (an unclassified read was refused at a person's click-less page: `share.groups`, `editions.section`).
+const frameRules = (grants) => {
+  const listOf = name => new Set([...(hostSrc.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`))?.[1] ?? "").matchAll(/"([A-Za-z0-9_$]+)"/g)].map(m => m[1]));
+  const READS = listOf("READS"), WRITES_ = listOf("WRITES_DECLARED");
+  if (READS.size < 50) bad.push("packages/apphost.js: its READS set not found (the frame rules must see it)");
+  const helpersOf = cap => {
+    const s = srcOf(cap);
+    const m = /export (?:async )?function frame\([^)]*\)\s*\{/.exec(s);
+    if (!m) return new Set();
+    let i = s.indexOf("{", m.index);
+    const from = i;
+    for (let d = 0; i < s.length; i++) if ((d += s[i] === "{" ? 1 : s[i] === "}" ? -1 : 0) === 0) break;
+    const body = s.slice(from, i);
+    const ret = body.slice(body.lastIndexOf("return {") + 8);
+    const keys = new Set([...ret.matchAll(/(?:^|[,{])\s*(?:\.\.\.)?([A-Za-z_$][\w$]*)\s*(?=[:,}\n(])/g)].map(x => x[1]));
+    // (`...pure(…)`: the names pure returns.)
+    for (const sp of ret.matchAll(/\.\.\.(\w+)\(/g)) { const f = new RegExp(`function ${sp[1]}\\([^)]*\\)\\s*\\{[\\s\\S]*?return \\{([^}]*)\\}`).exec(s); for (const k of (f?.[1] ?? "").split(",")) keys.add(k.trim().split(":")[0].trim()); }
+    return keys;
+  };
+  const isAsync = (cap, meth) => {
+    const s = srcOf(cap);
+    const e = meth.replace(/\$/g, "\\$");
+    return new RegExp(`async function ${e}\\(`).test(s) || new RegExp(`(?:const|let) ${e} = (?:async\\b|ctx\\.total\\()`).test(s) || new RegExp(`\\b${e}: (?:async\\b|ctx\\.total\\()`).test(s) || new RegExp(`\\basync ${e}\\(`).test(s);
+  };
+  // A SYNC host function reached through the proxy is a Promise in the frame: each frame call site must AWAIT it, return
+  // it, or leave its value unused (a statement of its own) — a value USED there (compared, tested, read, assigned) is the
+  // bug (`sh.parentId(g) === …`, `const id = node.newHex(6)`, `filter(s => space.madeBy(s, me))`).
+  const syncs = new Set([...grants].filter(g => { const [cap, meth] = g.split("."); return !helpersOf(cap).has(meth) && !/^[A-Z_]+$/.test(meth) && !isAsync(cap, meth); }));
+  const framePkgs = new Set();
+  for (const a of FRAMED) { const walk = [a]; while (walk.length) { const n = walk.pop(); if (framePkgs.has(n) || HOST.has(n)) continue; framePkgs.add(n); for (const r of reqs(srcOf(n))) walk.push(r); } }
+  for (const n of framePkgs) {
+    const src = srcOf(n);
+    const sites = [];
+    for (const [vn, cap] of bindingsOf(src)) { const v = vn.split("#")[0]; for (const m of src.matchAll(new RegExp(`(?<![\\w.$])${v}\\??\\.(\\w+)\\(`, "g"))) sites.push([cap, m[1], m.index]); }
+    for (const m of src.matchAll(/\(await (?:ctx|app)\.require\("([a-z0-9-]+)"\)\)\.(\w+)\(/g)) sites.push([m[1], m[2], m.index + m[0].indexOf(")).") + 3]);
+    for (const [cap, meth, at] of sites) {
+      if (!syncs.has(`${cap}.${meth}`)) continue;
+      const before = src.slice(Math.max(0, at - 80), at).replace(/\.$/, "").replace(/\(await (?:ctx|app)\.require\("[a-z0-9-]+"\)\)$/, "").replace(/[\w$.?]*$/, "");
+      // (Awaited, returned, voided, handed to `background`; or a STATEMENT — after `;` `{` `}`, a line's start, an `if (…)`'s
+      // condition, or in a comma sequence of statements — its value unused.)
+      if (/(?:\bawait|\breturn|=>|\bvoid|background\([^()]*,)\s*\(?\s*$/.test(before) || /(?:^|[;{}]|\n)\s*$/.test(before) || /\bif\s*\([^()]*(?:\([^()]*\))*[^()]*\)\s*$/.test(before) || /[(,]\s*\w+\.\w+\([^()]*(?:\{[^{}]*\})?[^()]*\),\s*$/.test(before)) continue;
+      bad.push(`packages/${n}.js:${src.slice(0, at).split("\n").length}: ${cap}.${meth}() is sync in the host — a Promise in an app's frame, its value used here: await it, or make it a frame helper of ${cap}`);
+    }
+  }
+  for (const g of grants) {
+    const [cap, meth] = g.split(".");
+    if (helpersOf(cap).has(meth) || /^[A-Z_]+$/.test(meth)) continue;
+    if (!READS.has(meth) && !WRITES_.has(meth)) bad.push(`${g}: neither a READ nor a WRITE in packages/apphost.js — classify it`);
+  }
+};
 const framedMap = Object.fromEntries([...framedSrc.matchAll(/\\"([a-z0-9-]+)\\": \[([^\]]*)\]/g)].map(m => [m[1], [...m[2].matchAll(/\\"([a-z0-9.A-Z_-]+)\\"/g)].map(x => x[1]).sort()]));
 const want = Object.fromEntries(Object.keys(framedMap).map(a => [a, grantsOf(a)]));
 for (const x of syncReads) bad.push(x);
+frameRules(new Set(Object.values(want).flat()));
 if (process.argv.includes("--fix")) {
   const inner = Object.entries(want).map(([a, g]) => `\\"${a}\\": [${g.map(x => `\\"${x}\\"`).join(", ")}]`).join(", ");
   writeFileSync(join(root, "publish/src/main.rs"), pub.replace(/\\"framed\\": \{\{.*?\}\}/, `\\"framed\\": {{ ${inner} }}`));
