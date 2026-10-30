@@ -13,6 +13,7 @@ pub mod witness_round;
 pub mod witness_statement;
 pub mod keeper_round;
 pub mod account_round;
+pub mod codes;
 #[cfg(test)]
 mod table_tests;
 #[cfg(test)]
@@ -129,7 +130,7 @@ mod entry {
                         Code::Sealed => identity::UPKEEP_SEALED,
                         Code::Piece => identity::UPKEEP_PIECE,
                     };
-                    let Some(code) = identity::Host::get_secret(c, key) else { continue };
+                    let Some(code) = crate::codes::get(c, key) else { continue };
                     let contract = ContractContainer::from(ContractWasmAPIVersion::V1(WrappedContract::new(
                         std::sync::Arc::new(ContractCode::from(code)),
                         Parameters::from(params),

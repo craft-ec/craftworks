@@ -774,3 +774,13 @@ fn the_follower_runs_on_a_change_and_on_its_deadline_never_each_wake_up() {
     w.h.set_secret(identity::UPKEEP_WAKEUPS, &(at + crate::rekey_round::EVERY + 1).to_le_bytes());
     assert!(!upkeep::woke(&mut w.h, NOW).is_empty(), "the deadline sweeps");
 }
+
+/// THE CODES WITHOUT A PAGE (10-30): a node no page has handed the contracts' code holds this build's own — the files
+/// the site's `*-wasm` packages are published from — so its rounds never stop waiting for a page.
+#[test]
+fn a_node_holds_the_contracts_code_with_no_page() {
+    let h = crate::testhost::Map::default();
+    let held = crate::rekey_round::Held::of(&h).expect("held with no page");
+    assert_eq!(held.bag, contract_keys::code_hash(include_bytes!("../../contracts/bag.wasm")));
+    assert_eq!(held.idlog, contract_keys::code_hash(include_bytes!("../../contracts/idlog.wasm")));
+}

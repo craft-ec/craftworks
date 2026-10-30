@@ -144,13 +144,13 @@ pub struct Held {
 impl Held {
     pub fn of<H: Host>(h: &H) -> Option<Held> {
         Some(Held {
-            tail: h.get_secret(identity::UPKEEP_TAIL)?,
-            bag: contract_keys::code_hash(&h.get_secret(identity::UPKEEP_BAG)?),
-            sealed: contract_keys::code_hash(&h.get_secret(identity::UPKEEP_SEALED)?),
-            block: h.get_secret(identity::UPKEEP_BLOCK)?.try_into().ok()?,
-            piece: contract_keys::code_hash(&h.get_secret(identity::UPKEEP_PIECE)?),
-            idlog: h.get_secret(identity::UPKEEP_IDLOG)?.try_into().ok()?,
-            devices: h.get_secret(identity::UPKEEP_DEVICES)?.try_into().ok()?,
+            tail: crate::codes::get(h, identity::UPKEEP_TAIL)?,
+            bag: contract_keys::code_hash(&crate::codes::get(h, identity::UPKEEP_BAG)?),
+            sealed: contract_keys::code_hash(&crate::codes::get(h, identity::UPKEEP_SEALED)?),
+            block: crate::codes::get(h, identity::UPKEEP_BLOCK)?.try_into().ok()?,
+            piece: contract_keys::code_hash(&crate::codes::get(h, identity::UPKEEP_PIECE)?),
+            idlog: crate::codes::get(h, identity::UPKEEP_IDLOG)?.try_into().ok()?,
+            devices: crate::codes::get(h, identity::UPKEEP_DEVICES)?.try_into().ok()?,
         })
     }
     pub(crate) fn codes(&self) -> Codes<'_> {
