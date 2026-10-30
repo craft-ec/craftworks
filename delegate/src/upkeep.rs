@@ -106,6 +106,32 @@ pub const PAGE_AWAY: u64 = 2;
 pub const STUCK: u64 = 3;
 /// The member whose round ran last (the next round starts after it: each person in turn).
 const LAST_SERVED: &[u8] = b"identity_upkeep/last-served";
+/// A FOLLOWER PASS over every member, driven by CHANGE (10-30): a subscribed feed's notification marks the node CHANGED
+/// and begins a pass at once (or another as the one running ends); a wake-up begins one only when something changed, or
+/// as the deadline — `rekey_round::EVERY` wake-ups with none (a notification lost: a node restarted). The members this
+/// pass served (`PASS_DONE`), the wake-up of the last pass (`PASS_AT`), and the mark.
+const PASS_DONE: &[u8] = b"identity_upkeep/pass-done";
+const PASS_AT: &[u8] = b"identity_upkeep/pass-at";
+const CHANGED: &[u8] = b"identity_upkeep/changed";
+/// A SUBSCRIBED contract changed (`ContractNotification`): the node is marked changed, and a pass begun now when none
+/// is running.
+pub fn notified<H: Host>(h: &mut H) -> Vec<Io> {
+    h.set_secret(CHANGED, &[1]);
+    if running(h) {
+        return Vec::new();
+    }
+    new_pass(h)
+}
+#[cfg(test)]
+pub(crate) fn tests_drop_round<H: Host>(h: &mut H) {
+    keep(h, None);
+}
+fn new_pass<H: Host>(h: &mut H) -> Vec<Io> {
+    h.set_secret(CHANGED, &[]);
+    h.set_secret(PASS_DONE, &[]);
+    h.set_secret(PASS_AT, &identity::upkeep_wakeups(h).to_le_bytes());
+    start(h)
+}
 
 fn round<H: Host>(h: &H) -> Option<Round> {
     h.get_secret(ROUND).filter(|b| !b.is_empty()).and_then(|b| bincode::deserialize(&b).ok())
@@ -185,10 +211,15 @@ fn begin<H: Host>(h: &mut H, c: &Held, member: [u8; 32], me: String, mut rest: V
 }
 pub(crate) fn next_space<H: Host>(h: &mut H, c: &Held, r: Round) -> Vec<Io> {
     let io = begin(h, c, r.member, r.me, r.rest);
-    // (This member's spaces done: the NEXT member's round now, on this answer — every member each wake-up, never one
-    // a wake-up; 10-30, fz: a member's kick waited ~20 min behind the node's other members, one a minute.)
+    // (This member's spaces done: the NEXT member's round now, on this answer — every member a pass, never one a
+    // wake-up; 10-30, fz: a member's kick waited ~20 min behind the node's other members, one a minute.) The pass over
+    // and the node CHANGED meanwhile: another pass at once.
     if io.is_empty() && round(h).is_none() {
-        return start(h);
+        let more = start(h);
+        if more.is_empty() && h.get_secret(CHANGED).is_some_and(|b| b == [1]) {
+            return new_pass(h);
+        }
+        return more;
     }
     io
 }
@@ -276,7 +307,14 @@ pub fn woke<H: Host>(h: &mut H, now_ms: u64) -> Vec<Io> {
         followed(h, &r.member, &r.space, craftworks_rules::steps::STALLED, &format!("{}: the round stalled — {at}: dropped", hex(&r.space[..6])));
         keep(h, None);
     }
-    start(h)
+    // (Something changed, or the deadline: a pass. Else nothing — no sweep on the clock.)
+    let w = identity::upkeep_wakeups(h);
+    let last = h.get_secret(PASS_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
+    let changed = h.get_secret(CHANGED).is_some_and(|b| b == [1]);
+    if changed || last.is_none_or(|l| w.saturating_sub(l) >= crate::rekey_round::EVERY) {
+        return new_pass(h);
+    }
+    Vec::new()
 }
 
 /// A PAGE ASKED (`Request::FollowNow`): a round begun now when none is running (a running one sees the change itself).
@@ -312,18 +350,21 @@ pub fn stuck<H: Host>(h: &H, moved: u64, moved_ms: u64) -> bool {
 /// A round not moved for this long (the node's time) is stalled.
 const STUCK_MS: u64 = 3 * 60 * 1000;
 
-/// The next member's round (each person in turn), over every space of theirs — each member ONCE a wake-up (one served
-/// this wake-up already is passed over: `next_space` goes on to the next as each finishes).
+/// The next member's round (each person in turn), over every space of theirs — each member ONCE a pass (one served in
+/// this pass already is passed over: `next_space` goes on to the next as each finishes).
 fn start<H: Host>(h: &mut H) -> Vec<Io> {
     let Some(c) = Held::of(h) else { return Vec::new() };
     let w = identity::upkeep_wakeups(h);
     let members = identity::upkeep_members(h);
+    let mut done: Vec<[u8; 32]> = h.get_secret(PASS_DONE).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default();
     let last = h.get_secret(LAST_SERVED).and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
     let from = last.and_then(|l| members.iter().position(|m| *m == l)).map_or(0, |i| i + 1);
     for member in members.iter().cycle().skip(from).take(members.len()).copied() {
-        if identity::upkeep_round_at(h, &member) == Some(w) {
+        if done.contains(&member) {
             continue;
         }
+        done.push(member);
+        h.set_secret(PASS_DONE, &bincode::serialize(&done).expect("ids encode"));
         let Some((me, spaces)) = identity::upkeep_mandate(h, &member) else { continue };
         let all: Vec<[u8; 32]> = spaces.iter().map(|m| m.space).collect();
         if all.is_empty() {

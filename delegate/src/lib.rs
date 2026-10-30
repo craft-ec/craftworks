@@ -273,6 +273,22 @@ mod entry {
                     traced(&mut c, format!("UPDATED {} {}", id[..4].iter().map(|x| format!("{x:02x}")).collect::<String>(), if ok { "ok" } else { "REFUSED" }), &io);
                     Ok(send(&c, io))
                 }
+                // A SUBSCRIPTION's answer and a SUBSCRIBED contract's change: traced (10-30 — measuring whether the node
+                // tells a delegate of a change at all, before the rounds are driven by it).
+                InboundDelegateMsg::SubscribeContractResponse(r) => {
+                    let mut c = Ctx(ctx);
+                    let id: [u8; 32] = *r.contract_id;
+                    traced(&mut c, format!("SUBSCRIBED {} {}", id[..4].iter().map(|x| format!("{x:02x}")).collect::<String>(), match &r.result { Ok(()) => "ok".to_string(), Err(e) => format!("REFUSED {e}") }), &[]);
+                    Ok(Vec::new())
+                }
+                InboundDelegateMsg::ContractNotification(n) => {
+                    let mut c = Ctx(ctx);
+                    let id: [u8; 32] = *n.contract_id;
+                    // (A change: the follower's pass now — `upkeep::notified`.)
+                    let io = crate::upkeep::notified(&mut c);
+                    traced(&mut c, format!("NOTIFIED {} {}B", id[..4].iter().map(|x| format!("{x:02x}")).collect::<String>(), n.new_state.as_ref().len()), &io);
+                    Ok(send(&c, io))
+                }
                 InboundDelegateMsg::Lifecycle(_) => Ok(Vec::new()),
                 _ => Ok(Vec::new()),
             }

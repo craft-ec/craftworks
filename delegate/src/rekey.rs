@@ -16,7 +16,6 @@ use serde_json::Value;
 
 use crate::table::Reading;
 
-pub use craftworks_rules::guards::TAKEOVER_MS;
 
 /// A space's SALT (`files`' `salt` row): the secret, how many it has had, the removals it was made after.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,17 +55,7 @@ impl KeyRow {
 pub struct Due {
     pub row: KeyRow,
     pub public: bool,
-    /// This member's turn for it: now (0), or after `wait` ms more — from when it last MOVED (its row, its progress);
-    /// a caller that knows when it first saw it due floors that too (`wait_from`).
-    pub wait: u64,
-    pub rank: usize,
     pub moved: u64,
-}
-impl Due {
-    /// The wait from `seen` too (when this member first saw it due: a row due since a removal carries an old time).
-    pub fn wait_from(&self, seen: u64, now_ms: u64) -> u64 {
-        craftworks_rules::guards::turn_wait(self.rank as u64, self.moved.max(seen), now_ms, TAKEOVER_MS)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,11 +102,6 @@ pub fn governance(r: &Reading, writers: &[([u8; 32], String)], owner: &str, now_
     craftworks_gov::Gov::replay(&gov_rows, &map, Some(owner), now_ms as f64)
 }
 
-/// This member's place among `dids` for row `id`: 0 does it now (the one ranking: `rules::admission::turn`); None: not
-/// among them — never anyone's first.
-pub fn rank(id: &str, dids: &[String], me: &str) -> Option<usize> {
-    usize::try_from(craftworks_rules::admission::turn(id, dids, me)).ok()
-}
 
 /// THE PLAN for a space now: whether a new salt is due, and the rows due with this member's turn for each.
 /// `members`: the group's DIDs now (who a removal must have taken out); `me`: this member's DID.
@@ -131,7 +115,7 @@ pub fn plan(r: &Reading, g: &craftworks_gov::Gov, members: &[String], me: &str, 
     let reads_anyone = |app: &str| g.effective(app, "read", f64::INFINITY) == "anyone";
     let (gone, bans): (Vec<String>, Vec<String>) = (g.gone.iter().cloned().collect(), g.bans.iter().cloned().collect());
     let p = craftworks_rules::rekey::plan(salt(&files).map(|s| (s.n, s.removals)), &out, members, &gone, &bans, &input, &reads_anyone, me, now_ms);
-    let due = p.due.into_iter().filter_map(|d| Some(Due { row: rows.iter().find(|k| k.id == d.id)?.clone(), public: d.public, wait: d.wait, rank: d.rank as usize, moved: d.moved })).collect();
+    let due = p.due.into_iter().filter_map(|d| Some(Due { row: rows.iter().find(|k| k.id == d.id)?.clone(), public: d.public, moved: d.moved })).collect();
     Plan { rotate: p.rotate, due }
 }
 

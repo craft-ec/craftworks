@@ -345,16 +345,6 @@ fn upkeep_writes_its_own_feed_listing_it_first_when_new_and_flushes_when_due() {
 use super::rekey;
 
 #[test]
-fn the_rank_is_the_pages_rank() {
-    // Computed by the page's own `rankFor` (file-keys.js) for these DIDs: each member's place per row.
-    let dids: Vec<String> = ["did:craftec:aaa", "did:craftec:bbb", "did:craftec:ccc", "did:craftec:ddd"].iter().map(|s| s.to_string()).collect();
-    for (id, want) in [("f1", [0, 3, 1, 2]), ("f2", [3, 1, 2, 0]), ("3f2a9c", [3, 1, 2, 0]), ("zz", [3, 0, 2, 1])] {
-        let got: Vec<usize> = dids.iter().map(|d| rekey::rank(id, &dids, d).unwrap()).collect();
-        assert_eq!(got, want, "row {id}");
-    }
-}
-
-#[test]
 fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
     let (s0, s1) = ([0x10; 32], [0x11; 32]);
     let ep = [(0, s0), (1, s1)];
@@ -402,14 +392,13 @@ fn a_removal_rotates_the_salt_once_the_group_moved_and_its_rows_come_due() {
     let mut ids: Vec<&str> = p.due.iter().map(|d| d.row.id.as_str()).collect();
     ids.sort();
     assert_eq!(ids, ["adopted", "public", "under0"]);
-    assert!(p.due.iter().all(|d| d.wait == 0), "the only member: its turn for every row");
-    // A group held from before the removal still lists them: they take no turn (else a removed member ranked first
-    // holds rows up for the takeover time). Control: counted as a member, some row is theirs first.
+    // A group held from before the removal still lists them: no new salt yet (the group must move first), and the rows
+    // due regardless — made public, adopted — are due to this member NOW (no turns: the same pieces whoever re-keys).
     let held = [owner_did.clone(), gone_did.clone()];
     let p2 = rekey::plan(&r, &g, &held, &owner_did, 100);
-    assert!(p2.due.iter().all(|d| d.rank == 0), "the removed take no turn");
-    let control: Vec<usize> = ["adopted", "public", "under0", "a", "b", "c", "d"].iter().map(|id| rekey::rank(id, &held, &owner_did).unwrap()).collect();
-    assert!(control.contains(&1), "control: with them counted, the owner is second for some row: {control:?}");
+    let mut ids2: Vec<&str> = p2.due.iter().map(|d| d.row.id.as_str()).collect();
+    ids2.sort();
+    assert_eq!((p2.rotate, ids2), (None, vec!["adopted", "public"]), "due now, the removed still held");
     // The rotation's rows: the old salt kept, the new one, and `salt` naming it.
     let was = rekey::salt(&r.rows("files")).unwrap();
     let rows = rekey::rotation(&r.rows("files"), &was, [0x66; 32], 1);

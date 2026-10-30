@@ -35,8 +35,6 @@ pub fn subject(dom: Option<&str>, app: Option<&str>) -> String {
 pub struct Due {
     pub id: String,
     pub public: bool,
-    pub rank: u64,
-    pub wait: u64,
     pub moved: u64,
 }
 
@@ -68,7 +66,7 @@ pub fn plan(salt: Option<(i64, usize)>, out: &[String], members: &[String], gone
             continue;
         }
         if is_due {
-            due.push(Due { id: row.id.clone(), public: row.n == -2 && public, rank: 0, wait: 0, moved: row.moved });
+            due.push(Due { id: row.id.clone(), public: row.n == -2 && public, moved: row.moved });
         }
     }
     Plan { rotate, due }
@@ -173,7 +171,7 @@ mod tests {
         assert_eq!(plan(None, &s(&["did:x"]), &s(&["did:a"]), &[], &[], &rows, &anyone, "did:a", 0).rotate, None, "no salt: no rotation");
         // The put-out member, still in the group view, is never ranked: did:a's rank among [did:a] alone is 0.
         let only = plan(Some((0, 1)), &s(&["did:x"]), &s(&["did:a", "did:x"]), &s(&["did:x"]), &[], &rows, &anyone, "did:a", 0);
-        assert!(only.due.iter().all(|d| d.rank == 0), "{only:?}");
+        assert!(!only.due.is_empty(), "{only:?}");
         let x = plan(Some((0, 1)), &s(&["did:x"]), &s(&["did:a", "did:x"]), &s(&["did:x"]), &[], &rows, &anyone, "did:x", 0);
         assert!(x.due.is_empty(), "the put-out member takes no turn");
     }

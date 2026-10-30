@@ -112,7 +112,7 @@ pub fn go<H: Host>(h: &mut H, name: &[u8], mut r: Round, out: Vec<Io>, want: Vec
     }
     r.waiting.extend(ask.iter().copied());
     save(h, name, Some(&r));
-    out.into_iter().chain(ask.into_iter().map(|id| Io::Get { id, subscribe: false })).collect()
+    out.into_iter().chain(ask.into_iter().map(|id| Io::Get { id, subscribe: true })).collect()
 }
 
 #[cfg(test)]

@@ -29,8 +29,6 @@ const LAST_MEMBER: &[u8] = b"identity_upkeep/rekey/member";
 /// their answers are the round's — never an admission round's. The newest `ISSUED_MAX`.
 const ISSUED: &[u8] = b"identity_upkeep/rekey/issued";
 const ISSUED_MAX: usize = 4096;
-/// When this member first saw a row due (`<space hex>/<id>` → ms): its takeover counts from there at the least.
-const SEEN: &[u8] = b"identity_upkeep/rekey/seen";
 /// The wake-up the next round is due at, sooner than `EVERY` when a row's turn comes sooner.
 const NEXT_AT: &[u8] = b"identity_upkeep/rekey/next";
 /// Wake-ups between rounds (one a minute: every ten minutes).
@@ -130,9 +128,6 @@ fn issue<H: Host>(h: &mut H, c: &Held, io: Vec<Io>) -> Vec<Io> {
     all.drain(..over);
     h.set_secret(ISSUED, &bincode::serialize(&all).expect("ids encode"));
     io
-}
-fn seen<H: Host>(h: &H) -> std::collections::BTreeMap<String, u64> {
-    h.get_secret(SEEN).and_then(|b| bincode::deserialize(&b).ok()).unwrap_or_default()
 }
 
 
@@ -424,21 +419,9 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
         return write_step(h, c, r, rows, After::Replan, false);
     }
     r.salt = st.map(|s| (s.s, s.n));
-    // Each row's turn from when it last moved — and from when this member first saw it due.
-    let mut first = seen(h);
-    let mut queue = Vec::new();
-    let mut soonest: Option<u64> = None;
-    for d in &p.due {
-        let k = format!("{}/{}", table::hex(&r.space), d.row.id);
-        let at = *first.entry(k).or_insert(now_ms);
-        match d.wait_from(at, now_ms) {
-            0 => queue.push(Task::of(d)),
-            wait => soonest = Some(soonest.map_or(wait, |s| s.min(wait))),
-        }
-    }
-    h.set_secret(SEEN, &bincode::serialize(&first).expect("seen encodes"));
-    // What it found, SAID — always (a round that does nothing is otherwise silent): what it read, what is due, and a row
-    // not its turn yet brings the next round forward to that turn.
+    // EVERY due row, now (no turns: the same pieces whoever re-keys — `rules::rekey::plan`).
+    let queue: Vec<Task> = p.due.iter().map(Task::of).collect();
+    // What it found, SAID — always (a round that does nothing is otherwise silent): what it read, what is due.
     {
         let name = r.name.clone();
         let files = r.reading.rows("files");
@@ -449,18 +432,11 @@ fn plan<H: Host>(h: &mut H, c: &Held, mut r: Round, now_ms: u64) -> Vec<Io> {
             &r.space,
             craftworks_rules::steps::FILES_READ,
             &format!(
-                "{name}: {} row(s) of files read{notes}; {} file(s) due, {} at my turn now{}",
+                "{name}: {} row(s) of files read{notes}; {} file(s) due, re-keyed now",
                 files.len(),
                 p.due.len(),
-                queue.len(),
-                soonest.map(|s| format!(", the next in {} s", s / 1000)).unwrap_or_default()
             ),
         );
-        if let Some(s) = soonest {
-            let at = identity::upkeep_wakeups(h) + s.div_ceil(60_000) + 1;
-            let was = h.get_secret(NEXT_AT).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes).unwrap_or(u64::MAX);
-            h.set_secret(NEXT_AT, &at.min(was).to_le_bytes());
-        }
     }
     r.queue = queue;
     next_due(h, c, r, now_ms)

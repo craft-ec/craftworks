@@ -183,7 +183,7 @@ const aNode = await nodeOf(A);
 say("A's node:", JSON.stringify(aNode));
 say("node traces:", "A (fz)", await nodeTrace(A, "A-fz", TRACE), "line(s); C (fx)", await nodeTrace(C, "C-fx", TRACE), "line(s)");
 const spHex = await C.ev(async id => (await (await app.require("space")).mine()).find(s => s.id === id)?.id ?? null, sid).catch(() => null);
-const after = d => (d?.decided ?? []).filter(x => x.at >= tKick && (!spHex || x.space === spHex || x.space?.startsWith?.(String(spHex).slice(0, 12))));
+const after = d => (d?.decided ?? []).filter(x => x.at >= Math.floor(tKick / 1000) * 1000 && (!spHex || x.space === spHex || x.space?.startsWith?.(String(spHex).slice(0, 12))));
 const decided = [...after(aNode).map(x => ({ node: "A", ...x })), ...after(cNode).map(x => ({ node: "C", ...x }))];
 // (Who took B out is reported, not judged: B's own page — open, for the raw reads — takes its member out when kicked;
 // otherwise a node does. That B is out is checked above.)

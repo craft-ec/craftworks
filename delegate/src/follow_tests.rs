@@ -754,3 +754,23 @@ fn an_mls_era_space_is_not_followed() {
     assert_eq!(w.mandate().epoch, e, "its MLS group not moved");
     assert!(w.said().iter().any(|s| s.starts_with("not-migrated")), "said: {:?}", w.said());
 }
+
+/// DRIVEN BY CHANGE, NOT THE CLOCK (10-30): after a pass, a wake-up with nothing changed asks nothing; a subscribed
+/// feed's notification begins a pass at once; and the deadline (`rekey_round::EVERY` wake-ups with none) still sweeps
+/// — a lost notification is never lost for good.
+#[test]
+fn the_follower_runs_on_a_change_and_on_its_deadline_never_each_wake_up() {
+    let b = person(0x52);
+    let mut w = bee_world(&[json!({ "act": "added", "did": b.id(), "at": 10 })], &b);
+    w.run();
+    let at = u64::from_le_bytes(w.h.get_secret(identity::UPKEEP_WAKEUPS).unwrap().try_into().unwrap());
+    // The next wake-up, one later — nothing changed: nothing asked.
+    w.h.set_secret(identity::UPKEEP_WAKEUPS, &(at - 9).to_le_bytes());
+    assert!(upkeep::woke(&mut w.h, NOW).is_empty(), "a quiet wake-up asks nothing");
+    // A feed changed: a pass at once.
+    assert!(!upkeep::notified(&mut w.h).is_empty(), "a change begins a pass");
+    // (That pass ended; the deadline reached with none since: a pass.)
+    crate::upkeep::tests_drop_round(&mut w.h);
+    w.h.set_secret(identity::UPKEEP_WAKEUPS, &(at + crate::rekey_round::EVERY + 1).to_le_bytes());
+    assert!(!upkeep::woke(&mut w.h, NOW).is_empty(), "the deadline sweeps");
+}
