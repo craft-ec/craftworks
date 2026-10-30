@@ -47,8 +47,11 @@ function board(sp, { pub = false, outside = false } = {}) {
 // IN AN APP's FRAME (FOUNDATION §3, "THE FRAME RUNTIME"): the same pure helpers beside the host's proxy.
 // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
 const isGroup = sp => !!(sp?.circle || sp?.group);
+// SHARED (a space, not the person's own): a pure check — in a frame too, never a proxied call (10-30, a person's Drive:
+// through the proxy it was a Promise, always true, so their own drive read as the space `null`).
+const shared = sp => !!sp && sp.kind !== "account";
 export function frame() {
-  return { shown, tableOf, board, isGroup };
+  return { shown, tableOf, board, isGroup, shared };
 }
 
 export async function start(ctx) {
@@ -219,6 +222,5 @@ export async function start(ctx) {
 
   // A GROUP (a person's circle, a channel's readers — `groups`): a space of its own, never listed as one.
   // SHARED: a space others are in (every kind but the account's own).
-  const shared = sp => !!sp && sp.kind !== "account";
   return { shared, isGroup, account: ctx.total("space.account", () => null, account), me: ctx.total("space.me", () => null, me), loginNeeded, tables, mine: ctx.total("space.mine", () => [], mine), find: ctx.total("space.find", () => null, find), create, record, describe, idOf, madeBy, tableOf, channel, board, owner: ctx.total("space.owner", () => null, owner), leave, forget, shown };
 }

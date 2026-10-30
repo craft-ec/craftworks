@@ -106,6 +106,12 @@ export async function start(ctx) {
   }
   ctx.background("roles: lifecycle", ctx.require("lifecycle").then(L => L.job("public spaces listed", { every: 3600e3, delay: 120e3, needs: async () => !!(await space.me()) || "nobody is logged in", run: () => keepListed() })));
   function of(sp) {
+    // (NO SPACE given: said, with its caller — 10-30, a person's Drive: "can't access property \"outside\", sp is null".)
+    if (!sp) {
+      const e = Object.assign(new Error("roles.of: no space given"), { kind: "refused" });
+      ctx.log("roles", { what: `roles.of: no space given — called from ${String(e.stack).split("\n").slice(1, 6).join(" | ")}` });
+      throw e;
+    }
     // A space READ FROM OUTSIDE (`where`'s, `outside: true`: its public description): its public acts only.
     if (sp.outside) return ofPublic(sp);
     sp = sp.parent ?? sp;

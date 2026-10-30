@@ -76,15 +76,19 @@ export async function start(ctx) {
 
   // A WRITE ONLY ON THE PERSON's GESTURE — one rule for every framed app, either mode: this page's user activation (a
   // click or a key inside the frame activates its ancestors too, so the app cannot fake it). A GESTURE'S CREDIT: a call
-  // that arrived while the person had just clicked or typed leaves ONE write for the next 2 minutes — a click that saves
-  // after a slow read is still the person's (audit 10-13). A second write needs another gesture.
+  // that arrived while the person had just clicked or typed lets the app WRITE FOR THE NEXT 2 MINUTES — what that one
+  // action does (audit 10-13: a click that saves after a slow read is still the person's). Never ONE write: an action is
+  // several (10-30, a person's image upload — the file put, then `items.submit` refused: "only when you click").
   function gestures() {
     let credit = 0;
+    // (Each decision LOGGED — 10-30, a person's upload refused at "items.submit": which write had taken the click.)
+    const said = (what, how) => ctx.log("app gesture", { what: `${what}: ${how}` });
     return {
       clicked: () => navigator.userActivation?.isActive && (credit = Date.now()),
       gesture: what => {
-        if (navigator.userActivation?.isActive) return void (credit = 0);
-        if (credit && Date.now() - credit < 120000) return void (credit = 0);
+        if (navigator.userActivation?.isActive) return void ((credit = Date.now()), said(what, "allowed (a click or key now)"));
+        if (credit && Date.now() - credit < 120000) return void said(what, `allowed (a click ${Math.round((Date.now() - credit) / 1000)} s ago)`);
+        said(what, "REFUSED (no click or key left for it)");
         throw Object.assign(new Error(`${what}: only when you click or type in the app`), { kind: "refused" });
       },
     };
@@ -368,7 +372,9 @@ export async function start(ctx) {
       "has", "is", "at", "about", "refs", "lists", "roles", "domains", "acts", "mayEdit", "needsReview", "drafts", "thread", "probe", "editorAt",
       "opened", "reading", "played", "showing", "settings", "policyIn", "config",
       // (10-20: Docs — a document's text and marks as they are now, `codoc.state`.)
-      "state"]);
+      "state",
+      // (10-30, a person's Drive: `share.groups` — the item groups they are in — refused as a write.)
+      "groups", "isShared", "parentId"]);
     const WRITES = { test: name => !READS.has(name) };
     // The files this frame READ through its door (by their root), and the calls that read one.
     const readHere = new Set();
