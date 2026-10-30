@@ -1400,6 +1400,11 @@ fn open<H: Host>(h: &mut H, app: &[u8; 32], a: &Member) -> Answer {
     }
     // (Its epochs' old ranges walked into the index, once — the account's and every space's: `walk_epochs`.)
     let m = a.public();
+    // SERVED BY UPKEEP FROM ITS FIRST SESSION, on its home site (10-30, k87-three: a page logged in and closed before its
+    // upkeep job handed anything over — the node never knew the member, and adopted nothing with the page closed).
+    if a.home == *app && upkeep_site(h, app) && !upkeep_enlist(h, &m) {
+        return Answer::Refused(Why::NotSaved);
+    }
     for sp in std::iter::once(None).chain(spaces_of(h, &m).into_iter().map(Some)) {
         walk_epochs(h, &m, &sp);
     }

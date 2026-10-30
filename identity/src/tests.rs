@@ -1250,3 +1250,13 @@ fn the_accounts_here_are_listed_once_each_without_a_pin() {
     let Answer::Accounts { dids } = serve(&mut m, Request::Accounts, APP) else { panic!("accounts") };
     assert_eq!(dids, vec![a, b], "each once, as provisioned");
 }
+
+/// A SESSION OPENED is a member the node upkeeps — at once, before any page hands anything over (10-30: a page that
+/// closed right after logging in left its node never knowing the member). Control: none before.
+#[test]
+fn a_member_is_upkept_from_its_first_session() {
+    let mut m = Map::default();
+    assert!(upkeep_members(&m).is_empty(), "control: nobody yet");
+    let Answer::Unlocked { public, .. } = serve(&mut m, Request::Provision { seed: [7; 32], did: [8; 32], pin: "123456".into(), data: vec![] }, APP) else { panic!("unlocked") };
+    assert_eq!(upkeep_members(&m), vec![public], "enlisted as its session opened");
+}
