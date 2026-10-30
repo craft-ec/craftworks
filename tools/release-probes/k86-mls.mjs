@@ -38,7 +38,18 @@ async function open(port, hash = "#/settings") {
   }
   return { ctx, p, port, f: p.frameLocator("#app"), ev: (fn, arg) => fr().evaluate(fn, arg) };
 }
+// NO PERMISSION DIALOG over the page before a click (a node asks once per delegate — Background — and remembers): Allow
+// pressed until none shows; deadline 90 s, then said. (10-30, fw new: v446's ask covered the Login tab for 30 s.)
+async function clearPerm(u) {
+  for (const end = Date.now() + 90000; Date.now() < end; ) {
+    const shown = await u.p.evaluate(() => { const d = document.getElementById("__freenet_perm_overlay"); if (!d) return false; [...d.querySelectorAll("button")].find(x => x.innerText.trim() === "Allow")?.click(); return true; }).catch(() => false);
+    if (!shown) return;
+    await u.p.waitForTimeout(500);
+  }
+  say("a permission dialog still shows after 90 s:", JSON.stringify(await u.p.evaluate(() => document.getElementById("__freenet_perm_overlay")?.innerText?.slice(0, 300)).catch(() => null)));
+}
 async function register(u, pin, handle) {
+  await clearPerm(u);
   // LOGIN IS THE NODE'S: whoever is logged in there from before logs out first.
   if (await u.f.getByRole("button", { name: "Log out" }).count()) {
     await u.f.getByRole("button", { name: "Log out" }).first().click({ force: true });
@@ -153,15 +164,19 @@ say("A", aDid.slice(12, 20), "| words captured:", !!words);
 }
 const e0 = await A.ev(async () => ({ newest: (await (await app.require("access")).keyAt("pins", -1, {})).epoch, mls: (await (await app.require("keys")).ready())?.epoch, did: (await (await app.require("space")).account())?.id?.slice(12, 20) })).catch(e => ({ ERR: e.message }));
 say("fz right after registering (old build):", JSON.stringify(e0));
-const F = await open(17692);
+// B's NODE: fw (10-30: a fourth private node for this probe — fy's v446 is locked by wrong PINs, no words kept to open
+// it).
+const BP = 17694;
+const F = await open(BP);
 if (await F.f.getByRole("button", { name: "Log out" }).count()) {
   await F.f.getByRole("button", { name: "Log out" }).first().click({ force: true });
   await F.p.waitForTimeout(10000);
   await F.p.goto("about:blank");
-  await F.p.goto(site(17692) + "#/settings");
+  await F.p.goto(site(BP) + "#/settings");
   await F.p.waitForTimeout(25000);
 }
 const dlg = F.f.locator(".auth-dialog");
+await clearPerm(F);
 await dlg.locator("[data-tab=login]").click();
 await dlg.locator("button.swap[data-to=words]").click();
 await dlg.locator("form.words textarea[name=words]").fill(words);
@@ -184,7 +199,7 @@ const w = await step("fx writes", A.ev(async () => { const t = await (await app.
 check("fx writes with the generation", String(w) === String(a1.gens?.[0]), { w, gens: a1.gens });
 await A.p.goto("about:blank");
 // 3. fy BACK, no words, nobody to place it: it reads through the MLS-sealed generation.
-await unlockAs(F, 17692, PIN.b, aDid);
+await unlockAs(F, BP, PIN.b, aDid);
 await F.ev(() => { window.__mls = []; app.on(e => /opened with its MLS epoch|recovered from their escrows/.test(String(e.what ?? "")) && window.__mls.push(`${e.t} ${e.what}`)); });
 check("fy, reloaded, is the same account", (await didOf(F)) === aDid, { now: (await didOf(F))?.slice(12, 20), registered: aDid.slice(12, 20) });
 const got = await step("fy reads fx's row", F.ev(async () => { for (let i = 0; i < 36; i++) { const v = (await (await app.require("storage")).table("pins")).rows().find(r => r.key === "k85m")?.value; if (v) return v; await new Promise(r => setTimeout(r, 5000)); } return null; }), 240000).catch(e => e.message);

@@ -16,7 +16,7 @@ PROBES=${*:-$ALL}
 pass=0; fail=0
 for p in $PROBES; do
   [ -f "$here/$p.mjs" ] || { echo "$p: NO SUCH PROBE"; fail=$((fail + 1)); continue; }
-  for port in 17691 17692 17693; do perl -e 'alarm 120; exec @ARGV' node "$here/logout.mjs" "$port" > /dev/null 2>&1; done
+  for port in 17691 17692 17693 17694; do perl -e 'alarm 120; exec @ARGV' node "$here/logout.mjs" "$port" > /dev/null 2>&1; done
   t0=$(date +%s); since=$(date -u +%FT%T)
   if [ "$p" = k86-mls ]; then
     [ -n "${MLS_OLD:-}" ] || { echo "$p: FAIL (MLS_OLD — a built v446 tree — not given)"; fail=$((fail + 1)); continue; }
